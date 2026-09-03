@@ -32,11 +32,18 @@ cp .env.example .env
 ## 运行
 
 ```bash
-# 启动开发服务器（默认监听 127.0.0.1:8000）
-uv run uvicorn app.main:app --reload
+# 启动服务器（读取 .env 中的 WEB_HOST 与 WEB_PORT，默认 127.0.0.1:8000）
+uv run python -m app
 ```
 
-健康检查：`GET http://127.0.0.1:8000/healthz`
+> 启动前必须先执行数据库迁移（见下节），否则应用会因数据库未初始化而拒绝启动。
+
+健康检查：`GET http://127.0.0.1:8000/healthz`（端口以 `.env` 中 `WEB_PORT` 为准）
+
+开发时如需热重载，可显式指定端口：
+```bash
+uv run uvicorn app.main:app --reload --host 127.0.0.1 --port 8000
+```
 
 ## 数据库迁移
 
@@ -55,38 +62,49 @@ uv run alembic upgrade head
 uv run pytest
 
 # 代码格式化（检查）
-uv run ruff format --check app tests
+uv run ruff format --check app tests alembic
 
 # 代码格式化（自动修复）
-uv run ruff format app tests
+uv run ruff format app tests alembic
 
 # 静态检查
-uv run ruff check app tests
+uv run ruff check app tests alembic
 
 # 类型检查
 uv run mypy app
 ```
 
-CI（`.github/workflows/ci.yml`）会在每次 push/PR 时自动运行以上全部检查。
+CI（`.github/workflows/ci.yml`）会在每次 push/PR 时，在 Linux 与 Windows 上自动运行以上全部检查。
 
 ## 目录结构
 
+### 当前实际存在的目录
+
 ```text
-app/
-  adapters/     # QQ 官方机器人、NapCat/OneBot、外部模型适配器
-  moderation/   # 消息标准化、规则、行为、多模态证据和决策
-  cases/        # 违规历史、案件、证据、身份映射和审批状态机
-  actions/      # 官方撤回/禁言、人工工作流、NapCat 踢人执行器
-  reports/      # 实时告警、日报、周报和调度
-  web/          # 管理后台路由、权限和页面
-  config.py     # 应用配置（环境变量）
-  db.py         # 数据库引擎与会话
-  models.py     # ORM 模型
+app/            # 应用包（当前仅脚手架）
+  config.py     # 应用配置（环境变量，含校验）
+  db.py         # 数据库引擎与会话（SQLite WAL）
+  models.py     # ORM 模型（占位）
   main.py       # FastAPI 应用入口
+  __main__.py   # 启动入口（读取 WEB_HOST/WEB_PORT）
+  logging_config.py  # JSON 日志
 alembic/        # 数据库迁移脚本
-tests/          # 单元、集成、安全、端到端测试
-tests/fixtures/ # 脱敏的 QQ 事件、媒体和模型响应样本
+tests/          # 单元测试
 docs/           # 运行手册、隐私告知、架构决策记录
+```
+
+### 规划中的目录（尚未创建，对应后续任务）
+
+以下目录是 `AGENTS.md` 建议的职责划分，**当前尚未创建**，将在对应任务（T-102 起）中逐步建立：
+
+```text
+app/adapters/     # QQ 官方机器人、NapCat/OneBot、外部模型适配器（T-102）
+app/moderation/   # 消息标准化、规则、行为、多模态证据和决策（T-103）
+app/cases/        # 违规历史、案件、证据、身份映射和审批状态机（T-104）
+app/actions/      # 官方撤回/禁言、人工工作流、NapCat 踢人执行器（T-301+）
+app/reports/      # 实时告警、日报、周报和调度（T-401）
+app/web/          # 管理后台路由、权限和页面（T-301）
+tests/fixtures/   # 脱敏的 QQ 事件、媒体和模型响应样本（T-001/T-002）
 ```
 
 ## 安全与隐私
@@ -99,12 +117,14 @@ docs/           # 运行手册、隐私告知、架构决策记录
 
 ## 故障排查
 
-- 端口被占用：修改 `.env` 中的 `WEB_PORT`。
+- 端口被占用：修改 `.env` 中的 `WEB_PORT`，并用 `uv run python -m app` 启动（该入口会读取 `WEB_HOST`/`WEB_PORT`）。
+- 数据库未初始化：应用启动会校验 Alembic 迁移，需先运行 `uv run alembic upgrade head`。
 - 数据库文件位置：默认 `data/moderation.db`（SQLite WAL）。
-- 日志：默认输出结构化 JSON 到标准输出，级别由 `LOG_LEVEL` 控制。
+- 日志：默认输出结构化 JSON 到标准输出，级别由 `LOG_LEVEL` 控制（可选 `DEBUG/INFO/WARNING/ERROR/CRITICAL`）。
+- 生产环境（`APP_ENV=prod`）必须设置非空 `ADMIN_PASSWORD`，否则拒绝启动。
 
 ## Windows 24×7运行
 
 当前仓库尚未完成Windows Service、自启动和重启恢复实现。部署前必须完成 `NEXT_TASKS.md` 的 `T-404`，并按照 [`docs/windows-operations.md`](docs/windows-operations.md) 验证电源、启动、更新、状态恢复、监控和备份流程。
 
-屏幕可以关闭并锁屏，但主机不能进入睡眠或休眠。开发命令 `uv run uvicorn app.main:app --reload` 只用于开发，不得作为生产运行方式。
+屏幕可以关闭并锁屏，但主机不能进入睡眠或休眠。开发命令 `uv run uvicorn app.main:app --reload` 只用于开发，不得作为生产运行方式；生产运行使用 `uv run python -m app` 或由 Windows Service 管理。

@@ -103,6 +103,17 @@
 
 脚手架建立前不要虚构命令；T-101完成后，将实际的安装、测试、类型检查、静态检查和运行命令写入本文件与 `README.md`。
 
+### 实际命令（R-101 后）
+
+- 安装依赖（含开发组）：`uv sync --all-groups`
+- 干净生产安装（仅运行时依赖）：`uv pip install --python <venv> -e .`
+- 运行应用（读取 `WEB_HOST`/`WEB_PORT`）：`uv run python -m app`
+- 数据库迁移：`uv run alembic upgrade head`
+- 单元测试：`uv run pytest`
+- 类型检查：`uv run mypy app`
+- 静态检查：`uv run ruff check app tests alembic`
+- 格式检查：`uv run ruff format --check app tests alembic`
+
 不能完成验证时，必须说明未验证内容、原因、风险和人工验证步骤，不能笼统写“应该可用”。
 
 ## Windows无人值守运行约束

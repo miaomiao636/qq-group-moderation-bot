@@ -69,9 +69,33 @@ async def get_session() -> AsyncIterator[AsyncSession]:
         yield session
 
 
-async def init_db() -> None:
-    """创建所有表（脚手架阶段使用；正式迁移走 Alembic）。"""
-    from app import models  # noqa: F401  确保模型已注册
+async def get_db_revision(
+    target_engine: AsyncEngine | None = None,
+) -> str | None:
+    """返回数据库的 Alembic 版本号；`alembic_version` 表不存在时返回 None。"""
+    from sqlalchemy import text
 
-    async with engine.begin() as conn:
-        await conn.run_sync(Base.metadata.create_all)
+    conn_engine = target_engine or engine
+    try:
+        async with conn_engine.connect() as conn:
+            result = await conn.execute(text("SELECT version_num FROM alembic_version"))
+            row = result.first()
+    except Exception:  # noqa: BLE001 - 迁移未执行时表不存在
+        return None
+    return row[0] if row else None
+
+
+async def check_db_migrated(
+    target_engine: AsyncEngine | None = None,
+) -> None:
+    """校验数据库已通过 Alembic 迁移。
+
+    必须存在 `alembic_version` 表且版本非空，否则拒绝启动，
+    防止绕过 Alembic 创建漂移数据库。
+    """
+    revision = await get_db_revision(target_engine)
+    if revision is None:
+        raise RuntimeError(
+            "数据库未通过 Alembic 迁移（缺少 alembic_version 记录）。"
+            "请先运行 `uv run alembic upgrade head`，禁止使用 create_all 绕过迁移。"
+        )

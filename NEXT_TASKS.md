@@ -58,18 +58,18 @@
 
 优先级：阻塞T-102及后续业务开发。
 
-- [ ] 将 `aiosqlite` 从开发依赖移入运行时依赖，并用不安装开发组的全新虚拟环境验证 `import app.main` 和启动。
-- [ ] 删除或严格限制应用启动时的 `Base.metadata.create_all`；生产启动必须使用Alembic迁移并校验数据库版本，不能创建无 `alembic_version` 的漂移数据库。
-- [ ] 为 `APP_ENV`、`RUN_MODE`、端口、保留天数和日志级别增加类型与范围验证；生产环境拒绝空管理员密码。
-- [ ] 让实际启动入口读取 `WEB_HOST` 和 `WEB_PORT`，或修正文档为明确的命令参数；不得继续出现“修改 `.env` 端口但进程仍监听8000”。
-- [ ] 将 `alembic/` 纳入ruff检查和格式检查，修复当前迁移文件的5项ruff问题。
-- [ ] CI使用锁文件安装，并增加Windows执行环境；至少在Linux和Windows运行测试、ruff和mypy。
-- [ ] 使用临时目录隔离测试数据库，避免固定 `tests/test_data/test.db` 在本地残留或并发测试间互相影响。
-- [ ] 将README目录树标记为规划结构，或在对应任务中创建实际包；不得把不存在的目录描述为现状。
-- [ ] 处理或明确锁定当前TestClient的两项弃用警告，防止依赖升级后测试失效。
-- [ ] 初始化本地Git仓库并建立首个基线提交；在没有版本历史、差异和回滚能力前，不继续多Agent并行修改。
+- [x] 将 `aiosqlite` 从开发依赖移入运行时依赖，并用不安装开发组的全新环境验证 `import app.main` 和启动。
+- [x] 删除或严格限制 `Base.metadata.create_all`；生产启动必须使用Alembic迁移并校验数据库版本，拒绝创建无 `alembic_version` 的漂移数据库。
+- [x] 为 `APP_ENV`、`RUN_MODE`、端口、保留天数和日志级别增加类型与范围校验；生产环境拒绝空管理员密码。
+- [x] 让实际启动入口读取 `WEB_HOST` 和 `WEB_PORT`（新增 `app/__main__.py`），不再出现“修改 `.env` 端口但进程仍监听8000”。
+- [x] 将 `alembic/` 纳入ruff检查和格式检查，修复迁移文件的ruff问题。
+- [x] CI使用锁文件安装，并增加Windows执行环境；在Linux和Windows上运行测试、ruff和mypy。
+- [x] 使用临时目录隔离测试数据库，避免固定 `tests/test_data/test.db` 在本地残留或并发测试间互相影响。
+- [x] 将README目录树标记为规划结构，区分当前实际存在与规划中目录。
+- [x] 处理或明确锁定TestClient的弃用警告（安装 `httpx2`、锁定 `anyio` 警告、修复 Alembic `path_separator`）。
+- [x] 初始化本地Git仓库并建立首个基线提交，使后续修改可审核和回退。
 
-完成标准：全新运行时安装可以启动；Alembic是唯一生产建表路径；无效生产配置启动失败；`.env`端口设置生效；`app/tests/alembic`质量门禁及Linux/Windows CI通过；Git可以显示可审核差异。
+完成标准：全新运行时安装可启动；Alembic是唯一生产建表路径；无效生产配置启动失败；`.env`端口设置生效；`app/tests/alembic`质量门禁及Linux/Windows CI通过；Git可以显示可审核差异。**实现已完成，等待主审Agent复验。**
 
 ### T-102 统一消息契约与官方机器人适配器
 

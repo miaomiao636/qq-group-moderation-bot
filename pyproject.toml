@@ -11,6 +11,7 @@ dependencies = [
     "uvicorn[standard]>=0.30",
     "sqlalchemy>=2.0",
     "greenlet>=3.0",
+    "aiosqlite>=0.20",
     "alembic>=1.13",
     "pydantic>=2.7",
     "pydantic-settings>=2.3",
@@ -24,7 +25,8 @@ dev = [
     "pytest-asyncio>=0.23",
     "mypy>=1.10",
     "ruff>=0.5",
-    "aiosqlite>=0.20",
+    # starlette 1.6+ 的 TestClient 基于 httpx2；httpx 已弃用
+    "httpx2>=2.12",
 ]
 
 [build-system]
@@ -38,11 +40,17 @@ packages = ["app"]
 asyncio_mode = "auto"
 testpaths = ["tests"]
 addopts = "-q"
+# 锁定已知的第三方库内部弃用警告（非本项目代码问题）：
+# - starlette TestClient 内部 anyio.abc.BlockingPortal 别名弃用
+# - Alembic 配置 path_separator 已通过 alembic.ini 修复，此处兜底
+filterwarnings = [
+    "ignore:The anyio.abc.BlockingPortal alias is deprecated:DeprecationWarning",
+]
 
 [tool.ruff]
 line-length = 100
 target-version = "py312"
-src = ["app", "tests"]
+src = ["app", "tests", "alembic"]
 
 [tool.ruff.lint]
 select = ["E", "F", "W", "I", "UP", "B", "SIM", "ASYNC"]

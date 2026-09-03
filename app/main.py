@@ -11,15 +11,15 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 
 from app.config import get_settings
-from app.db import init_db
+from app.db import check_db_migrated
 from app.logging_config import setup_logging
 
 
 @asynccontextmanager
 async def lifespan(_: FastAPI) -> AsyncIterator[None]:
-    """应用生命周期：初始化日志与数据库。"""
+    """应用生命周期：初始化日志并校验数据库已通过 Alembic 迁移。"""
     setup_logging()
-    await init_db()
+    await check_db_migrated()
     yield
 
 

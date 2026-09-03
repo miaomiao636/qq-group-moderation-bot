@@ -6,54 +6,53 @@
 
 ## 当前任务
 
-补充Windows 24×7运行与恢复要求，并对其他Agent交付的T-003、T-101进行独立整体审核。
+R-101 T-101主审整改。
 
 ## 已完成内容
 
-- 新增 `docs/windows-operations.md`，覆盖电源、断电、Windows Service、启动顺序、状态恢复、系统更新、监控、备份和NapCat人工回退。
-- 在 `PROJECT_CONTEXT.md`、`DECISIONS.md`、`AGENTS.md`、`MEMORY_INDEX.md`、`README.md` 同步Windows恢复约束。
-- 在 `NEXT_TASKS.md` 新增T-404，并根据主审结果新增阻塞性整改任务R-101。
-- 对Python包、配置、数据库、Alembic、CI、测试、依赖、安全和文档一致性进行审查。
+- **整改项1**：将 `aiosqlite` 从开发依赖移入运行时依赖；干净生产环境（不带 dev 组）可导入 `app.main` 并启动。
+- **整改项2**：取消 `Base.metadata.create_all`；新增 `check_db_migrated()` 校验数据库已通过 Alembic 迁移，未迁移则拒绝启动。
+- **整改项3**：为 `APP_ENV`/`RUN_MODE`/`WEB_PORT`/保留天数/`LOG_LEVEL` 增加类型与范围校验；生产环境拒绝空管理员密码。
+- **整改项4**：新增 `app/__main__.py` 启动入口，读取 `WEB_HOST`/`WEB_PORT`；`uv run python -m app` 启动时端口生效。
+- **整改项5**：将 `alembic/` 纳入 ruff 检查与格式检查，修复迁移文件尾随空格与导入顺序问题。
+- **整改项6**：CI 使用 `uv sync --locked` 锁文件安装，新增 Windows 测试环境（Linux + Windows 矩阵）。
+- **整改项7**：测试数据库改用 `tempfile.mkdtemp` 临时目录隔离，不再使用固定 `tests/test_data/test.db`。
+- **整改项8**：修正 README 目录结构，区分"当前实际存在"与"规划中"目录。
+- **整改项9**：安装 `httpx2` 解决 TestClient 的 httpx 弃用警告；锁定 `anyio` 内部警告；修复 Alembic `path_separator` 警告。
+- **整改项10**：初始化 Git 仓库，建立整改前基线提交 `688a5da`。
 
 ## 修改文件
 
-- 新增：`docs/windows-operations.md`。
-- 更新：`PROJECT_CONTEXT.md`、`NEXT_TASKS.md`、`MEMORY_INDEX.md`、`AGENTS.md`、`DECISIONS.md`、`README.md`、`PROGRESS.md`、`HANDOFF.md`。
-- 未修改任何Python业务或脚手架实现代码。
+- 新增：`app/__main__.py`。
+- 修改：`pyproject.toml`、`uv.lock`、`app/config.py`、`app/db.py`、`app/main.py`、`tests/conftest.py`、`tests/test_health.py`、`alembic/env.py`、`alembic/script.py.mako`、`alembic/versions/3a9c0c662c2e_init_system_meta.py`、`alembic.ini`、`.github/workflows/ci.yml`、`.env.example`、`.gitignore`、`README.md`、`AGENTS.md`、`DECISIONS.md`、`PROGRESS.md`。
 
 ## 验证结果
 
+- 干净生产依赖安装（仅运行时）：`import app.main` 成功，`aiosqlite` 已安装。
+- 干净生产环境启动：`uv run python -m app` 启动成功，健康检查返回 `{"status":"ok","env":"local","mode":"SAFE"}`。
+- `uv run pytest`：9 passed，无警告。
+- `uv run mypy app`：Success, no issues found in 7 source files。
+- `uv run ruff check app tests alembic`：All checks passed。
+- `uv run ruff format --check app tests alembic`：12 files already formatted。
+- Alembic 全新数据库升级：成功，`alembic_version` 版本为 `3a9c0c662c2e`。
+- Alembic 降级后重新升级：成功。
+- 未迁移数据库启动：被拒绝，抛出 `RuntimeError: 数据库未通过 Alembic 迁移`。
+- 无效配置拒绝启动：非法 `RUN_MODE`/越界端口/负数保留期/非法日志级别/生产空密码均被拒绝。
+- `WEB_PORT` 实际生效：`WEB_PORT=8125`/`8127` 启动后健康检查在对应端口返回成功。
+- CI 配置：YAML 语法正确，Linux + Windows 矩阵，`uv sync --locked`。
 - `uv sync --locked --all-groups`：通过。
-- `uv run pytest -q`：1 passed，但出现2项TestClient弃用警告。
-- `uv run mypy app`：通过，6个源码文件无问题。
-- `uv run ruff check app tests`：通过。
-- `uv run ruff format --check app tests`：通过，9个文件已格式化。
-- `uv run ruff check app tests alembic`：失败，Alembic文件共5项格式/导入问题。
-- `uv run ruff format --check app tests alembic`：失败，2个Alembic文件需要格式化。
-- 临时数据库执行Alembic升级、降级、再升级：通过；版本为 `3a9c0c662c2e`，WAL生效。
-- `uv build`：源码包和wheel构建成功。
-- 依赖漏洞扫描：第三方依赖未发现已知漏洞；本地项目包无法由PyPI审计属正常跳过。
-- 干净运行时环境安装项目后 `import app.main`：失败，缺少运行时依赖 `aiosqlite`。
-- 生产配置探测：无效 `RUN_MODE=TYPO`、`WEB_PORT=99999`、负数保留期和空管理员密码均被接受。
-- 端口探测：设置 `WEB_PORT=8124` 后按README启动，仍尝试监听8000并因端口占用退出。
-- 应用直接启动数据库探测：只创建 `system_meta`，没有 `alembic_version`，确认 `create_all` 绕过迁移记录。
-- Git检查：当前目录不是Git仓库。
-- Windows真实运行、自启动、重启和更新恢复：当前Mac环境无法验证，留待T-404在Windows专用机执行。
-
-## 审核结论
-
-- T-003的架构决策记录基本符合当前项目目标。
-- T-101已交付骨架，但未达到可接受状态；R-101完成前不通过主审验收。
-- 当前没有QQ官方适配器、审核引擎、案件、审批、报告或NapCat实现，不能描述为可用群管系统。
+- `uv build`：源码包和 wheel 构建成功。
+- 敏感信息扫描：无泄漏。
+- Git：基线提交 `688f5da` 已建立，整改修改可审核。
 
 ## 遗留问题
 
-- R-101列出的运行时依赖、Alembic启动路径、配置校验、端口、CI、测试隔离和Git问题。
-- T-001和T-002仍需要项目负责人提供QQ官方应用、隔离测试群、群规与脱敏样本。
-- T-404只有需求和验收标准，没有Windows实现与实机证据。
+- Windows 真实运行、自启动、重启和更新恢复需在 Windows 专用机通过 T-404 演练验证，当前 Mac 环境无法验证。
+- T-001 和 T-002 仍需要项目负责人提供 QQ 官方应用、隔离测试群、群规与脱敏样本。
+- T-404 只有需求和验收标准，没有 Windows 实现与实机证据。
 
 ## 下一步建议
 
-1. 先由一个Agent完整修复R-101，并由主审重新验证干净安装、迁移、配置和Windows CI。
-2. 项目负责人并行准备T-001所需QQ官方应用和测试群，以及T-002所需群规和脱敏样本。
-3. R-101通过后再开始T-102，避免在不可部署的脚手架上继续扩建。
+1. 由主审Agent复验 R-101 的干净安装、迁移、配置、端口、CI 和 Git 基线。
+2. R-101 复验通过后，开始 T-102（统一消息契约与官方机器人适配器），需 T-001 提供 QQ 官方应用与测试群。
+3. 项目负责人并行准备 T-001 所需 QQ 官方应用和测试群，以及 T-002 所需群规和脱敏样本。
