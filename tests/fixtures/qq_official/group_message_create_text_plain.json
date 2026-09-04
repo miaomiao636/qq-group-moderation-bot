@@ -1,0 +1,27 @@
+{
+  "event": "GROUP_MESSAGE_CREATE",
+  "sample_note": "T-001 desensitized sample: IDs/content/tokens have been masked, structure consistent with real events",
+  "data": {
+    "author": {
+      "bot": false,
+      "id": "A7Axxxxxxxxxxxxxxxxxxxxxxxxxxx68",
+      "member_openid": "A7Axxxxxxxxxxxxxxxxxxxxxxxxxxx68",
+      "member_role": "owner",
+      "union_openid": "",
+      "username": "SANITIZED_USERNAME"
+    },
+    "content": "SANITIZED_PLAIN_TEXT",
+    "group_id": "BCBxxxxxxxxxxxxxxxxxxxxxxxxxxx94",
+    "group_openid": "BCBxxxxxxxxxxxxxxxxxxxxxxxxxxx94",
+    "id": "ROBOT1.0_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+    "message_scene": {
+      "ext": [
+        "msg_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+        "auth_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+      ],
+      "source": "default"
+    },
+    "message_type": 0,
+    "timestamp": "2026-09-05T00:41:56+08:00"
+  }
+}

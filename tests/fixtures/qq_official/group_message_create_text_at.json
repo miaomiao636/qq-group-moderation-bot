@@ -1,0 +1,38 @@
+{
+  "event": "GROUP_MESSAGE_CREATE",
+  "sample_note": "T-001 desensitized sample: IDs/content/tokens have been masked, structure consistent with real events",
+  "data": {
+    "author": {
+      "bot": false,
+      "id": "A7Axxxxxxxxxxxxxxxxxxxxxxxxxxx68",
+      "member_openid": "A7Axxxxxxxxxxxxxxxxxxxxxxxxxxx68",
+      "member_role": "owner",
+      "union_openid": "",
+      "username": "SANITIZED_USERNAME"
+    },
+    "content": "<@SANITIZED_MENTION_OPENID>",
+    "group_id": "BCBxxxxxxxxxxxxxxxxxxxxxxxxxxx94",
+    "group_openid": "BCBxxxxxxxxxxxxxxxxxxxxxxxxxxx94",
+    "id": "ROBOT1.0_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+    "mentions": [
+      {
+        "bot": true,
+        "id": "C4BxxxxxxxxxxxxxxxxxxxxxxxxxxxF0",
+        "is_you": true,
+        "member_openid": "C4BxxxxxxxxxxxxxxxxxxxxxxxxxxxF0",
+        "member_role": "member",
+        "scope": "single",
+        "username": "管理机器人"
+      }
+    ],
+    "message_scene": {
+      "ext": [
+        "msg_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+        "auth_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+      ],
+      "source": "default"
+    },
+    "message_type": 0,
+    "timestamp": "2026-09-05T00:41:44+08:00"
+  }
+}

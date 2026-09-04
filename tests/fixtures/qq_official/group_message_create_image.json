@@ -1,0 +1,38 @@
+{
+  "event": "GROUP_MESSAGE_CREATE",
+  "sample_note": "T-001 desensitized sample: IDs/content/tokens have been masked, structure consistent with real events",
+  "data": {
+    "attachments": [
+      {
+        "content": "",
+        "content_type": "image/jpeg",
+        "filename": "72FC6970F032046AEC8F58F931D91150.jpg",
+        "height": 1920,
+        "size": 152130,
+        "url": "https://multimedia.nt.qq.com.cn/download?appid=1407&fileid=EhSj5R0JkjL_g6lbv4KX4EANrga89hjCpAkg_wooh4z2nq_VlgMyBHByb2RQgL2jAVoQhZ2Ryi-P30cmEnobDc392XoCZOyCAQJuag&rkey=CAISONPsN0nSR8aLge0ubcB2EetKuOuctnFb-MD1DneQ4ukkNsZuJdGQgNReII4qzfA-FOnuLD89Iqh6&spec=0",
+        "width": 873
+      }
+    ],
+    "author": {
+      "bot": false,
+      "id": "A7Axxxxxxxxxxxxxxxxxxxxxxxxxxx68",
+      "member_openid": "A7Axxxxxxxxxxxxxxxxxxxxxxxxxxx68",
+      "member_role": "owner",
+      "union_openid": "",
+      "username": "SANITIZED_USERNAME"
+    },
+    "content": "",
+    "group_id": "BCBxxxxxxxxxxxxxxxxxxxxxxxxxxx94",
+    "group_openid": "BCBxxxxxxxxxxxxxxxxxxxxxxxxxxx94",
+    "id": "ROBOT1.0_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+    "message_scene": {
+      "ext": [
+        "msg_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+        "auth_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+      ],
+      "source": "default"
+    },
+    "message_type": 0,
+    "timestamp": "2026-09-05T00:42:24+08:00"
+  }
+}

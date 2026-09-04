@@ -6,9 +6,20 @@
 
 ## 当前任务
 
-R-101已由主审复验通过。**W0（Windows基础兼容）门禁已于2026-09-04在Windows 10专业版测试机实机通过（决策D-011），Windows基线已建立**。本轮接手Agent已按AGENTS.md要求对该机**独立重跑全部W0门禁并全部通过**（复验记录见下方"W0独立复验"小节），W0门禁结论维持"已通过"。T-001（QQ官方能力验证）与 T-002（群规与样本准备）仍阻塞，等待项目负责人提供外部资源。
+R-101已由主审复验通过；W0已于2026-09-04实机通过并经接手Agent同日独立复验通过。**T-001（QQ官方能力验证）已于2026-09-05解除阻塞并完成第一阶段**：连通性、机器人身份、WSS网关、群聊全量消息事件均实测通过，4类脱敏样本入库；撤回/禁言实测待机器人获得群管理员身份后复测。T-002 仍阻塞，等待群规/白名单/脱敏样本。
 
 ## 已完成内容
+
+### T-001 QQ官方能力验证·第一阶段（2026-09-05，接手Agent）
+
+- 外部资源到位：负责人创建机器人应用（AppID 1905561634，机器人UIN 4017145414）与4个隔离测试群，机器人已入群并被授权查看消息；凭据由负责人提供后仅写入本机 `.env`（已在 `.gitignore`），未入仓库与文档。
+- 连通性：`api.bot.qq.com/app/getAppAccessToken` 签发成功。**排障记录**：先用旧域名 `api.sgroup.qq.com` + `Authorization: QQey` 前缀，`/users/@me` 与 `/gateway` 均返回401（空错误体）；改用现行文档统一域名 `api.bot.qq.com` + `QQBot` 前缀后全部通过。后续适配器必须使用新域名与新前缀。
+- 身份与网关：`GET /users/@me` 200（机器人ID/头像/share_url 正常）；`GET /gateway` 200，返回 `wss://api.sgroup.qq.com/websocket`。
+- 全量消息事件：临时 WebSocket 监听器（intents=1<<25，系统临时目录脚本，未入仓库）收到4条 `GROUP_MESSAGE_CREATE` 事件，其中包含**不带@的普通文字消息**，证明全量消息事件已生效；覆盖文字@（`<@member_openid>` 标记+mentions）、普通文字、表情（`<faceType=...>`）、图片（attachments 含 content_type/size 元数据，无content）。
+- 关键发现：事件中的 `group_id` 字段是32位不透明十六进制串，**不是真实数字群号**；作者字段含 `member_role`（实测群主为 `owner`、机器人自身在mentions中为 `member`）。**OpenID↔数字QQ映射风险结论维持不变**，人工客户端/NapCat回退设计不变。
+- 撤回实测：`DELETE /v2/groups/{group_openid}/messages/{message_id}` 返回 HTTP 400 `{"code":40062003,"message":"无操作权限"}`——机器人当前 member_role=member；且被撤回对象为群主消息（群主消息可能不可撤）。需群主将机器人设为群管理员，并准备普通成员测试号后复测。
+- 禁言接口定义确认（与"mute_seconds"旧假设不同）：`POST /v2/groups/{group_openid}/restrict_chat_setting`，请求体 `members` 数组（单批≤20），元素含 `op`（add/update/del）、`member_openid`、`mute_expire_at`（RFC3339到期时间）；最长30天；**不能禁言群主/管理员/机器人本身**；解除禁言用 `op=del` + 空 `mute_expire_at`。1小时禁言=当前时间+3600s 的 RFC3339 时间戳。尚未实测。
+- 脱敏样本：4份入库 `tests/fixtures/qq_official/`（text_at/text_plain/face/image），ID遮蔽保留长度与前后缀、消息ID保留 `ROBOT1.0_` 前缀、用户名与正文替换为占位符、message_scene.ext 令牌遮蔽、机器人自身昵称与成员角色保留；经抽查无真实内容泄漏。
 
 ### W0独立复验（接手Agent，2026-09-04，本机=正式Windows 10专业版测试机）
 
@@ -93,7 +104,8 @@ R-101已由主审复验通过。**W0（Windows基础兼容）门禁已于2026-09
 
 ## 修改文件
 
-- 本轮（W0交接）修改：`PROGRESS.md`、`NEXT_TASKS.md`、`HANDOFF.md`、`MEMORY_INDEX.md`、`PROJECT_CONTEXT.md`（仅状态与证据记录，未修改任何代码与测试）。
+- 本轮（T-001第一阶段）修改：`NEXT_TASKS.md`、`PROGRESS.md`、`HANDOFF.md`；新增 `tests/fixtures/qq_official/`（4份脱敏样本）。未修改任何应用代码。
+- 前轮（W0交接）修改：`PROGRESS.md`、`NEXT_TASKS.md`、`HANDOFF.md`、`MEMORY_INDEX.md`、`PROJECT_CONTEXT.md`（仅状态与证据记录，未修改任何代码与测试）。
 - 新增：`app/__main__.py`、`tests/test_sqlite_path.py`。
 - 修改：`pyproject.toml`、`uv.lock`、`app/config.py`、`app/db.py`、`app/main.py`、`tests/conftest.py`、`tests/test_health.py`、`alembic/env.py`、`alembic/script.py.mako`、`alembic/versions/3a9c0c662c2e_init_system_meta.py`、`alembic.ini`、`.github/workflows/ci.yml`、`.env.example`、`.gitignore`、`README.md`、`AGENTS.md`、`DECISIONS.md`、`PROGRESS.md`、`NEXT_TASKS.md`、`HANDOFF.md`、`docs/windows-operations.md`。
 
@@ -160,6 +172,8 @@ R-101已由主审复验通过。**W0（Windows基础兼容）门禁已于2026-09
 
 ## 遗留问题
 
+- **T-001 剩余项（2026-09-05）**：①撤回/禁言实测——需群主在测试群将机器人设为**群管理员**，并准备一个**普通成员测试号**（非群主/管理员）在群里发消息作为撤回与禁言对象（群主与管理员消息不可撤、群主与管理员不可被禁言）；②GIF、语音、视频、文档、转发、卡片类样本待采集脱敏；③限流、媒体不可下载等失败响应待记录；④T-001全部完成后结论写入 `DECISIONS.md`。
+- **凭据安全提示**：AppSecret 曾出现在聊天记录中，建议 T-001 收尾后由负责人在开放平台重置一次，并改由负责人直接维护 `.env`。
 - **R-101已通过**：四轮整改与远程CI取证（复验项11）均已完成并获主审确认，无遗留阻塞项。
 - **W0 已通过（2026-09-04）且经接手Agent同日独立复验通过**：Windows基线已建立，两轮证据见"验证结果"W0小节。遗留提示：首轮在该机新克隆仓库执行（机器非完全空白，已装开发工具），符合"R-101后先验证基础安装和Windows兼容性"阶段定义；文档变更已随本轮提交入库。
 - **T-001 阻塞**：需要项目负责人提供QQ官方应用、隔离测试群与全量消息/撤回/禁言权限。
@@ -170,7 +184,7 @@ R-101已由主审复验通过。**W0（Windows基础兼容）门禁已于2026-09
 ## 下一步建议
 
 1. （已完成，2026-09-04）W0门禁已在Windows 10专业版测试机实机通过；接手Agent同日独立重跑全部门禁亦全部通过（见"W0独立复验"小节），本轮文档变更已提交入库。
-2. 请项目负责人继续提供 T-001 所需 QQ 官方应用/隔离群/权限、T-002 所需群规/白名单/脱敏样本；T-102 依赖 T-001，须在 T-001 完成后才可开始。
+2. T-001所需机器人应用/隔离群已就位；请项目负责人：①在测试群将机器人设为群管理员；②准备普通成员测试号发消息供撤回/禁言实测；③继续提供 T-002 所需群规/白名单/脱敏样本。事件结构已实测确认，T-102 的消息契约与适配器设计可并行启动。
 3. 完整Windows阶段和门槛见 `docs/windows-operations.md`；W1（QQ官方链路）在T-001与T-102通过后开始。
 
 ## 主审复验结论
