@@ -35,8 +35,10 @@ def _migrated_db() -> None:
     """
     from alembic import command
     from alembic.config import Config
+    from app.config import PROJECT_ROOT
 
-    cfg = Config("alembic.ini")
+    # 基于项目根目录解析 alembic.ini，不依赖当前工作目录
+    cfg = Config(str(PROJECT_ROOT / "alembic.ini"))
     command.upgrade(cfg, "head")
     yield
     _cleanup_temp_dir()

@@ -2,8 +2,8 @@
 
 ## 当前状态
 
-- 当前阶段：T-003与T-101实现已交付；R-101主审复验未通过，SQLite相对路径整改与回归测试已完成，仅剩真实Linux/Windows CI证据一个阻塞项；关闭阻塞项前不开始T-102。
-- 当前最高目标：取得真实Linux/Windows CI证据；可并行准备T-001官方能力验证和T-002验收样本。
+- 当前阶段：T-003与T-101实现已交付；提交 `7fca851` 主审复验未通过，第四轮整改（测试安全、真实Alembic端到端、盘符相对路径、文档状态）已完成并通过干净副本全量验证，等待主审复验；复验通过前不开始T-102。
+- 当前最高目标：主审复验通过R-101；远程CI证据（复验项11）需项目负责人提供私有远程仓库后补齐；可并行准备T-001官方能力验证和T-002验收样本。
 - 任务执行原则：每个Agent一次只认领一个边界清晰的任务；完成后更新 `PROGRESS.md` 和 `HANDOFF.md`，架构变化同步更新 `DECISIONS.md` 和 `PROJECT_CONTEXT.md`。
 - 禁止事项：在身份链路验证完成前，不实现真实NapCat批量踢人；任何模型结果都不能直接创建踢人动作。
 
@@ -75,13 +75,13 @@
 - [x] 修复运行时依赖 CI 失效：`uv run` 会自动重装 dev 依赖，改用 `--no-sync` 并断言 pytest 不可导入（R-101复验项6）。
 - [x] 修复非项目工作目录无法启动：`get_head_revision` 基于 `PROJECT_ROOT` 解析 `alembic.ini` 与 `script_location`（R-101复验项7）。
 - [x] 修复 Windows 清理风险：删除临时目录前关闭全局数据库引擎，移除 `ignore_errors=True`（R-101复验项8）。
-- [x] 修复相对SQLite路径依赖当前工作目录：`app/config.py` 新增 `_normalize_sqlite_url`，在配置层把相对路径统一解析到 `PROJECT_ROOT` 下；从不同工作目录执行迁移与启动连接同一数据库（R-101复验项9）。
-- [x] 增加复验项9的自动回归测试：`tests/test_sqlite_path.py` 覆盖 README 默认配置、非项目工作目录启动、Windows 绝对路径（正/反斜杠）、Unix 绝对路径、`:memory:` 与非 SQLite URL（R-101复验项10）。
-- [ ] 将仓库推送到私有远程仓库并取得Linux、Windows质量任务及运行时依赖任务的真实成功记录，保存提交号和运行链接；静态CI配置不算通过（R-101复验项11）。
+- [x] 修复相对SQLite路径依赖当前工作目录：`app/config.py` 新增 `_normalize_sqlite_url`，在配置层把相对路径统一解析到 `PROJECT_ROOT` 下；Windows 盘符相对路径 `C:relative\db.db` 明确拒绝（R-101复验项9）。
+- [x] 增加复验项9的自动回归测试：`tests/test_sqlite_path.py` 共13项，完全使用 pytest `tmp_path` 并带真实数据目录守卫夹具，覆盖 README 默认配置、非项目工作目录启动、Windows 绝对路径（正/反斜杠）、盘符相对路径拒绝、Unix 绝对路径、`:memory:`、非 SQLite URL，以及子进程真实 `alembic upgrade head` 与跨目录启动应用的端到端测试（R-101复验项10；提交 `7fca851` 主审指出的缺陷已整改）。
+- [ ] 将仓库推送到私有远程仓库并取得Linux、Windows质量任务及运行时依赖任务的真实成功记录，保存提交号和运行链接；静态CI配置不算通过（R-101复验项11；需项目负责人提供私有远程仓库）。
 
-完成标准：全新运行时安装可启动；Alembic是唯一生产建表路径且校验head版本；相对SQLite配置不受启动目录影响；无效生产配置启动失败；`.env`端口设置生效；`app/tests/alembic`质量门禁及Linux/Windows CI真实通过；Git可以显示可审核差异。**当前主审未通过，完成复验项11（真实CI证据）后重新提交主审。**
+完成标准：全新运行时安装可启动；Alembic是唯一生产建表路径且校验head版本；相对SQLite配置不受启动目录影响；测试不触碰真实数据库；无效生产配置启动失败；`.env`端口设置生效；`app/tests/alembic`质量门禁及Linux/Windows CI真实通过；Git可以显示可审核差异。**当前主审未通过，第四轮整改已完成，重新提交主审复验。**
 
-> 说明：本地Mac复验已通过干净运行时依赖、Alembic升降级、配置拒绝、实际端口、pytest、mypy、ruff、构建和Git差异检查，但这不能替代远程Linux/Windows CI或正式Windows电脑测试。
+> 说明：本轮验证在含哨兵真实数据库的干净临时副本中执行（24项pytest、静态检查、Alembic升降级、构建、配置拒绝、实际端口、运行时依赖），哨兵数据库字节级未变；这不能替代远程Linux/Windows CI或正式Windows电脑测试。
 
 ### T-102 统一消息契约与官方机器人适配器
 

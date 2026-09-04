@@ -32,6 +32,10 @@ def _normalize_sqlite_url(url: str) -> str:
     - `sqlite+aiosqlite:////abs/path/db.db`（绝对，Unix）
     - `sqlite+aiosqlite:///C:/data/db.db` 或 `sqlite+aiosqlite:///C:\\data\\db.db`（Windows 绝对）
     - `sqlite+aiosqlite:///:memory:`（内存库，原样保留）
+
+    明确拒绝的形式：
+    - `sqlite+aiosqlite:///C:relative\\db.db`（Windows 盘符相对路径：依赖各盘符的
+      当前工作目录，行为不可靠，配置加载时直接报错）
     """
     if not url.startswith("sqlite"):
         return url
@@ -41,9 +45,17 @@ def _normalize_sqlite_url(url: str) -> str:
         return url
     if not path or path == ":memory:":
         return url
-    # Windows 绝对路径：C:/... 或 C:\...（盘符后跟冒号）
+    # Windows 盘符路径：`C:/...` 或 `C:\...` 是绝对路径，原样保留；
+    # `C:relative\db.db` 是盘符相对路径（依赖各盘符的当前目录），明确拒绝
     if len(path) >= 2 and path[1] == ":":
-        return url
+        if len(path) >= 3 and path[2] in ("/", "\\"):
+            return url
+        raise ValueError(
+            f"DATABASE_URL 含 Windows 盘符相对路径 {url!r}（如 C:relative\\db.db）。"
+            "该路径依赖各盘符的当前工作目录，行为不可靠，请改用绝对路径"
+            "（如 sqlite+aiosqlite:///C:/data/moderation.db）"
+            "或基于项目根目录的相对路径（如 sqlite+aiosqlite:///./data/moderation.db）。"
+        )
     # Unix 绝对路径：以 / 开头
     if path.startswith("/"):
         return url
