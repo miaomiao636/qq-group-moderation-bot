@@ -6,9 +6,20 @@
 
 ## 当前任务
 
-R-101已由主审复验通过；W0已于2026-09-04实机通过并经接手Agent同日独立复验通过。**T-001（QQ官方能力验证）已于2026-09-05解除阻塞并完成第一阶段**：连通性、机器人身份、WSS网关、群聊全量消息事件均实测通过，4类脱敏样本入库；撤回/禁言实测待机器人获得群管理员身份后复测。T-002 仍阻塞，等待群规/白名单/脱敏样本。
+R-101已通过；W0已通过（2026-09-04实机+同日独立复验）。**T-001（QQ官方能力验证）核心能力已全部实测通过（2026-09-05，决策D-012）**：连通性、全量消息事件、撤回（幂等）、禁言3600s/86400s（含解除）、保护角色平台硬限制；9类脱敏样本入库。仅剩限流响应、媒体URL失效、分享卡片形态三个低风险验证项（转入T-102/W1）。**T-102 适配器开发可立即开始**。T-002 仍阻塞，等待群规/白名单/脱敏样本。
 
 ## 已完成内容
+
+### T-001 QQ官方能力验证·核心实测（2026-09-05第二轮，接手Agent）
+
+- 前置就位：负责人已将机器人设为测试群管理员，并提供普通成员测试号（member_role=member）。
+- 撤回实测：`DELETE /v2/groups/{group_openid}/messages/{message_id}` 对普通成员消息返回 HTTP 200；**对同一消息重复撤回再次返回200——接口幂等**，动作层重试可直接依赖。
+- 禁言实测：`POST /v2/groups/{group_openid}/restrict_chat_setting`，3600秒与86400秒（`mute_expire_at` RFC3339到期时间）均返回200；`op=del`+空到期时间解除禁言返回200。
+- 保护角色负面用例：尝试禁言群主返回 HTTP 400 `40103004「目标成员为机器人/群主/管理员，不允许被禁言」`——平台层硬限制；业务层仍需自行拦截白名单普通成员（平台不保护）。
+- 媒体样本采集（监听窗口实测收到）：GIF（image/gif，content含faceType=6标记）、语音（voice，.amr）、视频（video/mp4）、文件（file，.pdf）、转发记录（content为`[群聊的聊天记录]`文本骨架，630字符）。附件结构含 `url`（可下载）与 width/height。
+- 脱敏入库：`tests/fixtures/qq_official/` 新增5份（gif/voice/video/forward_record/file_pdf），累计9份；文件名遮蔽保留扩展名、转发记录逐行脱敏、附件URL遮蔽。
+- 结论归档：全部实测结论写入 `DECISIONS.md` 决策 **D-012**。
+- 执行方式备注：监听/撤回/禁言均为系统临时目录一次性验证脚本（未入仓库），实测后目标测试号的禁言已解除、消息已撤回，未在测试群遗留副作用。
 
 ### T-001 QQ官方能力验证·第一阶段（2026-09-05，接手Agent）
 
@@ -104,7 +115,8 @@ R-101已由主审复验通过；W0已于2026-09-04实机通过并经接手Agent�
 
 ## 修改文件
 
-- 本轮（T-001第一阶段）修改：`NEXT_TASKS.md`、`PROGRESS.md`、`HANDOFF.md`；新增 `tests/fixtures/qq_official/`（4份脱敏样本）。未修改任何应用代码。
+- 本轮（T-001核心实测）修改：`DECISIONS.md`（新增D-012）、`NEXT_TASKS.md`、`PROGRESS.md`、`HANDOFF.md`；新增 `tests/fixtures/qq_official/` 5份媒体样本（累计9份）。未修改任何应用代码。
+- 前轮（T-001第一阶段）修改：`NEXT_TASKS.md`、`PROGRESS.md`、`HANDOFF.md`；新增 `tests/fixtures/qq_official/`（4份脱敏样本）。未修改任何应用代码。
 - 前轮（W0交接）修改：`PROGRESS.md`、`NEXT_TASKS.md`、`HANDOFF.md`、`MEMORY_INDEX.md`、`PROJECT_CONTEXT.md`（仅状态与证据记录，未修改任何代码与测试）。
 - 新增：`app/__main__.py`、`tests/test_sqlite_path.py`。
 - 修改：`pyproject.toml`、`uv.lock`、`app/config.py`、`app/db.py`、`app/main.py`、`tests/conftest.py`、`tests/test_health.py`、`alembic/env.py`、`alembic/script.py.mako`、`alembic/versions/3a9c0c662c2e_init_system_meta.py`、`alembic.ini`、`.github/workflows/ci.yml`、`.env.example`、`.gitignore`、`README.md`、`AGENTS.md`、`DECISIONS.md`、`PROGRESS.md`、`NEXT_TASKS.md`、`HANDOFF.md`、`docs/windows-operations.md`。
@@ -172,7 +184,8 @@ R-101已由主审复验通过；W0已于2026-09-04实机通过并经接手Agent�
 
 ## 遗留问题
 
-- **T-001 剩余项（2026-09-05）**：①撤回/禁言实测——需群主在测试群将机器人设为**群管理员**，并准备一个**普通成员测试号**（非群主/管理员）在群里发消息作为撤回与禁言对象（群主与管理员消息不可撤、群主与管理员不可被禁言）；②GIF、语音、视频、文档、转发、卡片类样本待采集脱敏；③限流、媒体不可下载等失败响应待记录；④T-001全部完成后结论写入 `DECISIONS.md`。
+- **T-001 剩余项（低风险，转入T-102/W1）**：①限流触发阈值与限流响应格式未实测（不愿人为刷限流污染测试群）；②媒体URL失效（不可下载）响应未实测；③分享卡片的事件形态待负责人确认（本轮收到的1.29MB jpeg可能是卡片缩略图或普通图片）；④群主消息撤回行为未测（非计划依赖能力，群主消息不应由机器人处理）。
+- **凭据安全提示**：AppSecret 曾出现在聊天记录中，建议 T-001 收尾后由负责人在开放平台重置一次，并改由负责人直接维护 `.env`。
 - **凭据安全提示**：AppSecret 曾出现在聊天记录中，建议 T-001 收尾后由负责人在开放平台重置一次，并改由负责人直接维护 `.env`。
 - **R-101已通过**：四轮整改与远程CI取证（复验项11）均已完成并获主审确认，无遗留阻塞项。
 - **W0 已通过（2026-09-04）且经接手Agent同日独立复验通过**：Windows基线已建立，两轮证据见"验证结果"W0小节。遗留提示：首轮在该机新克隆仓库执行（机器非完全空白，已装开发工具），符合"R-101后先验证基础安装和Windows兼容性"阶段定义；文档变更已随本轮提交入库。

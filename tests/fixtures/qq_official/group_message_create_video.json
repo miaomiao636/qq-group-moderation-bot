@@ -1,0 +1,37 @@
+{
+  "event": "GROUP_MESSAGE_CREATE",
+  "sample_note": "T-001 脱敏样本：ID/内容/令牌已遮蔽，结构一致",
+  "data": {
+    "attachments": [
+      {
+        "content_type": "video/mp4",
+        "filename": "SANITIZED_FILENAME.mp4",
+        "height": 1584,
+        "size": 1831858,
+        "url": "https:xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxvjlE",
+        "width": 720
+      }
+    ],
+    "author": {
+      "bot": false,
+      "id": "A0Dxxxxxxxxxxxxxxxxxxxxxxxxxxx35",
+      "member_openid": "A0Dxxxxxxxxxxxxxxxxxxxxxxxxxxx35",
+      "member_role": "member",
+      "union_openid": "",
+      "username": "SANITIZED_USERNAME"
+    },
+    "content": "",
+    "group_id": "BCBxxxxxxxxxxxxxxxxxxxxxxxxxxx94",
+    "group_openid": "BCBxxxxxxxxxxxxxxxxxxxxxxxxxxx94",
+    "id": "ROBOT1.0_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+    "message_scene": {
+      "ext": [
+        "msg_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+        "auth_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+      ],
+      "source": "default"
+    },
+    "message_type": 0,
+    "timestamp": "2026-09-05T01:05:38+08:00"
+  }
+}

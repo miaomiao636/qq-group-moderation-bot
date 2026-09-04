@@ -1,0 +1,27 @@
+{
+  "event": "GROUP_MESSAGE_CREATE",
+  "sample_note": "T-001 脱敏样本：ID/内容/令牌已遮蔽，结构一致",
+  "data": {
+    "author": {
+      "bot": false,
+      "id": "A0Dxxxxxxxxxxxxxxxxxxxxxxxxxxx35",
+      "member_openid": "A0Dxxxxxxxxxxxxxxxxxxxxxxxxxxx35",
+      "member_role": "member",
+      "union_openid": "",
+      "username": "SANITIZED_USERNAME"
+    },
+    "content": "[群聊的聊天记录]\nSANITIZED_RECORD_LINE\nSANITIZED_RECORD_LINE\nSANITIZED_RECORD_LINE\nSANITIZED_RECORD_LINE\nSANITIZED_RECORD_LINE\nSANITIZED_RECORD_LINE\nSANITIZED_RECORD_LINE\nSANITIZED_RECORD_LINE\nSANITIZED_RECORD_LINE\nSANITIZED_RECORD_LINE\nSANITIZED_RECORD_LINE\nSANITIZED_RECORD_LINE\nSANITIZED_RECORD_LINE\nSANITIZED_RECORD_LINE\nSANITIZED_RECORD_LINE\nSANITIZED_RECORD_LINE\nSANITIZED_RECORD_LINE\nSANITIZED_RECORD_LINE\nSANITIZED_RECORD_LINE\nSANITIZED_RECORD_LINE\nSANITIZED_RECORD_LINE\nSANITIZED_RECORD_LINE\nSANITIZED_RECORD_LINE\nSANITIZED_RECORD_LINE",
+    "group_id": "BCBxxxxxxxxxxxxxxxxxxxxxxxxxxx94",
+    "group_openid": "BCBxxxxxxxxxxxxxxxxxxxxxxxxxxx94",
+    "id": "ROBOT1.0_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+    "message_scene": {
+      "ext": [
+        "msg_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+        "auth_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+      ],
+      "source": "default"
+    },
+    "message_type": 102,
+    "timestamp": "2026-09-05T01:05:47+08:00"
+  }
+}

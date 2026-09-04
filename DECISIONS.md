@@ -292,3 +292,36 @@
 - `PROJECT_CONTEXT.md`、`docs/windows-operations.md`、`AGENTS.md`中“优先Windows 11 x64”的表述按本决策更新。
 - W0门禁（干净安装、迁移、pytest、mypy、ruff、实际端口、配置拒绝）必须在Windows 10专业版实机上真实通过后才算建立Windows基线。
 - 本决策不改变D-010的分阶段门槛，不降低任何验收标准；若该机后续无法获得安全更新，升级路径须在维护窗口中评估并补充决策。
+
+---
+
+## 决策 D-012：QQ官方机器人能力实测结论（T-001）
+
+### 决策日期
+
+2026-09-05
+
+### 决策内容
+
+以下结论全部来自2026-09-05在正式Windows测试机上的真实API实测（机器人AppID 1905561634，4个隔离测试群），不是文档推测：
+
+- **域名与鉴权**：令牌签发 `POST https://api.bot.qq.com/app/getAppAccessToken`；业务API基址 `https://api.bot.qq.com`；请求头 `Authorization: QQBot <access_token>`（注意前缀是 `QQBot`）。实测旧组合 `api.sgroup.qq.com` + `QQey` 前缀返回401，适配器禁止使用。
+- **全量群消息事件已生效**：经 WebSocket `wss://api.sgroup.qq.com/websocket`（intents=1<<25）收到 `GROUP_MESSAGE_CREATE` 事件，**包含不带@的普通消息**。事件字段：`id`、`group_openid`、`group_id`、`author{member_openid, member_role, bot, username, union_openid}`、`content`、`attachments[{content_type, filename, size, url, width, height}]`、`message_scene{source, ext[瞬时令牌]}`、`message_type`、`timestamp`。
+- **身份映射关键事实**：事件中的 `group_id` 是32位不透明十六进制串，**不是真实数字群号**。D-001 的“官方身份与数字QQ无公开转换保证”结论维持不变，人工客户端回退与NapCat身份镜像设计不变。
+- **撤回**：`DELETE /v2/groups/{group_openid}/messages/{message_id}`，机器人需群管理员身份；对普通成员消息实测成功；**对已撤回消息重复调用返回HTTP 200（接口幂等）**，动作重试设计可直接依赖。
+- **禁言**：`POST /v2/groups/{group_openid}/restrict_chat_setting`，请求体 `members` 数组（单批≤20人），元素为 `op`（add/update/del）+ `member_openid` + `mute_expire_at`（RFC3339到期时间，非秒数）；最长30天；3600秒与86400秒实测成功；`op=del`+空 `mute_expire_at` 解除禁言实测成功。
+- **保护角色为平台硬限制**：尝试禁言群主返回 HTTP 400 `40103004「目标成员为机器人/群主/管理员，不允许被禁言」`。项目“群主/管理员/白名单不自动处罚”约束在平台层有兜底，但业务层仍须自行拦截（白名单普通成员平台不保护）。
+- **权限不足错误码**：机器人非管理员时撤回返回 HTTP 400 `40062003「无操作权限」`。
+- **媒体可下载**：消息附件含 `url` 字段（图片/GIF另含 width/height），OCR/抽帧/ASR等媒体链路可直接下载。已实测收到的媒体类型：图片(jpeg)、GIF(image/gif)、语音(voice/amr)、视频(video/mp4)、文件(file/pdf)、转发记录（`[群聊的聊天记录]`文本骨架）。
+
+### 原因
+
+- T-001要求所有计划依赖的官方能力以实际结果为准，不能只依据文档假设。
+- 撤回幂等与禁言到期时间语义直接影响动作层与状态机设计，必须先于T-102确认。
+
+### 影响
+
+- T-102 适配器按本结论实现：新域名、`QQBot` 前缀、`GROUP_MESSAGE_CREATE` 契约、到期时间制禁言。
+- 动作层可安全重试撤回（幂等）；禁言计算 `mute_expire_at = now + duration`（时区 Asia/Shanghai）。
+- 保护角色拦截仍需业务层实现，平台错误码作为最后防线记录审计。
+- 未实测项：限流触发阈值与限流响应格式、媒体URL失效（不可下载）响应、群主消息撤回行为、分享卡片的事件形态。这些在T-102/W1中继续验证。
