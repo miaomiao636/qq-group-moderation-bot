@@ -73,11 +73,19 @@ def get_head_revision() -> str:
     """返回当前代码中 Alembic 迁移链的最新版本（head）。
 
     从 `alembic/versions/` 脚本目录解析，确保与代码中的迁移定义一致。
+    `alembic.ini` 路径基于项目根目录解析，而非当前工作目录，
+    因此无论从哪个目录启动应用都能正确定位迁移脚本。
     """
     from alembic.config import Config
     from alembic.script import ScriptDirectory
 
-    cfg = Config("alembic.ini")
+    from app.config import PROJECT_ROOT
+
+    cfg = Config(str(PROJECT_ROOT / "alembic.ini"))
+    # `alembic.ini` 中 `script_location = alembic` 是相对路径，
+    # 会基于当前工作目录解析。这里改为基于项目根目录的绝对路径，
+    # 确保从任意工作目录启动都能定位迁移脚本。
+    cfg.set_main_option("script_location", str(PROJECT_ROOT / "alembic"))
     script = ScriptDirectory.from_config(cfg)
     head = script.get_current_head()
     if head is None:

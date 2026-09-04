@@ -39,4 +39,22 @@ def _migrated_db() -> None:
     cfg = Config("alembic.ini")
     command.upgrade(cfg, "head")
     yield
-    shutil.rmtree(_TMP_DIR, ignore_errors=True)
+    _cleanup_temp_dir()
+
+
+def _cleanup_temp_dir() -> None:
+    """删除测试临时目录。
+
+    删除前必须先关闭全局数据库引擎，否则在 Windows 上 SQLite 文件被占用
+    无法删除。不使用 `ignore_errors=True`，删除失败必须显式暴露，
+    避免"看似清理成功实则残留"的假象。
+    """
+    import asyncio
+    from contextlib import suppress
+
+    from app.db import engine
+
+    # 引擎可能未初始化，关闭失败不阻断清理
+    with suppress(Exception):
+        asyncio.run(engine.dispose())
+    shutil.rmtree(_TMP_DIR)

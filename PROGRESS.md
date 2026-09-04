@@ -27,6 +27,10 @@
   - CI 新增 `runtime-deps` 回归检查 job，仅安装运行时依赖并验证 `import app.main`。
   - 测试临时目录在会话结束后主动删除，不残留 `qqbot-test-*`/`qqbot-nomigrate-*`。
   - 修正 `NEXT_TASKS.md` 状态矛盾与 `HANDOFF.md` 基线提交号。
+- **R-101 复验整改二轮（已完成，待复验）**（2026-09-04）：
+  - 修复运行时依赖 CI 失效：`uv run` 会自动重装 dev 依赖，改用 `--no-sync` 并断言 pytest 不可导入。
+  - 修复非项目工作目录无法启动：`get_head_revision` 基于 `PROJECT_ROOT` 解析 `alembic.ini` 与 `script_location`。
+  - 修复 Windows 清理风险：删除临时目录前关闭全局数据库引擎，移除 `ignore_errors=True`。
 - **Windows 24×7运行与恢复需求补充**（2026-09-04）：
   - 新增 `docs/windows-operations.md`，并在项目上下文、决策、Agent规则、任务和README中同步恢复机制。
   - 新增T-404，覆盖Windows Service、自启动、状态恢复、更新维护、健康检查、备份和NapCat人工回退。
@@ -48,6 +52,6 @@
 
 日期：2026-09-04
 
-修改内容：完成 R-101 全部整改项及复验项，并通过干净生产安装、Alembic 迁移（含 head 版本校验）、配置校验、端口生效、CI 配置（含 runtime-deps 回归）和 Git 基线验证。
+修改内容：完成 R-101 全部整改项及两轮复验项，并通过干净生产安装、Alembic 迁移（含 head 版本校验）、配置校验、端口生效、CI 配置（含 runtime-deps 回归）、非项目工作目录启动和 Git 基线验证。
 
 影响：脚手架达到可部署、可审核、可回退状态；R-101 复验通过后可开始 T-102。

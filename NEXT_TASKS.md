@@ -72,6 +72,9 @@
 - [x] 生产环境仅含空白字符的密码被拒绝（`strip` 后非空）（R-101复验项2）。
 - [x] CI新增 `runtime-deps` 回归检查：仅安装运行时依赖并验证 `import app.main`，防止运行时依赖被误放入开发组（R-101复验项3）。
 - [x] 测试临时目录在会话结束后主动删除，不残留 `qqbot-test-*`/`qqbot-nomigrate-*`（R-101复验项5）。
+- [x] 修复运行时依赖 CI 失效：`uv run` 会自动重装 dev 依赖，改用 `--no-sync` 并断言 pytest 不可导入（R-101复验项6）。
+- [x] 修复非项目工作目录无法启动：`get_head_revision` 基于 `PROJECT_ROOT` 解析 `alembic.ini` 与 `script_location`（R-101复验项7）。
+- [x] 修复 Windows 清理风险：删除临时目录前关闭全局数据库引擎，移除 `ignore_errors=True`（R-101复验项8）。
 
 完成标准：全新运行时安装可启动；Alembic是唯一生产建表路径且校验head版本；无效生产配置启动失败；`.env`端口设置生效；`app/tests/alembic`质量门禁及Linux/Windows CI通过；Git可以显示可审核差异。**实现已完成，等待主审Agent复验。**
 
