@@ -2,7 +2,7 @@
 
 ## 当前阶段
 
-脚手架整改复验完成，**R-101已由主审复验通过**。Windows 10专业版测试机已就绪且开发工具已安装（决策D-011），W0门禁待实机执行。T-001（QQ官方能力验证）与 T-002（群规与样本准备）仍阻塞。业务代码尚未开始。
+脚手架整改复验完成，**R-101已由主审复验通过**；**W0（Windows基础兼容）门禁已在Windows 10专业版测试机实机通过（2026-09-04）**，Windows基线已建立。T-001（QQ官方能力验证）与 T-002（群规与样本准备）仍阻塞。业务代码尚未开始。
 
 ## 已完成
 
@@ -46,15 +46,21 @@
 - **Windows 24×7运行与恢复需求补充**（2026-09-04）：
   - 新增 `docs/windows-operations.md`，并在项目上下文、决策、Agent规则、任务和README中同步恢复机制。
   - 新增T-404，覆盖Windows Service、自启动、状态恢复、更新维护、健康检查、备份和NapCat人工回退。
+- **W0 Windows基础兼容门禁（已通过）**（2026-09-04）：
+  - 在Windows 10专业版测试机（Build 19045.6466，AMD64）上新克隆私有仓库（main @ `c22b0c1`）并执行完整W0门禁：`uv sync --all-groups`（46包，exit 0）、`uv run alembic upgrade head`（`init system_meta`，SQLite）、`uv run pytest` 24 passed、`uv run mypy app` 7文件无问题、`uv run ruff check` 与 `ruff format --check` 全通过。
+  - 实际端口验证：`WEB_PORT=8135` 启动后 `/healthz` 在8135端口返回200；默认8000端口健康检查亦通过。
+  - 配置拒绝验证：非法 `LOG_LEVEL=BOGUS`、越界 `WEB_PORT=99999`、Windows盘符相对路径 `DATABASE_URL` 三类非法配置均被拒绝启动，错误信息明确。
+  - 系统记录（决策D-011）：Windows 10专业版 22H2 Build 19045.6466；CPU 12th Gen Intel i5-12400（AMD64）；内存15.7GB；磁盘C: 149.3GB（余79.4）/ D: 781.5GB（余727.8）/ E: 465.8GB；有线网卡Realtek Gaming 2.5GbE（链路1Gbps）；最新补丁KB5071982/KB5071959/KB5072653（安全更新，2026-07-18）。
+  - 全程未配置任何QQ或模型密钥；详细证据见 `HANDOFF.md` 的W0小节。
 
 ## 进行中
 
 - **R-101 T-101主审整改**：已由主审复验通过（复验项1至11全部完成）。
-- **W0 Windows基础兼容**：**测试机已就绪，门禁待执行**。Windows 10专业版电脑可用（决策D-011，2026-09-04），该机已安装Node.js LTS、Git、Python 3.12、FFmpeg、uv；剩余：获取代码并在该机执行W0门禁，记录build号/CPU架构/补丁状态。
+- **W0 Windows基础兼容**：**已通过（2026-09-04）且经接手Agent同日独立复验通过**，Windows基线已建立，证据见"已完成"与 `HANDOFF.md`。
 - **T-001 QQ官方能力验证**：**阻塞**。需要项目负责人提供QQ官方应用、隔离测试群与全量消息/撤回/禁言权限。
 - **T-002 群规与样本准备**：**阻塞**。需要项目负责人提供群规、白名单与脱敏样本。
 - **T-404 Windows无人值守运行与故障恢复**：仅完成需求和验收标准，尚未实现或在Windows实机演练。
-- **Windows正式测试环境**：项目负责人已准备一台Windows电脑；尚未建立W0基线。
+- **Windows正式测试环境**：W0基线已建立（2026-09-04）；24×7整机验收待T-404后进行。
 
 ## 已知问题
 
@@ -69,11 +75,23 @@
 
 日期：2026-09-04
 
+修改内容：**W0门禁独立复验通过（接手Agent）**。按 `AGENTS.md` "先检查实际运行结果再相信文档"的要求，接手Agent未直接采信文档记录，在同一台Windows 10专业版测试机（Build 19045.6466，AMD64，补丁KB5071982/KB5071959/KB5072653，2026-07-18）实际重跑全部W0门禁并全部通过：`uv sync --all-groups --reinstall` 锁文件级干净重装（46包，exit 0）、Alembic完整"降级base→升级head"周期（head `3a9c0c662c2e`）、pytest **24 passed**（24.59s）、mypy 7文件无问题、ruff check 与 format 检查通过、`WEB_PORT=8135` 与默认8000端口 `/healthz` 均返回200（`{"status":"ok","env":"local","mode":"SAFE"}`）。全程未配置任何QQ或模型密钥。本轮仅状态与证据记录，未修改代码与测试。
+
+影响：W0门禁经独立复验确认，"已通过"结论与Windows基线可信；T-001与T-002仍阻塞，等待QQ官方应用/隔离群/权限与群规/白名单/脱敏样本；T-102依赖T-001。
+
+### 此前更新
+
+日期：2026-09-04
+
+修改内容：**W0 Windows基础兼容门禁实机通过**。在Windows 10专业版测试机（Build 19045.6466，AMD64，i5-12400）上新克隆私有仓库（main @ `c22b0c1`），完成干净安装（`uv sync --all-groups`，46包）、Alembic迁移（`init system_meta`）、24项pytest、mypy、ruff check与format检查；`WEB_PORT=8135`实际生效；非法日志级别、越界端口、盘符相对路径数据库均被拒绝启动；健康检查在默认8000与自定义8135端口均返回200。按决策D-011记录build号、CPU架构、补丁状态、内存、磁盘与网络方式；全程未配置任何QQ或模型密钥。同步更新 `PROGRESS.md`、`NEXT_TASKS.md`、`HANDOFF.md`、`MEMORY_INDEX.md`、`PROJECT_CONTEXT.md`（仅状态记录，未修改代码）。
+
+影响：W0由“待执行”转为“已通过”，Windows基线建立；T-001与T-002仍阻塞，等待QQ官方应用/隔离群/权限与群规/白名单/脱敏样本；T-102依赖T-001。
+
+日期：2026-09-04
+
 修改内容：**Windows测试机就绪确认（决策D-011）**。项目负责人确认正式测试机为Windows 10专业版；该机已安装Node.js LTS、Git、Python 3.12、FFmpeg与uv（由该机CodeBuddy执行）。`PROJECT_CONTEXT.md`、`docs/windows-operations.md`、`AGENTS.md`、`DECISIONS.md`中“优先Windows 11 x64”表述统一更正为Windows 10专业版。W0门禁尚未执行，Windows基线未建立。
 
 影响：W0由“阻塞”转为“测试机已就绪、待执行门禁”；T-001与T-002仍阻塞，等待QQ官方应用/隔离群/权限与群规/白名单/脱敏样本。
-
-### 此前更新
 
 日期：2026-09-04
 
