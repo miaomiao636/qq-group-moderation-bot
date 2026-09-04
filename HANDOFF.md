@@ -6,9 +6,17 @@
 
 ## 当前任务
 
-R-101已由主审复验通过。下一步为 W0（Windows基础兼容）、T-001（QQ官方能力验证）与 T-002（群规与样本准备）。
+R-101已由主审复验通过。**Windows 10专业版测试机已就绪（决策D-011，2026-09-04），该机已安装Node.js LTS、Git、Python 3.12、FFmpeg、uv；W0门禁待实机执行**。T-001（QQ官方能力验证）与 T-002（群规与样本准备）仍阻塞，等待项目负责人提供外部资源。
 
 ## 已完成内容
+
+### Windows 10专业版测试机就绪确认（决策D-011，2026-09-04）
+
+- 项目负责人确认正式整机测试机为Windows 10专业版；该机已通过CodeBuddy安装Node.js LTS、Git、Python 3.12、FFmpeg与uv。
+- 新增决策D-011：替代D-010中“优先Windows 11 x64”的初始假设；代码保持跨平台通用，不做Windows专用分支。
+- 同步更正 `PROJECT_CONTEXT.md`、`docs/windows-operations.md`、`AGENTS.md`、`NEXT_TASKS.md`、`PROGRESS.md`、`MEMORY_INDEX.md` 中“优先Windows 11 x64”表述。
+- W0状态由“阻塞（无电脑）”转为“测试机已就绪、门禁待执行”；门禁真实通过前不得宣称W0完成。
+- 本轮仅为文档状态更新，未修改任何代码；无测试可执行，验证方式为文档一致性核查。
 
 ### 首轮整改（R-101）
 
@@ -112,7 +120,7 @@ R-101已由主审复验通过。下一步为 W0（Windows基础兼容）、T-001
 ## 遗留问题
 
 - **R-101已通过**：四轮整改与远程CI取证（复验项11）均已完成并获主审确认，无遗留阻塞项。
-- **W0 阻塞**：需要项目负责人提供可用的空白Windows电脑（含系统版本、CPU架构、补丁状态记录）与测试网络；当前Mac环境无法执行。
+- **W0 测试机已就绪，门禁待执行**：Windows 10专业版电脑可用（决策D-011），开发工具已安装；剩余为获取私有仓库代码并执行W0门禁，首次执行时记录build号/CPU架构/补丁状态。当前Mac环境无法代跑W0门禁。
 - **T-001 阻塞**：需要项目负责人提供QQ官方应用、隔离测试群与全量消息/撤回/禁言权限。
 - **T-002 阻塞**：需要项目负责人提供群规、白名单与脱敏样本。
 - Windows 真实运行、自启、重启和更新恢复需在 Windows 专用机通过 T-404 演练验证，当前 Mac 环境无法验证。
@@ -120,9 +128,10 @@ R-101已由主审复验通过。下一步为 W0（Windows基础兼容）、T-001
 
 ## 下一步建议
 
-1. 请项目负责人提供 W0 所需 Windows 电脑、T-001 所需 QQ 官方应用/隔离群/权限、T-002 所需群规/白名单/脱敏样本。
-2. 获得上述资源后，依次推进 W0、T-001、T-002；T-102 依赖 T-001，须在 T-001 完成后才可开始。
-3. 完整Windows阶段和门槛见 `docs/windows-operations.md`。
+1. 在Windows 10专业版测试机上获取私有仓库代码（配好GitHub凭据后 `git clone`，或由该机CodeBuddy打开仓库），执行W0门禁：`uv sync --all-groups` → `alembic upgrade head` → `pytest` / `mypy app` / `ruff check app tests alembic` / `ruff format --check app tests alembic` → `python -m app` 健康检查；记录build号、CPU架构、补丁状态与脱敏输出。
+2. W0门禁真实通过后建立Windows基线证据（提交号、命令、时间、日志）。
+3. 请项目负责人继续提供 T-001 所需 QQ 官方应用/隔离群/权限、T-002 所需群规/白名单/脱敏样本；T-102 依赖 T-001，须在 T-001 完成后才可开始。
+4. 完整Windows阶段和门槛见 `docs/windows-operations.md`。
 
 ## 主审复验结论
 

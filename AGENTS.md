@@ -45,7 +45,7 @@
 - 主接入：QQ官方机器人API。
 - 可选执行：NapCatQQ + OneBot 11。
 - 多模态工具：OCR、二维码解析、ASR、视觉模型、FFmpeg；具体供应商需要通过脱敏样本评测后决定。
-- 部署：如启用NapCat，使用固定Windows 11专用机和没有重要资产的专用管理员QQ。
+- 部署：如启用NapCat，使用固定Windows 10专业版专用机和没有重要资产的专用管理员QQ。
 - 首版管理后台优先使用服务端页面；没有明确收益时不要引入独立前端工程或微服务拆分。
 
 ## 安全与隐私
@@ -118,7 +118,7 @@
 
 ## Windows无人值守运行约束
 
-- 项目负责人已选择一台空白Windows电脑作为正式整机测试环境；优先使用Windows 11 x64，测试前必须记录实际Windows版本、CPU架构和补丁状态。
+- 项目负责人已确认正式整机测试环境为Windows 10专业版（决策D-011）；首次测试前必须记录实际Windows版本号、CPU架构和补丁状态。
 - Windows测试分为代码兼容性、官方链路、核心安全模式、无人值守恢复、可选NapCat和最终分阶段上线六级；各级进入条件以 `docs/windows-operations.md` 为准，不得跳级宣称整机验收通过。
 - GitHub Actions或同等远程CI的Linux/Windows任务必须有可追溯的真实运行记录；仅存在 `windows-latest` 配置或在Mac上解析YAML不算Windows CI通过。
 - 真实QQ、NapCat和24×7恢复只能在正式Windows测试机的隔离账号、隔离群中验证，GitHub托管Runner和Mac虚拟机结果不能替代整机验收。
