@@ -9,6 +9,10 @@ jobs:
   quality:
     name: Lint, Type-check & Test (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
+    env:
+      # Windows runner 默认 locale 是 cp1252，强制 UTF-8 模式，
+      # 避免 configparser 等按本地编码读 UTF-8 文件时报 UnicodeDecodeError。
+      PYTHONUTF8: "1"
     strategy:
       fail-fast: false
       matrix:
