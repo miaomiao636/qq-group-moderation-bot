@@ -239,3 +239,31 @@
 
 - 配置加载时进行类型与范围校验，非法值直接抛 `ValidationError`。
 - 测试覆盖无效配置拒绝启动与生产密码校验。
+
+---
+
+## 决策 D-010：使用独立Windows电脑进行分阶段正式测试
+
+### 决策日期
+
+2026-09-04
+
+### 决策内容
+
+- 使用一台空白Windows电脑作为项目正式整机测试环境；优先Windows 11 x64，首次测试前记录实际版本、CPU架构和补丁状态。
+- Windows验证分为W0基础兼容性、W1 QQ官方链路、W2核心安全模式、W3无人值守恢复、W4可选NapCat和W5最终分阶段验收。
+- GitHub Actions或同等远程CI负责Linux/Windows代码兼容性门禁；真实Windows电脑负责QQ、NapCat、Windows Service、电源、锁屏、重启和恢复验证，两者不能互相替代。
+- 核心安全模式可以在NapCat关闭时独立完成整体验收；W4只有在T-303、T-304通过且负责人明确批准后才执行。
+
+### 原因
+
+- GitHub托管Runner是短生命周期测试环境，无法代表持续QQ登录、交互式NapCat或24×7电源与恢复行为。
+- Mac为ARM架构，Windows ARM虚拟机可用于辅助冒烟测试，但不能替代目标Windows实机的最终兼容性和稳定性证据。
+- 分阶段测试能在较早阶段发现Windows路径、文件锁、权限和服务问题，同时避免未完成安全保护时接入真实处罚能力。
+
+### 影响
+
+- 进入每个Windows测试阶段前必须满足 `PROJECT_CONTEXT.md` 与 `docs/windows-operations.md` 的对应门槛。
+- W0不使用真实QQ或模型密钥；W1至W4只使用隔离账号和隔离群。
+- 任何Agent不得以“CI文件包含windows-latest”或“Mac本地测试通过”代替Windows真实证据。
+- Windows测试记录必须包含代码提交号、系统版本、执行时间、命令或场景、结果和脱敏日志。

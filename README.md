@@ -2,7 +2,7 @@
 
 24×7 识别 QQ 群中的垃圾广告、诈骗及自定义违规内容，支持文字、图片、GIF、表情、视频、语音、文件和卡片；自动执行高置信消息的撤回和分级禁言，整理两次违规证据并交由人工决定是否踢人。
 
-> 当前阶段：项目脚手架与质量门禁（T-101）。业务代码尚未编写。
+> 当前阶段：R-101脚手架整改复验。SQLite相对路径整改与回归测试已完成，仅剩真实Linux/Windows CI证据一个阻塞项，业务代码尚未编写。
 
 ## 架构概览
 
@@ -128,3 +128,5 @@ tests/fixtures/   # 脱敏的 QQ 事件、媒体和模型响应样本（T-001/T-
 当前仓库尚未完成Windows Service、自启动和重启恢复实现。部署前必须完成 `NEXT_TASKS.md` 的 `T-404`，并按照 [`docs/windows-operations.md`](docs/windows-operations.md) 验证电源、启动、更新、状态恢复、监控和备份流程。
 
 屏幕可以关闭并锁屏，但主机不能进入睡眠或休眠。开发命令 `uv run uvicorn app.main:app --reload` 只用于开发，不得作为生产运行方式；生产运行使用 `uv run python -m app` 或由 Windows Service 管理。
+
+项目已确定使用一台空白Windows电脑进行正式整机测试。该电脑按W0至W5分阶段投入，不需要等全部功能写完才第一次测试：R-101通过后先做基础兼容性，T-102后测试QQ官方链路，核心业务完成后测试安全模式，T-404后测试无人值守恢复，NapCat只在单独批准后测试。详细进入条件见 [`docs/windows-operations.md`](docs/windows-operations.md) 的“分阶段测试计划”。

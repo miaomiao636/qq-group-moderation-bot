@@ -1,4 +1,4 @@
-"""应用配置：通过环境变量加载，真实凭据不进入仓库。"""
+"""应用配置：从环境变量加载，配置值在加载时进行类型与范围校验，真实凭据不进入仓库。"""
 
 from __future__ import annotations
 
@@ -14,6 +14,42 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent
 
 # 合法日志级别
 _VALID_LOG_LEVELS = {"DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"}
+
+
+def _normalize_sqlite_url(url: str) -> str:
+    """把相对 SQLite 路径规范化为基于项目根目录的绝对路径。
+
+    问题背景：`.env.example` 使用 `sqlite+aiosqlite:///./data/moderation.db`，
+    该相对路径会按进程当前工作目录解析。从不同目录执行迁移或启动时，
+    会连接到不同数据库，造成"迁移后启动却连到空库"的漂移。
+
+    本函数在配置层把相对路径统一解析到 `PROJECT_ROOT` 下，使迁移与启动
+    无论从哪个工作目录运行都连接同一数据库。绝对路径与 `:memory:` 保持不变。
+
+    兼容的路径形式：
+    - `sqlite+aiosqlite:///./data/moderation.db`（相对，含 `./`）
+    - `sqlite+aiosqlite:///data/moderation.db`（相对，不含 `./`）
+    - `sqlite+aiosqlite:////abs/path/db.db`（绝对，Unix）
+    - `sqlite+aiosqlite:///C:/data/db.db` 或 `sqlite+aiosqlite:///C:\\data\\db.db`（Windows 绝对）
+    - `sqlite+aiosqlite:///:memory:`（内存库，原样保留）
+    """
+    if not url.startswith("sqlite"):
+        return url
+    # 形如 sqlite+aiosqlite:///path 或 sqlite:///path
+    prefix, sep, path = url.partition(":///")
+    if not sep:
+        return url
+    if not path or path == ":memory:":
+        return url
+    # Windows 绝对路径：C:/... 或 C:\...（盘符后跟冒号）
+    if len(path) >= 2 and path[1] == ":":
+        return url
+    # Unix 绝对路径：以 / 开头
+    if path.startswith("/"):
+        return url
+    # 相对路径：基于项目根目录解析
+    resolved = (PROJECT_ROOT / path).resolve()
+    return f"{prefix}:///{resolved}"
 
 
 class Settings(BaseSettings):
@@ -59,7 +95,7 @@ class Settings(BaseSettings):
 
     @model_validator(mode="after")
     def _validate(self) -> Settings:
-        """跨字段校验：日志级别合法、生产环境必须设置管理员密码。"""
+        """跨字段校验：日志级别合法、生产环境必须设置管理员密码、SQLite 路径规范化。"""
         if self.log_level.upper() not in _VALID_LOG_LEVELS:
             raise ValueError(
                 f"LOG_LEVEL 非法：{self.log_level!r}。"
@@ -70,6 +106,8 @@ class Settings(BaseSettings):
                 "生产环境（APP_ENV=prod）必须设置非空 ADMIN_PASSWORD，"
                 "仅含空白字符的密码同样被拒绝。"
             )
+        # 相对 SQLite 路径统一解析到项目根目录，避免依赖当前工作目录
+        self.database_url = _normalize_sqlite_url(self.database_url)
         return self
 
 
