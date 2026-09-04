@@ -69,6 +69,22 @@ async def get_session() -> AsyncIterator[AsyncSession]:
         yield session
 
 
+def get_head_revision() -> str:
+    """返回当前代码中 Alembic 迁移链的最新版本（head）。
+
+    从 `alembic/versions/` 脚本目录解析，确保与代码中的迁移定义一致。
+    """
+    from alembic.config import Config
+    from alembic.script import ScriptDirectory
+
+    cfg = Config("alembic.ini")
+    script = ScriptDirectory.from_config(cfg)
+    head = script.get_current_head()
+    if head is None:
+        raise RuntimeError("未找到任何 Alembic 迁移脚本，无法确定 head 版本。")
+    return head
+
+
 async def get_db_revision(
     target_engine: AsyncEngine | None = None,
 ) -> str | None:
@@ -88,14 +104,20 @@ async def get_db_revision(
 async def check_db_migrated(
     target_engine: AsyncEngine | None = None,
 ) -> None:
-    """校验数据库已通过 Alembic 迁移。
+    """校验数据库已迁移到当前代码的 Alembic 最新版本（head）。
 
-    必须存在 `alembic_version` 表且版本非空，否则拒绝启动，
-    防止绕过 Alembic 创建漂移数据库。
+    必须存在 `alembic_version` 表，且版本号等于当前代码的 head 版本，
+    否则拒绝启动。仅检查"版本非空"不足以防止旧数据库结构直接运行新代码。
     """
     revision = await get_db_revision(target_engine)
     if revision is None:
         raise RuntimeError(
             "数据库未通过 Alembic 迁移（缺少 alembic_version 记录）。"
             "请先运行 `uv run alembic upgrade head`，禁止使用 create_all 绕过迁移。"
+        )
+    head = get_head_revision()
+    if revision != head:
+        raise RuntimeError(
+            f"数据库迁移版本 {revision!r} 与当前代码要求的 Alembic head {head!r} 不一致。"
+            "请运行 `uv run alembic upgrade head` 将数据库升级到最新版本。"
         )

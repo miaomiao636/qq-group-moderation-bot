@@ -21,6 +21,12 @@
   - 修正 README 规划目录与实际目录混淆。
   - 处理 TestClient 弃用警告（安装 `httpx2`、锁定 `anyio` 警告、修复 Alembic `path_separator`）。
   - 初始化 Git 仓库并建立基线提交。
+- **R-101 复验整改（已完成，待复验）**（2026-09-04）：
+  - 数据库校验必须等于当前代码的 Alembic head 版本，拒绝 `stale_revision` 等过期版本。
+  - 生产环境仅含空白字符的密码被拒绝（`strip` 后非空）。
+  - CI 新增 `runtime-deps` 回归检查 job，仅安装运行时依赖并验证 `import app.main`。
+  - 测试临时目录在会话结束后主动删除，不残留 `qqbot-test-*`/`qqbot-nomigrate-*`。
+  - 修正 `NEXT_TASKS.md` 状态矛盾与 `HANDOFF.md` 基线提交号。
 - **Windows 24×7运行与恢复需求补充**（2026-09-04）：
   - 新增 `docs/windows-operations.md`，并在项目上下文、决策、Agent规则、任务和README中同步恢复机制。
   - 新增T-404，覆盖Windows Service、自启动、状态恢复、更新维护、健康检查、备份和NapCat人工回退。
@@ -33,14 +39,15 @@
 ## 已知问题
 
 - 无阻塞性问题。
-- 注意：`anyio.abc.BlockingPortal` 弃用警告来自 starlette 内部依赖，已在 pytest 配置中锁定。
+- **Windows CI 无真实运行证据**：工作流已配置 Linux+Windows 矩阵，但当前仓库无远程地址，无法在 GitHub Actions 中产生 Windows 真实运行证据；需推送远程仓库后由主审Agent确认。
+- 注意：`anyio.abc.BlockingPortal` 弃用警告来自 starlette 库，已在 pytest 配置中锁定。
 - 注意：Windows 真实运行、自启动、重启和更新恢复需在 Windows 专用机通过 T-404 演练验证，当前 Mac 环境无法验证。
-- 尚无QQ官方适配器、审核引擎、案件、审批、报告或NapCat实现。
+- 尚无QQ 官方适配器、机器人引擎、案件、审批、报告或NapCat实现。
 
 ## 最近更新
 
 日期：2026-09-04
 
-修改内容：完成 R-101 全部整改项，并通过干净生产安装、Alembic 迁移、配置校验、端口生效、CI 配置和 Git 基线验证。
+修改内容：完成 R-101 全部整改项及复验项，并通过干净生产安装、Alembic 迁移（含 head 版本校验）、配置校验、端口生效、CI 配置（含 runtime-deps 回归）和 Git 基线验证。
 
 影响：脚手架达到可部署、可审核、可回退状态；R-101 复验通过后可开始 T-102。

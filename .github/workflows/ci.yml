@@ -35,3 +35,23 @@ jobs:
 
       - name: Test (pytest)
         run: uv run pytest
+
+  runtime-deps:
+    name: Runtime deps regression (clean install)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          python-version: "3.12"
+
+      # 回归检查：仅安装运行时依赖（不带 dev 组），验证应用可导入。
+      # 若运行时依赖被误放入 dev 组（如 aiosqlite），此步骤会失败，
+      # 防止"测试通过但干净生产环境无法启动"的回归。
+      - name: Install runtime deps only (no dev group)
+        run: uv sync --locked --no-dev
+
+      - name: Verify app imports with runtime deps only
+        run: uv run python -c "from app.main import app; print('runtime import OK')"

@@ -2,7 +2,7 @@
 
 ## 当前状态
 
-- 当前阶段：T-003与T-101已交付；T-101未通过2026-09-04主审，须先完成R-101整改。
+- 当前阶段：T-003与T-101已交付；R-101整改实现已完成并验证通过，等待主审Agent复验；复验通过前不开始T-102。
 - 当前最高目标：先修复脚手架的部署阻塞问题，并行验证QQ官方能力和准备验收样本，再搭建业务链路。
 - 任务执行原则：每个Agent一次只认领一个边界清晰的任务；完成后更新 `PROGRESS.md` 和 `HANDOFF.md`，架构变化同步更新 `DECISIONS.md` 和 `PROJECT_CONTEXT.md`。
 - 禁止事项：在身份链路验证完成前，不实现真实NapCat批量踢人；任何模型结果都不能直接创建踢人动作。
@@ -68,8 +68,14 @@
 - [x] 将README目录树标记为规划结构，区分当前实际存在与规划中目录。
 - [x] 处理或明确锁定TestClient的弃用警告（安装 `httpx2`、锁定 `anyio` 警告、修复 Alembic `path_separator`）。
 - [x] 初始化本地Git仓库并建立首个基线提交，使后续修改可审核和回退。
+- [x] 数据库校验必须等于当前代码的Alembic head版本，拒绝 `stale_revision` 等过期版本（R-101复验项1）。
+- [x] 生产环境仅含空白字符的密码被拒绝（`strip` 后非空）（R-101复验项2）。
+- [x] CI新增 `runtime-deps` 回归检查：仅安装运行时依赖并验证 `import app.main`，防止运行时依赖被误放入开发组（R-101复验项3）。
+- [x] 测试临时目录在会话结束后主动删除，不残留 `qqbot-test-*`/`qqbot-nomigrate-*`（R-101复验项5）。
 
-完成标准：全新运行时安装可启动；Alembic是唯一生产建表路径；无效生产配置启动失败；`.env`端口设置生效；`app/tests/alembic`质量门禁及Linux/Windows CI通过；Git可以显示可审核差异。**实现已完成，等待主审Agent复验。**
+完成标准：全新运行时安装可启动；Alembic是唯一生产建表路径且校验head版本；无效生产配置启动失败；`.env`端口设置生效；`app/tests/alembic`质量门禁及Linux/Windows CI通过；Git可以显示可审核差异。**实现已完成，等待主审Agent复验。**
+
+> 说明：Windows CI 已配置 Linux+Windows 矩阵，但当前仓库无远程地址，无法在 GitHub Actions 中产生 Windows 真实运行证据；需在推送远程仓库后由主审Agent确认 Windows job 实际通过（R-101复验项4）。
 
 ### T-102 统一消息契约与官方机器人适配器
 

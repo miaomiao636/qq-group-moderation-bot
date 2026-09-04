@@ -65,9 +65,10 @@ class Settings(BaseSettings):
                 f"LOG_LEVEL 非法：{self.log_level!r}。"
                 f"可选值：{', '.join(sorted(_VALID_LOG_LEVELS))}。"
             )
-        if self.app_env == "prod" and not self.admin_password:
+        if self.app_env == "prod" and not self.admin_password.strip():
             raise ValueError(
-                "生产环境（APP_ENV=prod）必须设置非空 ADMIN_PASSWORD，禁止空密码启动。"
+                "生产环境（APP_ENV=prod）必须设置非空 ADMIN_PASSWORD，"
+                "仅含空白字符的密码同样被拒绝。"
             )
         return self
 

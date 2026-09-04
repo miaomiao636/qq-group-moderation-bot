@@ -21,21 +21,46 @@ def test_healthz() -> None:
     assert body["mode"] == "SAFE"
 
 
-def test_healthz_requires_migrated_db() -> None:
+def test_healthz_requires_migrated_db(tmp_path: Path) -> None:
     """未迁移的数据库应被拒绝（Alembic 是唯一建表路径）。"""
     import asyncio
-    import tempfile
 
     from app.db import check_db_migrated
     from sqlalchemy.ext.asyncio import create_async_engine
 
-    tmp = tempfile.mkdtemp(prefix="qqbot-nomigrate-")
-    empty_engine = create_async_engine(f"sqlite+aiosqlite:///{Path(tmp) / 'empty.db'}")
+    empty_engine = create_async_engine(f"sqlite+aiosqlite:///{tmp_path / 'empty.db'}")
     try:
         with pytest.raises(RuntimeError, match="Alembic"):
             asyncio.run(check_db_migrated(empty_engine))
     finally:
         asyncio.run(empty_engine.dispose())
+
+
+def test_healthz_rejects_stale_revision(tmp_path: Path) -> None:
+    """数据库版本不等于当前代码 Alembic head 时应被拒绝。"""
+    import asyncio
+
+    from app.db import check_db_migrated
+    from sqlalchemy import text
+    from sqlalchemy.ext.asyncio import create_async_engine
+
+    engine = create_async_engine(f"sqlite+aiosqlite:///{tmp_path / 'stale.db'}")
+    try:
+        # 手动创建 alembic_version 表并写入一个过期版本号
+        async def _seed() -> None:
+            async with engine.begin() as conn:
+                await conn.execute(
+                    text("CREATE TABLE alembic_version (version_num VARCHAR(32) NOT NULL)")
+                )
+                await conn.execute(
+                    text("INSERT INTO alembic_version (version_num) VALUES ('stale_revision')")
+                )
+
+        asyncio.run(_seed())
+        with pytest.raises(RuntimeError, match="stale_revision"):
+            asyncio.run(check_db_migrated(engine))
+    finally:
+        asyncio.run(engine.dispose())
 
 
 def test_invalid_run_mode_rejected() -> None:
@@ -66,6 +91,12 @@ def test_prod_requires_admin_password() -> None:
     """生产环境必须设置非空管理员密码。"""
     with pytest.raises(ValueError, match="ADMIN_PASSWORD"):
         Settings(app_env="prod", admin_password="", _env_file=None)
+
+
+def test_prod_rejects_whitespace_password() -> None:
+    """生产环境仅含空白字符的密码应被拒绝。"""
+    with pytest.raises(ValueError, match="ADMIN_PASSWORD"):
+        Settings(app_env="prod", admin_password="   ", _env_file=None)
 
 
 def test_prod_accepts_admin_password() -> None:
