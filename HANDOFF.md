@@ -50,7 +50,12 @@ R-101第四轮整改：修复提交 `7fca851` 主审复验提出的安全与验�
 - **整改D（Windows盘符相对路径）**：`C:relative\db.db` 这类盘符相对路径依赖各盘符的当前工作目录，不可靠。`_normalize_sqlite_url` 现在明确拒绝该形式并给出可操作的错误信息；`C:/...` 与 `C:\...` 绝对路径仍原样保留。
 - **整改E（文档状态）**：修正 `PROGRESS.md`、`HANDOFF.md`、`NEXT_TASKS.md`，不再表述"仅剩CI证据"；如实记录主审未通过与整改范围。
 - **整改F（完整验证）**：在干净临时副本（含哨兵 `data/moderation.db`）中运行全部验证，详见"验证结果"。
-- **整改G（远程CI证据）**：当前仓库仍无远程地址，推送与真实CI取证需项目负责人提供私有远程仓库。
+- **整改G（远程CI证据）**：创建私有远程仓库 `miaomiao636/qq-group-moderation-bot` 并推送。首次真实Windows CI暴露 `alembic.ini` 中文注释在cp1252编码下解码失败的问题，已修复（ini改为ASCII注释 + CI强制 `PYTHONUTF8=1`）。提交 `0e0dd73` 的三个CI任务全部真实成功，详见"验证结果"。
+
+### Windows CI 首次真实运行暴露并修复的问题
+
+- Windows runner 默认 locale 为 cp1252，configparser 按 locale 编码读取含中文注释（UTF-8字节）的 `alembic.ini`，`UnicodeDecodeError` 导致所有测试 setup 失败。
+- 修复：`alembic.ini` 注释改为 ASCII；CI quality 任务设置 `PYTHONUTF8=1`。该修复同时保护 Windows 生产部署时 `get_head_revision()` 读取 `alembic.ini` 的路径。
 
 ## 修改文件
 
@@ -96,21 +101,27 @@ R-101第四轮整改：修复提交 `7fca851` 主审复验提出的安全与验�
 - **运行时依赖**：干净 `uv sync --no-dev` 后 `uv run --no-sync` 导入 `app.main` 成功，pytest 不可导入。
 - **Git**：基线提交 `688a5da` 已建立，修复修改可审计。
 
+### 远程 CI 真实运行证据（复验项11，提交 `0e0dd73`）
+
+- 远程仓库：`https://github.com/miaomiao636/qq-group-moderation-bot`（私有）。
+- CI 运行：`https://github.com/miaomiao636/qq-group-moderation-bot/actions/runs/33877462326`（结论 success，head 提交 `0e0dd73`）。
+- Ubuntu质量：https://github.com/miaomiao636/qq-group-moderation-bot/actions/runs/33877462326/job/101037748579 ✓
+- Windows质量：https://github.com/miaomiao636/qq-group-moderation-bot/actions/runs/33877462326/job/101037748749 ✓
+- 运行时依赖回归：https://github.com/miaomiao636/qq-group-moderation-bot/actions/runs/33877462326/job/101037748778 ✓
+
 ## 遗留问题
 
-- **待复验**：四轮整改（测试安全、真实Alembic端到端、盘符相对路径拒绝、文档状态）已完成，等待主审复验。
-- **远程仓库未配置**：当前仓库无远程地址，复验项11（Ubuntu质量、Windows质量、运行时依赖三个真实CI成功记录）需项目负责人提供私有远程仓库后才能完成；本地验证不能替代远程CI证据。
+- **待复验**：四轮整改（测试安全、真实Alembic端到端、盘符相对路径拒绝、文档状态、Windows CI编码修复）与远程CI取证（复验项11）均已完成，等待主审复验。
 - Windows 真实运行、自启动、重启和更新恢复需在 Windows 专用机通过 T-404 演练验证，当前 Mac 环境无法验证。
 - T-001 和 T-002 仍需要项目负责人提供 QQ 官方应用、隔离测试群、群规与脱敏样本。
 - T-404 只有需求和验收标准，没有 Windows 实现与实机证据。
 
 ## 下一步建议
 
-1. 认领R-101复验项11：推送私有远程仓库并获取真实Linux/Windows CI证据（Ubuntu质量、Windows质量、运行时依赖回归三个成功任务）。
-2. 整改Agent必须重新运行干净运行时安装、Alembic升降级、配置拒绝、实际端口、pytest、mypy、ruff和Git范围检查，并更新本交接记录；不能只运行新增测试。
-3. 主审复验通过R-101后，在空白Windows电脑执行W0基础兼容测试并保存脱敏记录。
-4. T-001可与本次整改并行；只有T-001与T-101都通过后才开始T-102。
-5. T-002样本准备可并行；完整Windows阶段和门槛见 `docs/windows-operations.md`。
+1. 主审复验四轮整改与远程CI证据（提交 `0e0dd73`，三个CI任务真实成功）。
+2. 主审复验通过R-101后，在空白Windows电脑执行W0基础兼容测试并保存脱敏记录。
+3. T-001可与后续工作并行；只有T-001与T-101都通过后才开始T-102。
+4. T-002样本准备可并行；完整Windows阶段和门槛见 `docs/windows-operations.md`。
 
 ## 主审复验结论
 
@@ -134,4 +145,4 @@ R-101第四轮整改：修复提交 `7fca851` 主审复验提出的安全与验�
 
 - 提交 `7fca851` 复验提出的缺陷已全部整改：测试完全使用 `tmp_path` 并带真实数据目录守卫夹具；`alembic.ini` 使用 `%(here)s` 并新增子进程真实 Alembic 升级与跨目录启动的端到端测试；盘符相对路径明确拒绝；文档状态已修正。
 - 干净临时副本（含哨兵真实数据库）中完成全部验证：24项pytest、静态检查、Alembic升降级、构建、配置拒绝、实际端口、运行时依赖；哨兵数据库字节级未变。
-- 复验项11（真实Linux/Windows CI证据）因仓库无远程地址仍未完成，需项目负责人提供私有远程仓库。
+- 复验项11已完成：私有远程仓库已建立，提交 `0e0dd73` 的 Ubuntu质量、Windows质量、运行时依赖三个CI任务真实成功（链接见"验证结果"）。
