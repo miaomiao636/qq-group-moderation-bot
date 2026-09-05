@@ -29,12 +29,16 @@ class SystemMeta(Base):
 
 
 class ProcessedEvent(Base):
-    """已处理事件登记表：message_id 主键即幂等去重的最终防线。"""
+    """已处理事件登记表：成功才标记 PROCESSED，失败可重试（FAILED）。"""
 
     __tablename__ = "processed_events"
 
     message_id: Mapped[str] = mapped_column(String(128), primary_key=True)
     event_type: Mapped[str] = mapped_column(String(64), default="GROUP_MESSAGE_CREATE")
+    status: Mapped[str] = mapped_column(
+        String(16), default="PROCESSED"
+    )  # PROCESSED / PROCESSING / FAILED
+    error_message: Mapped[str] = mapped_column(String(500), default="")
     processed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
 
 

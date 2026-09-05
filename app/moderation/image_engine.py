@@ -103,12 +103,18 @@ class ImageModerationEngine:
         return None
 
     def analyze(self, source: str | bytes | Path) -> MediaAnalysis:
-        """分析单张图片/GIF 文件或字节。"""
+        """分析单张图片/GIF 文件或字节。
+
+        R-102-5：缓存键使用**完整帧哈希集合**，避免 GIF 仅以第一帧为准导致
+        不同动图因首帧相同而误命中。
+        """
+        import hashlib
+
         frames = image_frames_from_source(source)
         hashes = [dhash(f) for f in frames]
-        first_hash = hashes[0]
-        if first_hash in self._cache:
-            cached = self._cache[first_hash]
+        cache_key = hashlib.sha256("|".join(hashes).encode("utf-8")).hexdigest()
+        if cache_key in self._cache:
+            cached = self._cache[cache_key]
             return MediaAnalysis(
                 verdict=cached.verdict,
                 confidence=cached.confidence,
@@ -136,7 +142,7 @@ class ImageModerationEngine:
                 ["黑名单图哈希命中"],
                 reason="命中负责人确认的违规图黑名单",
             )
-            self._cache[first_hash] = analysis
+            self._cache[cache_key] = analysis
             return analysis
         if hashes and all(v == "allow" for v in hash_verdicts):
             analysis = MediaAnalysis(
@@ -147,7 +153,7 @@ class ImageModerationEngine:
                 ["白名单图哈希命中"],
                 reason="命中负责人确认的允许图白名单",
             )
-            self._cache[first_hash] = analysis
+            self._cache[cache_key] = analysis
             return analysis
 
         # 二维码信号
@@ -164,7 +170,7 @@ class ImageModerationEngine:
         confidence = 0.30 if signals else 0.10
         reason = "；".join(signals) if signals else "未命中黑/白名单，证据不足，转人工"
         analysis = MediaAnalysis(verdict, confidence, hashes, qr_payloads, signals, reason=reason)
-        self._cache[first_hash] = analysis
+        self._cache[cache_key] = analysis
         return analysis
 
 

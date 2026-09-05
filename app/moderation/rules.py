@@ -280,7 +280,7 @@ class TextRuleEngine:
         extra_context: dict[str, Any] | None = None,
     ) -> ModerationDecision:
         """评估一条消息，返回决策（决策结构中永不存在 kick）。"""
-        hits, confidence, category = _evaluate_text_rules(msg.text)
+        hits, confidence, category = _evaluate_text_rules(msg.text, self._blacklist)
         protected = msg.sender.role in ("owner", "admin")
 
         flood = self.frequency.check(msg.group_openid, msg.sender.member_openid, msg, now=now)

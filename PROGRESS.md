@@ -2,14 +2,21 @@
 
 ## 当前阶段
 
-**🟢 影子模式已在4个测试群上线运行（2026-09-05）**：常驻运行器在线监听（解析→去重→判定→落库，不执行处罚），判定结果可在管理后台 `/admin/shadow` 查看。T-102~T-203、T-301/302、T-401/402 全部交付，141项测试全绿。待办：告知文案群内公示 → 影子稳定观察 → 切换正式模式（撤回/禁言生效）。
+**R-102 核心正确性整改已交付（2026-09-06，基于 de523dd）**：媒体按类型分发、去重成功才标记且失败可重试、媒体缺失=record_only、下载流式限制+安全文件名+配额+清理、GIF完整帧缓存键、extra_blacklist参与、复核门独立硬证据、案件审计from/to与并发幂等立案。全量门禁通过。**未启用真实撤回/禁言/警告/NapCat**；未推进 T-404/正式处罚/NapCat，等待主审核。
 
 ## 已完成
 
-- **T-403 影子接入（已交付并上线）**（2026-09-05，提交8b709c6）：
-  - `app/runtime/`：runner（WebSocket常驻+心跳+指数退避重连+媒体即时下载）、pipeline（解析→去重→文字规则→复核门→媒体判定→落库，影子模式零动作）、models（shadow_decisions表，迁移b12f6d84aa77）、`python -m app.runtime` 入口。
-  - 管理后台新增 `/admin/shadow` 判定页（最近100条+分布统计）。
-  - 负责人确认（D-015）：报告渠道=仅网页；告知文案已审定；监听全部4个测试群。
+- **R-102 核心正确性整改（已交付，2026-09-06）**：
+  1. 流水线按图片/GIF/语音/视频/文件类型分发对应引擎（pipeline._is_* + media_engine），禁止全部进图片引擎；
+  2. 去重重写为 begin_processing→mark_processed/mark_failed，失败可重试（processed_events 新增 status/error_message 列，迁移 d2b1f9a60e45）；
+  3. 媒体缺失/下载失败/解析失败 → record_only，绝不 allow；
+  4. 新增 app/adapters/qq_official/media.py：流式大小限制（图50MB/视频200MB）、安全文件名、磁盘配额2GB、媒体清理 purge_media 接入报告清理；
+  5. GIF缓存键改为完整帧哈希集合 sha256，避免首帧相同误命中；
+  6. TextRuleEngine.evaluate 使用 self._blacklist（含 extra_blacklist）；
+  7. ReviewGate 重做：硬证据=主决策命中 R001/R003，软信号（R002）不算硬证据，不重复调用同规则；
+  8. 案件审计 from 在赋值前捕获；案件幂等立案（同群同成员已有PENDING_REVIEW则复用）；case_no 冲突重试；
+  9. 新增 tests/test_r102.py 10项回归（失败重试、语音/视频/PDF主链路、媒体缺失、GIF多帧缓存、extra_blacklist、复核门软信号拦截、审计from/to、并发幂等）。
+
 
 - **T-301/T-302 管理后台与人工工作流（已交付）**（2026-09-05）：
   - `app/web/`：auth（会话登录，prod强制非空密码）、confirm（5分钟一次性确认码，用后即焚）、routes（案件列表/详情/证据页——成员标注"未验证QQ号"；审批流=预览+确认码→已人工踢出结案；保留/误判撤销/取消；规则视图；报告页+手动清理入口）。

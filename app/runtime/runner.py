@@ -18,6 +18,7 @@ from typing import Any
 import httpx
 from websockets.asyncio.client import connect
 
+from app.adapters.qq_official.media import download_attachment
 from app.adapters.qq_official.parser import EventParseError
 from app.db import SessionLocal
 from app.moderation.image_engine import ImageModerationEngine
@@ -93,33 +94,25 @@ async def _get_token(client: httpx.AsyncClient, app_id: str, app_secret: str) ->
 
 
 async def _download_attachments(client: httpx.AsyncClient, payload: dict[str, Any]) -> None:
-    """D-013：附件URL有时效，收到即下载到 data/media/（文件名取消息ID尾缀+序号，保证唯一）。"""
+    """R-102-4：附件安全下载到 data/media/（流式大小限制+安全文件名+磁盘配额）。
+
+    下载失败/超限/超配额时 filename 留空，流水线据此判 record_only（不处罚）。
+    """
     message_id = str(payload.get("id") or "msg")
     for idx, att in enumerate(payload.get("attachments") or []):
         url = str(att.get("url") or "")
         if not url:
             continue
-        if url.startswith("//"):
-            url = "https:" + url
-        try:
-            resp = await client.get(url, timeout=30)
-            resp.raise_for_status()
-        except httpx.HTTPError:
-            continue  # 下载失败不处罚，由媒体引擎按缺失处理
         declared = str(att.get("content_type") or "")
-        ext = EXT_BY_CT.get(declared, ".bin")
-        if resp.content[:3] == b"GIF":
-            ext = ".gif"
-        elif resp.content[:8] == b"\x89PNG\r\n\x1a\n":
-            ext = ".png"
-        elif resp.content[:3] == b"\xff\xd8\xff":
-            ext = ".jpg"
-        name = f"{message_id[-12:]}_{idx}{ext}"
-        (MEDIA_DIR / name).write_bytes(resp.content)
-        # 回写本地文件名供流水线媒体判定对应
-        att["filename"] = name
-        if not att.get("url"):
-            att["url"] = url
+        name, _ext, reason = await download_attachment(
+            client, url, MEDIA_DIR, message_id, idx, declared
+        )
+        if name:
+            att["filename"] = name
+        else:
+            # 下载失败：流水线将判 record_only
+            att["filename"] = ""
+            att["_download_error"] = reason
 
 
 async def _listen_once(app_id: str, app_secret: str, stop: asyncio.Event) -> float:

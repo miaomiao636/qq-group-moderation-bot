@@ -6,9 +6,20 @@
 
 ## 当前任务
 
-**🟢 影子模式已上线（2026-09-05）**：常驻运行器（`uv run python -m app.runtime`，后台进程）在4个测试群在线监听，影子模式=解析→去重→判定→落库，**不执行任何处罚**。判定结果：管理后台 `/admin/shadow`。负责人已审定告知文案（待其群内公示）并确认：报告渠道=仅网页、D-014零预算方案、监听全部4群。
+**R-102 核心正确性整改已交付（2026-09-06，基于远程 main de523dd）**。10项整改全部完成并补回归测试，全量门禁通过。**未启用真实撤回/禁言/警告/NapCat**；未推进 T-404/正式处罚/NapCat，已推送远程等待主审核。
 
 ## 已完成内容
+
+### R-102 核心正确性整改（2026-09-06，接手Agent）
+
+按主审10项要求执行，详见 `PROGRESS.md`。要点：
+- 流水线按媒体类型分发（图片/GIF→image_engine、语音→evaluate_voice、视频→evaluate_video、文件→evaluate_file），不再全部进图片引擎；
+- 去重：begin_processing 标记 PROCESSING，成功 mark_processed，失败 mark_failed 可重试（迁移 d2b1f9a60e45 加 status/error_message）；
+- 媒体缺失/下载失败/解析失败 → record_only，绝不 allow（解析失败也落库一条记录）；
+- 新增 app/adapters/qq_official/media.py：流式大小限制、安全文件名、磁盘配额2GB、purge_media 接入报告清理；
+- GIF缓存键改完整帧 sha256；TextRuleEngine.evaluate 用 self._blacklist；ReviewGate 重做（硬证据 R001/R003，软信号 R002 不算硬证据，不重复调用）；
+- 案件审计 from 赋值前捕获；案件幂等立案 + case_no 冲突重试；
+- tests/test_r102.py 10项回归。全量 154+ 项测试、mypy 41文件、ruff 全过。
 
 ### 影子模式上线（2026-09-05第六批，接手Agent）
 

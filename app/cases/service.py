@@ -16,6 +16,7 @@ from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from sqlalchemy import func, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.adapters.qq_official.contract import StandardMessage
@@ -167,7 +168,22 @@ async def record_violation(
 async def _create_case(
     session: AsyncSession, msg: StandardMessage, violation: ViolationRecord
 ) -> Case:
-    """第二次违规：合并证据生成 PENDING_REVIEW 案件。"""
+    """第二次违规：合并证据生成 PENDING_REVIEW 案件。
+
+    R-102-8：
+    - 幂等：若同群同成员已有 PENDING_REVIEW 案件则复用之，避免并发违规产生重复案件；
+    - 案件编号冲突重试：case_no 唯一约束冲突时重新生成。
+    """
+    # 幂等：已有 PENDING_REVIEW 案件则直接返回，不重复立案
+    existing_stmt = select(Case).where(
+        Case.group_openid == msg.group_openid,
+        Case.member_openid == msg.sender.member_openid,
+        Case.status == "PENDING_REVIEW",
+    )
+    existing = (await session.execute(existing_stmt)).scalar_one_or_none()
+    if existing is not None:
+        return existing
+
     # 合并窗口内全部有效违规证据
     window_start = datetime.now(UTC) - timedelta(days=WINDOW_DAYS)
     stmt = select(ViolationRecord).where(
@@ -178,17 +194,26 @@ async def _create_case(
     )
     result = await session.execute(stmt)
     related = list(result.scalars())
-    case = Case(
-        case_no=await _generate_case_no(session),
-        group_openid=msg.group_openid,
-        member_openid=msg.sender.member_openid,
-        status="PENDING_REVIEW",
-        violation_ids_json=json.dumps([v.id for v in related]),
-        audit_json=json.dumps({"evidence_count": len(related)}, ensure_ascii=False),
-    )
-    session.add(case)
-    await session.flush()
-    return case
+
+    # case_no 冲突重试（最多5次，防止并发同日编号碰撞）
+    for _attempt in range(5):
+        case_no = await _generate_case_no(session)
+        case = Case(
+            case_no=case_no,
+            group_openid=msg.group_openid,
+            member_openid=msg.sender.member_openid,
+            status="PENDING_REVIEW",
+            violation_ids_json=json.dumps([v.id for v in related]),
+            audit_json=json.dumps({"evidence_count": len(related)}, ensure_ascii=False),
+        )
+        session.add(case)
+        try:
+            await session.flush()
+            return case
+        except IntegrityError:
+            await session.rollback()
+            continue
+    raise RuntimeError("案件编号冲突，5次重试均失败（并发异常）")
 
 
 async def revoke_violation(
@@ -226,11 +251,15 @@ async def transition_case(
     operator: str,
     extra: dict[str, Any] | None = None,
 ) -> Case:
-    """案件状态转换（供 T-301 审批界面调用），校验合法性并记录审计。"""
+    """案件状态转换（供 T-301 审批界面调用），校验合法性并记录审计。
+
+    R-102-8：审计记录的 `from` 必须在赋值前捕获（原实现赋值后读取，from=to，错误）。
+    """
     case = await session.get(Case, case_id)
     if case is None:
         raise ValueError(f"案件不存在: {case_id}")
-    validate_transition(case.status, target)
+    previous = case.status
+    validate_transition(previous, target)
     case.status = target
     if target in ("CLOSED",):
         case.closed_at = datetime.now(UTC)
@@ -238,7 +267,7 @@ async def transition_case(
     transitions = audit.setdefault("transitions", [])
     transitions.append(
         {
-            "from": case.status,
+            "from": previous,
             "to": target,
             "operator": operator,
             "extra": extra or {},

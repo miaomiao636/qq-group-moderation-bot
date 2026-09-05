@@ -19,7 +19,9 @@ def make_msg(text: str) -> StandardMessage:
     )
 
 
-def primary_high(text: str, hits: list[str] | None = None) -> ModerationDecision:
+def primary_high(
+    text: str, hits: list[str] | None = None, rule_id: str = "R002"
+) -> ModerationDecision:
     from app.moderation.decision import RuleHit
 
     return ModerationDecision(
@@ -31,8 +33,12 @@ def primary_high(text: str, hits: list[str] | None = None) -> ModerationDecision
         confidence=0.95,
         rule_hits=[
             RuleHit(
-                rule_id="R002",
-                rule_name="soft_signals",
+                rule_id=rule_id,
+                rule_name={
+                    "R001": "explicit_blacklist",
+                    "R002": "soft_signals",
+                    "R003": "contact_extraction",
+                }[rule_id],
                 category="ad",
                 confidence_delta=0.95,
                 evidence_masked=",".join(hits or []),
@@ -55,7 +61,7 @@ def test_review_gate_blocks_soft_only_evidence() -> None:
 def test_review_gate_passes_blacklist_evidence() -> None:
     gate = ReviewGate()
     text = "招募兼职刷单，日结，加我微信 abc12345"
-    decision = gate.review(make_msg(text), primary_high(text, ["刷单"]))
+    decision = gate.review(make_msg(text), primary_high(text, ["刷单"], rule_id="R001"))
     assert decision.verdict == "violation_high"
     assert set(decision.recommended_actions) == {"recall", "mute", "warn"}
 
@@ -63,11 +69,10 @@ def test_review_gate_passes_blacklist_evidence() -> None:
 def test_review_gate_passes_contact_evidence() -> None:
     text = "加我微信 abc12345，随时联系"
     gate = ReviewGate()
-    decision = gate.review(make_msg(text), primary_high(text, ["加我微信"]))
-    # 有联系方式硬证据，复核放行
-    assert decision.verdict in ("violation_high", "record_only")
-    if decision.verdict == "violation_high":
-        assert "复核门拦截" not in decision.reason
+    decision = gate.review(make_msg(text), primary_high(text, ["加我微信"], rule_id="R003"))
+    # 有联系方式硬证据（R003），复核放行
+    assert decision.verdict == "violation_high"
+    assert "复核门拦截" not in decision.reason
 
 
 def test_review_gate_protects_owner() -> None:

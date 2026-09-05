@@ -1,10 +1,8 @@
-"""复核门与成本控制（T-203）。
+"""复核门与成本控制（T-203，R-102 整改）。
 
-零预算形态（决策 D-014）下不接入云模型，复核采用**双通道一致性**原则：
-- 主通道：完整规则引擎评分（黑名单+弱信号+联系方式+变体）；
-- 复核通道：仅黑名单与联系方式硬证据重评分（独立、更严格的口径）；
-- 两通道一致判违规才自动处罚；任一通道不可用或不一致 → record_only 转人工；
-- 处罚阈值 0.90（PROJECT_CONTEXT 既定）。
+R-102-7 复核门必须使用与主通道**不同的硬证据**判定，不得重复调用同一规则冒充独立复核；
+**弱信号不算硬证据**。硬证据 = 显式黑名单命中（R001）或联系方式提取（R003）。
+仅软信号（R002）凑分达到阈值的高置信，复核门必须拦截转人工。
 
 成本控制：全部本地计算，费用恒为0；CostLedger 记录调用次数供日报。
 CircuitBreaker：媒体/模型类外部依赖连续失败时熔断，冷却后半开探测。
@@ -17,21 +15,20 @@ from dataclasses import dataclass
 
 from app.adapters.qq_official.contract import StandardMessage
 from app.moderation.decision import ModerationDecision
-from app.moderation.rules import TextRuleEngine, evaluate_text
 
 AUTO_PUNISH_THRESHOLD = 0.90
+_HARD_EVIDENCE_RULES = {"R001", "R003"}  # 黑名单词 / 联系方式（独立硬证据）
 
 
 class ReviewGate:
-    """双通道一致性复核门。"""
+    """独立硬证据复核门（R-102-7 重做）。"""
 
-    def __init__(self, engine: TextRuleEngine | None = None) -> None:
-        self._engine = engine or TextRuleEngine()
+    def __init__(self) -> None:
+        self._rejection_reason = "复核门拦截：缺少独立硬证据（黑名单/联系方式），转人工"
 
     def review(self, msg: StandardMessage, primary: ModerationDecision) -> ModerationDecision:
         """对主通道决策执行独立复核，返回最终决策。"""
         if primary.verdict != "violation_high":
-            # 非高置信维持原判（record_only/allow），复核只针对"要处罚"的决定
             return primary
         if primary.is_protected_sender or msg.sender.role in ("owner", "admin"):
             return primary.model_copy(
@@ -42,20 +39,17 @@ class ReviewGate:
                 }
             )
 
-        # 复核通道：仅硬证据（黑名单词 + 联系方式）
-        _, review_confidence, review_category = evaluate_text(msg.text)
-        hard_evidence = review_confidence >= 0.25  # 至少存在可复核的联系方式/黑名单证据
-        primary_has_blacklist = any(h.rule_id == "R001" for h in primary.rule_hits)
-
-        agrees = hard_evidence or primary_has_blacklist
-        if agrees:
+        # R-102-7：不重复调用主规则，从主决策的命中里判断是否存在硬证据
+        has_hard_evidence = any(hit.rule_id in _HARD_EVIDENCE_RULES for hit in primary.rule_hits)
+        if has_hard_evidence:
             return primary
+        # 主决策仅靠弱信号凑分 → 必须拦截，软信号不算独立硬证据
         return primary.model_copy(
             update={
                 "verdict": "record_only",
                 "recommended_actions": [],
                 "confidence": min(primary.confidence, 0.85),
-                "reason": primary.reason + "；复核门拦截：缺少独立硬证据，转人工",
+                "reason": primary.reason + "；" + self._rejection_reason,
             }
         )
 
@@ -65,11 +59,11 @@ class UsageRecord:
     component: str
     calls: int = 0
     failures: int = 0
-    cost: float = 0.0  # 零预算方案恒为0
+    cost: float = 0.0
 
 
 class CostLedger:
-    """调用与费用台账（零预算方案下 cost 恒 0，保留字段以兼容未来付费组件）。"""
+    """调用与费用台账（零预算方案下 cost 恒 0）。"""
 
     def __init__(self) -> None:
         self._records: dict[str, UsageRecord] = {}
@@ -104,7 +98,6 @@ class CircuitBreaker:
         self.state: str = "CLOSED"
 
     def allow(self, now: float | None = None) -> bool:
-        """当前是否允许调用。"""
         now = time.monotonic() if now is None else now
         if self.state == "OPEN":
             if self._opened_at is not None and now - self._opened_at >= self._cooldown:

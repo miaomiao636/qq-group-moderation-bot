@@ -51,9 +51,16 @@ async def purge_expired(session: AsyncSession, now: datetime | None = None) -> d
     r3 = await session.execute(delete(ActionLog).where(ActionLog.created_at < decision_cutoff))
     deleted_logs = int(getattr(r3, "rowcount", 0) or 0)
 
+    # 4) 媒体文件清理（R-102-4）：与原始期一致，超保留期删除
+    from app.adapters.qq_official.media import purge_media
+    from app.runtime.pipeline import MEDIA_DIR
+
+    deleted_media = purge_media(MEDIA_DIR, settings.raw_retention_days)
+
     await session.commit()
     return {
         "processed_events_deleted": deleted_events,
         "violation_snapshots_purged": purged_snapshots,
         "action_logs_deleted": deleted_logs,
+        "media_files_deleted": deleted_media,
     }

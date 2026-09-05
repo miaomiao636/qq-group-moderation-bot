@@ -1,23 +1,51 @@
-"""影子模式流水线（T-403）：解析→去重→判定→记录，不执行任何动作。"""
+"""影子模式流水线（T-403，R-102 整改）。
+
+处理顺序：begin_processing → 解析 → 文字规则 → 复核门 → 按媒体类型分发对应引擎 → 落库 → mark_processed。
+任何异常 → mark_failed（可重试）；媒体缺失/下载失败/解析失败 → record_only，绝不允许放行。
+影子模式：**任何判定都不执行**撤回/禁言/警告。
+"""
 
 from __future__ import annotations
 
 import json
+import logging
 from pathlib import Path
 from typing import Any
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.adapters.qq_official.contract import StandardMessage
-from app.adapters.qq_official.dedup import check_and_mark
+from app.adapters.qq_official.dedup import begin_processing, mark_failed, mark_processed
 from app.adapters.qq_official.parser import EventParseError, parse_group_message
 from app.moderation.decision import ModerationDecision
 from app.moderation.image_engine import ImageModerationEngine, MediaAnalysis, merge_decisions
+from app.moderation.media_engine import evaluate_file, evaluate_video, evaluate_voice
 from app.moderation.review_gate import ReviewGate
 from app.moderation.rules import TextRuleEngine
 from app.runtime.models import ShadowDecision
 
 MEDIA_DIR = Path(__file__).resolve().parent.parent.parent / "data" / "media"
+logger = logging.getLogger(__name__)
+
+
+def _is_image(content_type: str) -> bool:
+    return content_type.startswith("image/")
+
+
+def _is_voice(content_type: str) -> bool:
+    return content_type == "voice" or content_type.startswith("audio/")
+
+
+def _is_video(content_type: str) -> bool:
+    return content_type.startswith("video/")
+
+
+def _is_file(content_type: str) -> bool:
+    return (
+        content_type == "file"
+        or content_type.startswith("application/")
+        or content_type == "application/octet-stream"
+    )
 
 
 async def run_pipeline(
@@ -27,15 +55,15 @@ async def run_pipeline(
     text_engine: TextRuleEngine | None = None,
     image_engine: ImageModerationEngine | None = None,
 ) -> ShadowDecision | None:
-    """处理一条 GROUP_MESSAGE_CREATE 载荷，落一条影子判定记录。
+    """处理一条 GROUP_MESSAGE_CREATE 载荷。
 
-    返回 None 表示事件被去重或解析失败（解析失败另行记日志，由调用方处理）。
-    影子模式：任何判定都**不执行**撤回/禁言/警告。
+    返回 ShadowDecision：成功处理（含解析失败/媒体缺失的 record_only 记录）；
+    返回 None：事件已被去重跳过。
     """
     message_id = str(payload.get("id") or "")
     if not message_id:
         return None
-    if not await check_and_mark(session, message_id):
+    if not await begin_processing(session, message_id):
         return None
 
     text_engine = text_engine or TextRuleEngine()
@@ -44,62 +72,166 @@ async def run_pipeline(
 
     try:
         msg: StandardMessage = parse_group_message(payload)
-    except EventParseError:
-        await session.rollback()
-        return None
+    except EventParseError as exc:
+        # R-102-3 解析失败 → record_only 落库（不静默丢弃），并标记 FAILED 允许重试
+        record = ShadowDecision(
+            message_id=message_id,
+            group_openid=str(payload.get("group_openid") or ""),
+            member_openid=str((payload.get("author") or {}).get("member_openid") or ""),
+            sender_name=str((payload.get("author") or {}).get("username") or "")[:64],
+            kind="unknown",
+            verdict="record_only",
+            reason=f"事件解析失败，转人工：{exc}"[:500],
+            detail_json=json.dumps({"parse_error": str(exc)}, ensure_ascii=False),
+        )
+        session.add(record)
+        await session.commit()
+        await mark_failed(session, message_id, f"EventParseError: {exc}")
+        return record
 
-    decision: ModerationDecision = text_engine.evaluate(msg)
-    decision = gate.review(msg, decision)
+    try:
+        decision: ModerationDecision = text_engine.evaluate(msg)
+        decision = gate.review(msg, decision)
 
-    # 媒体判定（附件已由下载层保存到 MEDIA_DIR，按文件名对应）
-    if msg.attachments:
-        media_results = []
-        for att in msg.attachments:
-            local = MEDIA_DIR / att.filename if att.filename else None
-            if local and local.exists():
-                media_results.append(image_engine.analyze(local))
-        if media_results:
-            if any(m.verdict == "violation_high" for m in media_results):
-                worst_media = MediaAnalysis(
-                    "violation_high",
-                    0.95,
-                    reason="媒体黑名单命中",
+        # R-102-1 按媒体类型分发对应引擎；R-102-3 媒体缺失/下载失败 → record_only
+        if msg.attachments:
+            media_decisions: list[ModerationDecision] = []
+            media_missing = False
+            for att in msg.attachments:
+                local = MEDIA_DIR / att.filename if att.filename else None
+                if not local or not local.exists():
+                    media_missing = True
+                    continue
+                if _is_voice(att.content_type):
+                    media_decisions.append(
+                        evaluate_voice(
+                            message_id, msg.group_openid, msg.sender.member_openid, att, text_engine
+                        )
+                    )
+                elif _is_video(att.content_type):
+                    media_decisions.append(
+                        evaluate_video(
+                            message_id,
+                            msg.group_openid,
+                            msg.sender.member_openid,
+                            local,
+                            image_engine,
+                            MEDIA_DIR / "_frames",
+                        )
+                    )
+                elif _is_file(att.content_type):
+                    media_decisions.append(
+                        evaluate_file(
+                            message_id,
+                            msg.group_openid,
+                            msg.sender.member_openid,
+                            local,
+                            text_engine,
+                        )
+                    )
+                else:
+                    # image/gif/其他 → 图片引擎
+                    m = image_engine.analyze(local)
+                    media_decisions.append(_media_decision_from(m, message_id, msg))
+
+            if any(d.verdict == "violation_high" for d in media_decisions):
+                decision = merge_decisions(
+                    decision,
+                    MediaAnalysis("violation_high", 0.95, reason="媒体违规"),
                 )
-                decision = merge_decisions(decision, worst_media)
+            elif media_missing:
+                # R-102-3 任意媒体缺失/下载失败 → 不放行
+                decision = decision.model_copy(
+                    update={
+                        "verdict": "record_only",
+                        "reason": (
+                            decision.reason + "；"
+                            if decision.reason and decision.verdict == "record_only"
+                            else ""
+                        )
+                        + "媒体缺失/下载失败，转人工",
+                    }
+                )
             elif (
-                all(m.verdict == "allow" for m in media_results)
+                media_decisions
+                and all(d.verdict == "allow" for d in media_decisions)
                 and decision.verdict == "record_only"
                 and not decision.rule_hits
             ):
                 decision = decision.model_copy(
-                    update={"verdict": "allow", "reason": "媒体白名单放行"}
+                    update={"verdict": "allow", "reason": "媒体全部放行"}
                 )
-            elif decision.verdict == "allow" and not decision.rule_hits:
-                # 有媒体但无法判定（未知图/无匹配）：不自动放行，转人工
+            elif media_decisions and decision.verdict == "allow" and not decision.rule_hits:
                 decision = decision.model_copy(
                     update={"verdict": "record_only", "reason": "媒体无法判定，转人工"}
                 )
+            elif (
+                any(d.verdict == "record_only" for d in media_decisions)
+                and decision.verdict == "allow"
+            ):
+                decision = decision.model_copy(
+                    update={"verdict": "record_only", "reason": "媒体部分转人工"}
+                )
+        record = ShadowDecision(
+            message_id=msg.message_id,
+            group_openid=msg.group_openid,
+            member_openid=msg.sender.member_openid,
+            sender_name=msg.sender.username[:64],
+            kind=msg.kind,
+            verdict=decision.verdict,
+            category=decision.category or "",
+            confidence=decision.confidence,
+            reason=decision.reason[:500],
+            detail_json=json.dumps(
+                {
+                    "rule_hits": [h.model_dump() for h in decision.rule_hits],
+                    "recommended_actions": list(decision.recommended_actions),
+                    "is_protected_sender": decision.is_protected_sender,
+                    "text_preview": msg.text[:60],
+                    "media_kinds": [a.content_type for a in msg.attachments],
+                },
+                ensure_ascii=False,
+            ),
+        )
+        session.add(record)
+        await session.commit()
+        await mark_processed(session, message_id)
+        return record
+    except Exception as exc:  # noqa: BLE001 - 任何处理异常必须可重试
+        logger.exception("pipeline processing failed for %s", message_id)
+        await session.rollback()
+        await mark_failed(session, message_id, f"{type(exc).__name__}: {exc}")
+        return None
 
-    record = ShadowDecision(
-        message_id=msg.message_id,
+
+def _media_decision_from(
+    m: MediaAnalysis, message_id: str, msg: StandardMessage
+) -> ModerationDecision:
+    """把图片引擎 MediaAnalysis 转成 ModerationDecision 以便统一聚合。"""
+    if m.verdict == "violation_high":
+        return ModerationDecision(
+            message_id=message_id,
+            group_openid=msg.group_openid,
+            sender_member_openid=msg.sender.member_openid,
+            verdict="violation_high",
+            category="ad",
+            confidence=m.confidence,
+            reason=m.reason,
+        )
+    if m.verdict == "allow":
+        return ModerationDecision(
+            message_id=message_id,
+            group_openid=msg.group_openid,
+            sender_member_openid=msg.sender.member_openid,
+            verdict="allow",
+            confidence=m.confidence,
+            reason=m.reason,
+        )
+    return ModerationDecision(
+        message_id=message_id,
         group_openid=msg.group_openid,
-        member_openid=msg.sender.member_openid,
-        sender_name=msg.sender.username[:64],
-        kind=msg.kind,
-        verdict=decision.verdict,
-        category=decision.category or "",
-        confidence=decision.confidence,
-        reason=decision.reason[:500],
-        detail_json=json.dumps(
-            {
-                "rule_hits": [h.model_dump() for h in decision.rule_hits],
-                "recommended_actions": list(decision.recommended_actions),
-                "is_protected_sender": decision.is_protected_sender,
-                "text_preview": msg.text[:60],
-            },
-            ensure_ascii=False,
-        ),
+        sender_member_openid=msg.sender.member_openid,
+        verdict="record_only",
+        confidence=m.confidence,
+        reason=m.reason,
     )
-    session.add(record)
-    await session.commit()
-    return record
