@@ -105,6 +105,11 @@ class Settings(BaseSettings):
     # 日志级别
     log_level: str = Field(default="INFO", alias="LOG_LEVEL")
 
+    # QQ 官方机器人凭据（T-102；未配置时适配器拒绝执行动作，应用仍可启动）
+    qq_app_id: str = Field(default="", alias="QQ_APP_ID")
+    qq_app_secret: str = Field(default="", alias="QQ_APP_SECRET")
+    qq_api_base: str = Field(default="https://api.bot.qq.com", alias="QQ_API_BASE")
+
     @model_validator(mode="after")
     def _validate(self) -> Settings:
         """跨字段校验：日志级别合法、生产环境必须设置管理员密码、SQLite 路径规范化。"""
