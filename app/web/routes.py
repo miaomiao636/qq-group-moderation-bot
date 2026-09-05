@@ -407,7 +407,7 @@ async def shadow_page(request: Request, verdict: str = "") -> Response:
     body = (
         f"<h2>影子模式判定（最近100条）</h2><p>分布：{_esc(summary)}　"
         "<span class=muted>影子模式只记录不处罚；时间为北京时间</span></p>"
-        '<div class=card><b>判定说明：</b>高置信违规=确定违规（正式模式自动撤回+禁言+警告）；'
+        "<div class=card><b>判定说明：</b>高置信违规=确定违规（正式模式自动撤回+禁言+警告）；"
         "转人工复核=有疑点但证据不足（不处罚，人工确认）；放行=正常内容。"
         "<b>置信度</b>=系统对判定的把握程度（0~1），≥0.90才自动处罚。</div>"
         '<div class=card style="border-color:#b45309"><b>首次使用：</b>'
