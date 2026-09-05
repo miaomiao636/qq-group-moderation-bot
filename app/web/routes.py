@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import html
 import json
+from datetime import timedelta
 from typing import Any
 
 from fastapi import APIRouter, Form, HTTPException, Request, Response
@@ -341,6 +342,7 @@ def _zh_kind(kind: str) -> str:
 async def shadow_page(request: Request, verdict: str = "") -> Response:
     if not await _require_login(request):
         return _login_redirect()
+    from app.models import GroupAlias
     from app.runtime.models import ShadowDecision
 
     async with SessionLocal() as session:
@@ -348,11 +350,20 @@ async def shadow_page(request: Request, verdict: str = "") -> Response:
         if verdict:
             stmt = stmt.where(ShadowDecision.verdict == verdict)
         records = (await session.execute(stmt)).scalars().all()
+        distinct_groups = sorted({r.group_openid for r in records})
+        group_rows = await session.execute(
+            select(GroupAlias).where(GroupAlias.group_openid.in_(distinct_groups))
+        )
+        group_names = {g.group_openid: g.name for g in group_rows.scalars()}
 
     counts: dict[str, int] = {}
     for r in records:
         counts[r.verdict] = counts.get(r.verdict, 0) + 1
     summary = "、".join(f"{_zh_verdict(k)}={v}" for k, v in sorted(counts.items())) or "暂无"
+
+    def _beijing(naive_utc: Any) -> str:
+        """数据库存 naive UTC，展示转为北京时间。"""
+        return f"{naive_utc + timedelta(hours=8):%m-%d %H:%M:%S}"
 
     def _member_display(record: Any) -> str:
         name = _esc(getattr(record, "sender_name", "") or "")
@@ -360,9 +371,14 @@ async def shadow_page(request: Request, verdict: str = "") -> Response:
             return f"<b>{name}</b>"
         return f"<code>{_esc(record.member_openid[:16])}…</code>"
 
+    def _group_display(openid: str) -> str:
+        name = group_names.get(openid)
+        return _esc(name) if name else f"<code>{_esc(openid[:10])}…</code>"
+
     rows = "".join(
         "<tr>"
-        f"<td>{_esc(f'{r.created_at:%m-%d %H:%M:%S}')}</td>"
+        f"<td>{_esc(_beijing(r.created_at))}</td>"
+        f"<td>{_group_display(r.group_openid)}</td>"
         f"<td>{_zh_kind(r.kind)}</td>"
         f"<td>{_zh_verdict(r.verdict)}</td>"
         f"<td>{r.confidence}</td>"
@@ -372,13 +388,55 @@ async def shadow_page(request: Request, verdict: str = "") -> Response:
         for r in records
     )
 
+    group_forms = "".join(
+        "<tr><td><code>" + _esc(openid[:20]) + "…</code></td>"
+        "<td>"
+        + (
+            _esc(group_names[openid])
+            if openid in group_names
+            else "<span class=muted>未备注</span>"
+        )
+        + "</td>"
+        f'<td><form method=post action="/admin/groups/alias" style="display:flex;gap:6px">'
+        f'<input type=hidden name=group_openid value="{_esc(openid)}">'
+        '<input name=name placeholder="群名称" style="width:160px">'
+        "<button class=btn>保存</button></form></td></tr>"
+        for openid in distinct_groups
+    )
+
     body = (
         f"<h2>影子模式判定（最近100条）</h2><p>分布：{_esc(summary)}　"
-        "<span class=muted>影子模式只记录不处罚</span></p>"
-        "<table><tr><th>时间</th><th>类型</th><th>判定</th><th>置信度</th><th>成员（群昵称）</th><th>原因</th></tr>"
+        "<span class=muted>影子模式只记录不处罚；时间为北京时间</span></p>"
+        "<table><tr><th>时间</th><th>群</th><th>类型</th><th>判定</th><th>置信度</th><th>成员（群昵称）</th><th>原因</th></tr>"
         f"{rows}</table>"
+        '<div class=card style="margin-top:20px"><h3>群名称备注</h3>'
+        "<p class=muted>官方接口只提供群加密OpenID。把下面各OpenID对应的群名填一次，"
+        "之后列表将直接显示群名称。</p>"
+        f"<table><tr><th>群OpenID</th><th>已备注</th><th>备注操作</th></tr>{group_forms}</table></div>"
     )
     return _page("影子判定", body)
+
+
+@router.post("/groups/alias")
+async def save_group_alias(
+    request: Request,
+    group_openid: str = Form(""),
+    name: str = Form(""),
+) -> Response:
+    if not await _require_login(request):
+        return _login_redirect()
+    if not group_openid:
+        return RedirectResponse("/admin/shadow", status_code=303)
+    async with SessionLocal() as session:
+        from app.models import GroupAlias
+
+        existing = await session.get(GroupAlias, group_openid)
+        if existing is None:
+            existing = GroupAlias(group_openid=group_openid)
+            session.add(existing)
+        existing.name = name.strip()[:64]
+        await session.commit()
+    return RedirectResponse("/admin/shadow", status_code=303)
 
 
 # ---------- 规则视图 ----------

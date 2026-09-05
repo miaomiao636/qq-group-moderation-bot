@@ -38,6 +38,18 @@ class ProcessedEvent(Base):
     processed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
 
 
+class GroupAlias(Base):
+    """群人工备注映射：官方群OpenID -> 群名称（管理员人工核对，非平台保证）。"""
+
+    __tablename__ = "group_aliases"
+
+    group_openid: Mapped[str] = mapped_column(String(64), primary_key=True)
+    name: Mapped[str] = mapped_column(String(64), default="")
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=_utcnow, onupdate=_utcnow
+    )
+
+
 class ActionLog(Base):
     """动作审计表：每次撤回/禁言/警告调用都记录结果（可审计要求）。"""
 
