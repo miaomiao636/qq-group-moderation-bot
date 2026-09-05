@@ -204,11 +204,11 @@ def _image_payload(*, filename: str) -> dict:
 
 
 @pytest.mark.asyncio
-async def test_pipeline_dispatches_voice_to_text_rules(tmp_path: Path) -> None:
+async def test_pipeline_dispatches_voice_to_text_rules(tmp_path: Path, monkeypatch) -> None:
     """语音附件含官方转写违规文本 → 高置信违规。"""
-    from app.runtime.pipeline import MEDIA_DIR
+    monkeypatch.setattr("app.runtime.pipeline.MEDIA_DIR", tmp_path)
 
-    amr = MEDIA_DIR / "r102_voice.amr"
+    amr = tmp_path / "r102_voice.amr"
     amr.write_bytes(b"#!AMR\x00\x00\x00")
     try:
         payload = {
@@ -241,10 +241,10 @@ async def test_pipeline_dispatches_voice_to_text_rules(tmp_path: Path) -> None:
 
 
 @pytest.mark.asyncio
-async def test_pipeline_dispatches_file_to_text_rules(tmp_path: Path) -> None:
-    from app.runtime.pipeline import MEDIA_DIR
+async def test_pipeline_dispatches_file_to_text_rules(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setattr("app.runtime.pipeline.MEDIA_DIR", tmp_path)
 
-    txt = MEDIA_DIR / "r102_spam.txt"
+    txt = tmp_path / "r102_spam.txt"
     txt.write_text("招募兼职刷单，日结，加我微信 abc12345", encoding="utf-8")
     try:
         payload = {
