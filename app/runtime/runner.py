@@ -21,12 +21,48 @@ from websockets.asyncio.client import connect
 from app.adapters.qq_official.parser import EventParseError
 from app.db import SessionLocal
 from app.moderation.image_engine import ImageModerationEngine
+from app.moderation.imaging import dhash
 from app.moderation.rules import TextRuleEngine
 from app.runtime.pipeline import MEDIA_DIR, run_pipeline
 
 WS_URL = "wss://api.sgroup.qq.com/websocket"
 API_BASE = "https://api.bot.qq.com"
 RECONNECT_BACKOFF_MAX = 30.0
+
+SAMPLES_DIR = MEDIA_DIR.parent / "t002_media"
+
+
+def _seed_image_engine() -> ImageModerationEngine:
+    """用负责人逐张确认的样本哈希初始化引擎黑/白名单（manifest 为准）。"""
+    engine = ImageModerationEngine()
+    manifest_path = SAMPLES_DIR / "manifest.json"
+    if not manifest_path.exists():
+        print("[runner] WARN: sample manifest not found, image lists empty")
+        return engine
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    seeded_violation = 0
+    seeded_allowed = 0
+    for item in manifest.get("items", []):
+        sample_path = SAMPLES_DIR / str(item.get("file", ""))
+        if not sample_path.exists():
+            continue
+        try:
+            from app.moderation.imaging import image_frames_from_source
+
+            image_hash = dhash(image_frames_from_source(sample_path)[0])
+        except Exception as exc:  # noqa: BLE001
+            print(f"[runner] WARN: hash failed {item.get('file')}: {exc}")
+            continue
+        label = item.get("label")
+        if label == "violation":
+            engine.add_violation_hash(image_hash)
+            seeded_violation += 1
+        elif label == "allowed_campus_wall":
+            engine.add_allowed_hash(image_hash)
+            seeded_allowed += 1
+    print(f"[runner] image engine seeded: violation={seeded_violation} allowed={seeded_allowed}")
+    return engine
+
 
 EXT_BY_CT = {
     "image/jpeg": ".jpg",
@@ -103,7 +139,7 @@ async def _listen_once(app_id: str, app_secret: str, stop: asyncio.Event) -> flo
             print("[runner] connected, shadow mode (record only)")
             next_hb = time.monotonic() + hb_interval
             text_engine = TextRuleEngine()
-            image_engine = ImageModerationEngine()
+            image_engine = _seed_image_engine()
 
             while not stop.is_set():
                 try:

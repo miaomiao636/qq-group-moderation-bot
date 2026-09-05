@@ -74,6 +74,11 @@ async def run_pipeline(
                 decision = decision.model_copy(
                     update={"verdict": "allow", "reason": "媒体白名单放行"}
                 )
+            elif decision.verdict == "allow" and not decision.rule_hits:
+                # 有媒体但无法判定（未知图/无匹配）：不自动放行，转人工
+                decision = decision.model_copy(
+                    update={"verdict": "record_only", "reason": "媒体无法判定，转人工"}
+                )
 
     record = ShadowDecision(
         message_id=msg.message_id,
@@ -89,6 +94,7 @@ async def run_pipeline(
                 "rule_hits": [h.model_dump() for h in decision.rule_hits],
                 "recommended_actions": list(decision.recommended_actions),
                 "is_protected_sender": decision.is_protected_sender,
+                "text_preview": msg.text[:60],
             },
             ensure_ascii=False,
         ),
