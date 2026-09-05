@@ -1,0 +1,40 @@
+{
+  "event": "GROUP_MESSAGE_CREATE",
+  "sample_note": "T-001 脱敏样本：分享卡片事件形态",
+  "data": {
+    "ark_data": {
+      "ark_name": "小程序",
+      "ark_type": "miniapp",
+      "fields": {
+        "preview": "https://pubminishare-30161.picsz.qpic.cn/C3945578-F030-4D5B-9B72-FC01AB846D08",
+        "source": "秒寄贸易",
+        "source_logo": "https://miniapp.gtimg.cn/generated-icon/wx5f0e94f6f38d114c.png",
+        "tag": "微信小程序",
+        "tag_icon": "https://miniapp.gtimg.cn/public/miniwx.png",
+        "title": "秒寄贸易4元寄全国 "
+      },
+      "prompt": "[微信小程序]秒寄贸易4元寄全国 "
+    },
+    "author": {
+      "bot": false,
+      "id": "A0Dxxxxxxxxxxxxxxxxxxxxxxxxxxx35",
+      "member_openid": "A0Dxxxxxxxxxxxxxxxxxxxxxxxxxxx35",
+      "member_role": "member",
+      "union_openid": "",
+      "username": "SANITIZED_USERNAME"
+    },
+    "content": "[卡片消息] 小程序\n摘要: [微信小程序]秒寄贸易4元寄全国 \nsource: 秒寄贸易\nsource_logo: https://miniapp.gtimg.cn/generated-icon/wx5f0e94f6f38d114c.png\ntitle: 秒寄贸易4元寄全国 \npreview: https://pubminishare-SANITIZED_DIGITS.picsz.qpic.cn/CSANITIZED_DIGITS-F030-4D5B-9B72-FC01AB846D08\ntag: 微信小程序\ntag_icon: https://miniapp.gtimg.cn/public/miniwx.png",
+    "group_id": "F90xxxxxxxxxxxxxxxxxxxxxxxxxxxF4",
+    "group_openid": "F90xxxxxxxxxxxxxxxxxxxxxxxxxxxF4",
+    "id": "ROBOT1.0_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+    "message_scene": {
+      "ext": [
+        "msg_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+        "auth_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+      ],
+      "source": "default"
+    },
+    "message_type": 3,
+    "timestamp": "2026-09-05T15:28:18+08:00"
+  }
+}

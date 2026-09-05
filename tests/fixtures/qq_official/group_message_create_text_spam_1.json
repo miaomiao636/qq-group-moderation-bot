@@ -1,0 +1,27 @@
+{
+  "event": "GROUP_MESSAGE_CREATE",
+  "sample_note": "T-002 脱敏样本：文字垃圾信息（联系方式已遮蔽）",
+  "data": {
+    "author": {
+      "bot": false,
+      "id": "A0Dxxxxxxxxxxxxxxxxxxxxxxxxxxx35",
+      "member_openid": "A0Dxxxxxxxxxxxxxxxxxxxxxxxxxxx35",
+      "member_role": "member",
+      "union_openid": "",
+      "username": "SANITIZED_USERNAME"
+    },
+    "content": " 居家简易线上任务，无需押金垫资，不用别人协助，日收益80‑200，多劳多得，限安卓手机，裙号SANITIZED_DIGITS",
+    "group_id": "F90xxxxxxxxxxxxxxxxxxxxxxxxxxxF4",
+    "group_openid": "F90xxxxxxxxxxxxxxxxxxxxxxxxxxxF4",
+    "id": "ROBOT1.0_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+    "message_scene": {
+      "ext": [
+        "msg_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+        "auth_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+      ],
+      "source": "default"
+    },
+    "message_type": 0,
+    "timestamp": "2026-09-05T15:27:34+08:00"
+  }
+}

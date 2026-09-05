@@ -1,0 +1,27 @@
+{
+  "event": "GROUP_MESSAGE_CREATE",
+  "sample_note": "T-002 脱敏样本：文字垃圾信息（联系方式已遮蔽）",
+  "data": {
+    "author": {
+      "bot": false,
+      "id": "A0Dxxxxxxxxxxxxxxxxxxxxxxxxxxx35",
+      "member_openid": "A0Dxxxxxxxxxxxxxxxxxxxxxxxxxxx35",
+      "member_role": "member",
+      "union_openid": "",
+      "username": "SANITIZED_USERNAME"
+    },
+    "content": "在吗你看看这个，我感觉挺适合你的！\n朋友在卖兰州市中心5.0版农贸市场的商铺呢（摊位、档口）\n总价5万即可买一套，一年可收租金SANITIZED_DIGITS到SANITIZED_DIGITS多，而且还有房产证，终身不动产权，\n自营、投资均可，包租包管理\n你打个电话问问，他的☎️SANITIZED_DIGITS（倪），\n不用回复，有需要直接打上面电话咨询，刚开盘，优惠多多哦！",
+    "group_id": "F90xxxxxxxxxxxxxxxxxxxxxxxxxxxF4",
+    "group_openid": "F90xxxxxxxxxxxxxxxxxxxxxxxxxxxF4",
+    "id": "ROBOT1.0_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+    "message_scene": {
+      "ext": [
+        "msg_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+        "auth_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+      ],
+      "source": "default"
+    },
+    "message_type": 0,
+    "timestamp": "2026-09-05T15:27:39+08:00"
+  }
+}
