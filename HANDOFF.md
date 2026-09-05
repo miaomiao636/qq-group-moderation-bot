@@ -21,6 +21,13 @@
 - 案件审计 from 赋值前捕获；案件幂等立案 + case_no 冲突重试；
 - tests/test_r102.py 10项回归。全量 154+ 项测试、mypy 41文件、ruff 全过。
 
+**CI 实证（GitHub Actions，提交 `9c27f44`+`1e15031`，运行 `33979817730`，结论 success）**：
+- 运行总览：https://github.com/miaomiao636/qq-group-moderation-bot/actions/runs/33979817730
+- Linux 任务：https://github.com/miaomiao636/qq-group-moderation-bot/actions/runs/33979817730/job/101342914510
+- Windows 任务：https://github.com/miaomiao636/qq-group-moderation-bot/actions/runs/33979817730/job/101342914699
+- 运行时依赖回归（clean install）：https://github.com/miaomiao636/qq-group-moderation-bot/actions/runs/33979817730/job/101342914707
+- 注：首版 `9c27f44` 因测试实例写 `data/media/`（CI 无此目录）导致 pytest 失败；`1e15031` 改用 `tmp_path`+monkeypatch 修复，复跑全绿。
+
 ### 影子模式上线（2026-09-05第六批，接手Agent）
 
 - **T-403影子接入**（提交8b709c6）：`app/runtime/` runner（WS常驻/心跳/退避重连/媒体即时下载）+ pipeline（解析→去重→文字规则→复核门→媒体→落库）+ shadow_decisions表（迁移b12f6d84aa77）+ 后台影子页。141项测试全绿。
