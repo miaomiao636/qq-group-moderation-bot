@@ -13,6 +13,7 @@ from fastapi import FastAPI
 from app.config import get_settings
 from app.db import check_db_migrated
 from app.logging_config import setup_logging
+from app.web.routes import router as admin_router
 
 
 @asynccontextmanager
@@ -35,6 +36,9 @@ def create_app() -> FastAPI:
     async def healthz() -> dict[str, str]:
         """健康检查端点。"""
         return {"status": "ok", "env": settings.app_env, "mode": settings.run_mode}
+
+    # 管理后台（T-301/T-302）：服务端页面，强制登录；仅绑定本机/可信内网
+    app.include_router(admin_router)
 
     return app
 

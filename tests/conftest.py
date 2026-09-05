@@ -24,6 +24,8 @@ os.environ["DATABASE_URL"] = f"sqlite+aiosqlite:///{_TEST_DB}"
 os.environ["WEB_HOST"] = "127.0.0.1"
 os.environ["WEB_PORT"] = "8123"
 os.environ["LOG_LEVEL"] = "INFO"
+os.environ["ADMIN_USERNAME"] = "admin"
+os.environ["ADMIN_PASSWORD"] = "test-admin-pass"
 
 
 @pytest.fixture(scope="session", autouse=True)
