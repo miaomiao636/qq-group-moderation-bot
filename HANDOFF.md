@@ -21,6 +21,12 @@
 - 案件审计 from 赋值前捕获；案件幂等立案 + case_no 冲突重试；
 - tests/test_r102.py 10项回归。全量 154+ 项测试、mypy 41文件、ruff 全过。
 
+**R-102 审计与规则校准（2026-09-06，接手Agent + 负责人）**：
+- 实测：往群发 2 条消息，影子进程正常接收并落库（id 32 image violation_high、id 33 text violation_high）。注意：当时运行的影子进程为 R-102 提交前的旧代码，实时判定不代表整改后行为；R-102 达标以 CI（Linux+Windows 全绿）为准。
+- 发现 id 33（刷单广告「招小红薯评论员/一单10秒结/试做」）仅触发软信号 R002+R004，按 R-102-7 复核门应降级为 record_only。负责人裁定采用**选项A**：将强广告词（兼职/加我微信/加微/一单/秒结/评论员/试做）从弱信号提升至硬黑名单 R001，并使「命中 R001 即直接升级为 violation_high」（符合 rules.py 顶部设计注释）。
+- 验收：id33 样本→violation_high（含R001硬证据，复核门放行）；仅软信号「招募」→仍 record_only（R-102-7 守住）；保护角色含黑词→record_only（不罚）。全量门禁仍绿。改动在 `app/moderation/rules.py`（提交待推送）。
+- 待办：用新代码重启影子进程，方可对线上消息看到校准后判定；重启为影子模式（不处罚），安全。
+
 **CI 实证（GitHub Actions，提交 `9c27f44`+`1e15031`，运行 `33979817730`，结论 success）**：
 - 运行总览：https://github.com/miaomiao636/qq-group-moderation-bot/actions/runs/33979817730
 - Linux 任务：https://github.com/miaomiao636/qq-group-moderation-bot/actions/runs/33979817730/job/101342914510

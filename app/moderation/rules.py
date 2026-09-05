@@ -24,12 +24,22 @@ from app.moderation.normalization import apply_variants, has_variant_trick
 HIGH_THRESHOLD = 0.90
 
 # 明确黑名单词（命中即贡献0.70，覆盖实测样本与常见违法词）
+# 命中 R001 视为硬证据：在 TextRuleEngine.evaluate 中直接升级为 violation_high（见下）。
 BLACKLIST_EXPLICIT: tuple[str, ...] = (
     "刷单",
     "代发一条",
     "口令红包",
     "红包结算",
     "日结",
+    # 2026-09-06 负责人裁定（R-102 审计选项A）：强广告招募词提升至硬黑名单 R001，
+    # 使「刷单/兼职/日结/加微信/一单X结」类内容无论是否带联系方式都判高置信违规。
+    "兼职",
+    "加我微信",
+    "加微",
+    "一单",
+    "秒结",
+    "评论员",
+    "试做",
     "上分",
     "下分",
     "蚂蚁秒赚",
@@ -58,7 +68,6 @@ BLACKLIST_EXPLICIT: tuple[str, ...] = (
 
 # 弱信号词（首个0.30，每个额外+0.20，封顶0.90；组合到0.90即高置信）
 SOFT_SIGNALS: tuple[str, ...] = (
-    "兼职",
     "招募",
     "招素人",
     "招聘",
@@ -67,8 +76,6 @@ SOFT_SIGNALS: tuple[str, ...] = (
     "收购",
     "代打",
     "代发",
-    "加我微信",
-    "加微",
     "加我",
     "私聊",
     "有兴趣联系",
@@ -81,10 +88,6 @@ SOFT_SIGNALS: tuple[str, ...] = (
     "结算",
     "当天结",
     "立结",
-    "评论员",
-    "一单",
-    "秒结",
-    "试做",
     "不代发",
     "发文",
     "推广单",
@@ -301,9 +304,19 @@ class TextRuleEngine:
         actions: list[str] = []
         reason = ""
 
+        has_hard_blacklist = any(h.rule_id == "R001" for h in hits)
+
         if protected:
             verdict = "record_only"
             reason = "保护角色（群主/管理员）：命中信号仅记录，不处罚"
+        elif has_hard_blacklist:
+            # R-102 审计选项A：命中明确黑名单词（R001）即硬证据，直接高置信违规
+            verdict = "violation_high"
+            confidence = max(confidence, self._high_threshold)
+            actions = list(_HIGH_ACTIONS)
+            reason = (
+                f"命中明确黑名单词（硬证据R001），置信度{confidence:.2f}≥{self._high_threshold}"
+            )
         elif confidence >= self._high_threshold:
             verdict = "violation_high"
             actions = list(_HIGH_ACTIONS)
