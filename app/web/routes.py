@@ -44,6 +44,7 @@ def _page(title: str, body: str, logged_in: bool = True) -> Response:
         header = (
             "<header><b>QQ群管理后台</b><div>"
             '<a href="/admin" style="color:#93c5fd">案件</a> &nbsp; '
+            '<a href="/admin/shadow" style="color:#93c5fd">影子判定</a> &nbsp; '
             '<a href="/admin/rules" style="color:#93c5fd">规则</a> &nbsp; '
             '<a href="/admin/reports" style="color:#93c5fd">报告</a> &nbsp; '
             '<a href="/admin/logout" style="color:#fca5a5">退出</a></div></header>'
@@ -308,6 +309,39 @@ async def transition_with_session(case_id: int, target: str, operator: str) -> N
 
     async with SessionLocal() as session:
         await transition_case(session, case_id, target, operator)
+
+
+# ---------- 影子判定视图 ----------
+
+
+@router.get("/shadow", response_class=HTMLResponse)
+async def shadow_page(request: Request, verdict: str = "") -> Response:
+    if not await _require_login(request):
+        return _login_redirect()
+    from app.runtime.models import ShadowDecision
+
+    async with SessionLocal() as session:
+        stmt = select(ShadowDecision).order_by(ShadowDecision.created_at.desc()).limit(100)
+        if verdict:
+            stmt = stmt.where(ShadowDecision.verdict == verdict)
+        records = (await session.execute(stmt)).scalars().all()
+    counts: dict[str, int] = {}
+    for r in records:
+        counts[r.verdict] = counts.get(r.verdict, 0) + 1
+    summary = "、".join(f"{k}={v}" for k, v in sorted(counts.items())) or "暂无"
+    rows = "".join(
+        f"<tr><td>{_esc(f'{r.created_at:%m-%d %H:%M:%S}')}</td><td>{_esc(r.kind)}</td>"
+        f"<td>{_esc(r.verdict)}</td><td>{_esc(r.confidence)}</td>"
+        f"<td>{_esc(r.member_openid[:16])}…</td><td>{_esc(r.reason[:80])}</td></tr>"
+        for r in records
+    )
+    body = (
+        f"<h2>影子模式判定（最近100条）</h2><p>分布：{_esc(summary)}　"
+        "<span class=muted>影子模式只记录不处罚</span></p>"
+        "<table><tr><th>时间</th><th>类型</th><th>判定</th><th>置信度</th><th>成员</th><th>原因</th></tr>"
+        f"{rows}</table>"
+    )
+    return _page("影子判定", body)
 
 
 # ---------- 规则视图 ----------
