@@ -98,4 +98,5 @@ def encode_qr(payload: str) -> object:
     """生成二维码图片（供测试与白名单基准生成）；返回 zxingcpp 自有 Image。"""
     import zxingcpp
 
-    return zxingcpp.create_barcode(payload, zxingcpp.BarcodeFormat.QRCode)
+    barcode = zxingcpp.create_barcode(payload, zxingcpp.BarcodeFormat.QRCode)
+    return barcode.to_image()
