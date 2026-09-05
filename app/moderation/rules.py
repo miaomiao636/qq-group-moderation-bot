@@ -19,7 +19,7 @@ from typing import Any
 from app.adapters.qq_official.contract import StandardMessage
 from app.moderation.decision import ModerationDecision, RuleHit
 from app.moderation.extract import extract_signals
-from app.moderation.normalization import apply_variants, has_variant_trick, normalize
+from app.moderation.normalization import apply_variants, has_variant_trick
 
 HIGH_THRESHOLD = 0.90
 
