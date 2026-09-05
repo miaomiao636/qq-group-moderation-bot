@@ -84,6 +84,7 @@ async def run_pipeline(
         message_id=msg.message_id,
         group_openid=msg.group_openid,
         member_openid=msg.sender.member_openid,
+        sender_name=msg.sender.username[:64],
         kind=msg.kind,
         verdict=decision.verdict,
         category=decision.category or "",

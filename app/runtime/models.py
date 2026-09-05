@@ -23,6 +23,9 @@ class ShadowDecision(Base):
     message_id: Mapped[str] = mapped_column(String(128), unique=True)
     group_openid: Mapped[str] = mapped_column(String(64), index=True)
     member_openid: Mapped[str] = mapped_column(String(64), index=True)
+    sender_name: Mapped[str] = mapped_column(
+        String(64), default="", index=True
+    )  # 群昵称（官方事件自带）
     kind: Mapped[str] = mapped_column(String(24), default="unknown")
     verdict: Mapped[str] = mapped_column(String(24), index=True)
     category: Mapped[str] = mapped_column(String(24), default="")
