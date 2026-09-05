@@ -45,8 +45,9 @@ def extract_signals(text: str) -> list[ExtractedSignal]:
         signals.append(ExtractedSignal("url", _mask(match, 6, 4)))
     for match in _ALIPAY.finditer(text):
         signals.append(ExtractedSignal("alipay", match.group(0)))
-    if _DOMAIN.search(text):
-        signals.append(ExtractedSignal("domain", _mask(_DOMAIN.search(text).group(0), 4, 2)))
+    domain_match = _DOMAIN.search(text)
+    if domain_match:
+        signals.append(ExtractedSignal("domain", _mask(domain_match.group(0), 4, 2)))
     # QQ号：QQ/扣扣/企鹅/群号 关键词后的数字，避免把普通数字当QQ号
     for kw_match in re.finditer(
         r"(?:qq|扣扣|企鹅|群号|裙号|账号|帐号|浩)\s*[：:为是]?\s*(\d{5,11})", text, re.IGNORECASE

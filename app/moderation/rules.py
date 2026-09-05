@@ -120,7 +120,6 @@ def _evaluate_text_rules(
     hits: list[RuleHit] = []
     total = 0.0
     category: str | None = None
-    normalized = normalize(msg.text)
     variant_text = apply_variants(msg.text)
 
     explicit_hits = [kw for kw in blacklist if kw in variant_text]
@@ -291,11 +290,11 @@ class TextRuleEngine:
             group_openid=msg.group_openid,
             sender_member_openid=msg.sender.member_openid,
             sender_role=msg.sender.role,
-            verdict=verdict,  # type: ignore[arg-type]
-            category=category,  # type: ignore[arg-type]
+            verdict=verdict,
+            category=category,
             confidence=round(confidence, 2),
             rule_hits=hits,
-            recommended_actions=actions,  # type: ignore[arg-type]
+            recommended_actions=actions,
             reason=reason,
             is_protected_sender=protected,
         )
