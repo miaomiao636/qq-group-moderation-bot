@@ -38,6 +38,19 @@ class ProcessedEvent(Base):
     processed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
 
 
+class MemberAlias(Base):
+    """成员人工备注映射：官方OpenID -> 管理员人工核对的QQ号/备注（非官方保证，仅供人工核对）。"""
+
+    __tablename__ = "member_aliases"
+
+    member_openid: Mapped[str] = mapped_column(String(64), primary_key=True)
+    qq_number: Mapped[str] = mapped_column(String(16), default="")
+    note: Mapped[str] = mapped_column(String(128), default="")
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=_utcnow, onupdate=_utcnow
+    )
+
+
 class ActionLog(Base):
     """动作审计表：每次撤回/禁言/警告调用都记录结果（可审计要求）。"""
 

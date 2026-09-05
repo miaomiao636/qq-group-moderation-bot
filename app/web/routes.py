@@ -14,6 +14,7 @@ from typing import Any
 from fastapi import APIRouter, Form, HTTPException, Request, Response
 from fastapi.responses import HTMLResponse, RedirectResponse
 from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.cases.case_sm import IllegalTransitionError
 from app.cases.models import Case, ViolationRecord
@@ -314,6 +315,40 @@ async def transition_with_session(case_id: int, target: str, operator: str) -> N
 # ---------- 影子判定视图 ----------
 
 
+VERDICT_ZH = {"allow": "放行", "record_only": "转人工复核", "violation_high": "高置信违规"}
+KIND_ZH = {
+    "text": "文字",
+    "image": "图片",
+    "gif": "动图",
+    "voice": "语音",
+    "video": "视频",
+    "file": "文件",
+    "forward_record": "转发记录",
+    "share_card": "分享卡片",
+    "mixed": "图文混合",
+    "unknown": "未知",
+}
+
+
+def _zh_verdict(verdict: str) -> str:
+    return VERDICT_ZH.get(verdict, verdict)
+
+
+def _zh_kind(kind: str) -> str:
+    return KIND_ZH.get(kind, kind)
+
+
+async def _alias_map(session: AsyncSession, openids: list[str]) -> dict[str, Any]:
+    from app.models import MemberAlias
+
+    if not openids:
+        return {}
+    result = await session.execute(
+        select(MemberAlias).where(MemberAlias.member_openid.in_(openids))
+    )
+    return {a.member_openid: a for a in result.scalars()}
+
+
 @router.get("/shadow", response_class=HTMLResponse)
 async def shadow_page(request: Request, verdict: str = "") -> Response:
     if not await _require_login(request):
@@ -325,23 +360,85 @@ async def shadow_page(request: Request, verdict: str = "") -> Response:
         if verdict:
             stmt = stmt.where(ShadowDecision.verdict == verdict)
         records = (await session.execute(stmt)).scalars().all()
+        aliases = await _alias_map(session, list({r.member_openid for r in records}))
+
     counts: dict[str, int] = {}
     for r in records:
         counts[r.verdict] = counts.get(r.verdict, 0) + 1
-    summary = "、".join(f"{k}={v}" for k, v in sorted(counts.items())) or "暂无"
+    summary = "、".join(f"{_zh_verdict(k)}={v}" for k, v in sorted(counts.items())) or "暂无"
+
+    def _member_display(openid: str) -> str:
+        alias = aliases.get(openid)
+        if alias and alias.qq_number:
+            return f"QQ {_esc(alias.qq_number)}（人工核对）"
+        return f"<code>{_esc(openid[:16])}…</code>"
+
     rows = "".join(
-        f"<tr><td>{_esc(f'{r.created_at:%m-%d %H:%M:%S}')}</td><td>{_esc(r.kind)}</td>"
-        f"<td>{_esc(r.verdict)}</td><td>{_esc(r.confidence)}</td>"
-        f"<td>{_esc(r.member_openid[:16])}…</td><td>{_esc(r.reason[:80])}</td></tr>"
+        "<tr>"
+        f"<td>{_esc(f'{r.created_at:%m-%d %H:%M:%S}')}</td>"
+        f"<td>{_zh_kind(r.kind)}</td>"
+        f"<td>{_zh_verdict(r.verdict)}</td>"
+        f"<td>{r.confidence}</td>"
+        f"<td>{_member_display(r.member_openid)}</td>"
+        f"<td>{_esc(r.reason[:80])}</td>"
+        "</tr>"
         for r in records
     )
+
+    distinct_members = sorted({r.member_openid for r in records})
+    alias_forms = "".join(
+        "<tr><td><code>" + _esc(openid[:20]) + "…</code></td>"
+        "<td>"
+        + (
+            _esc(aliases[openid].qq_number)
+            if openid in aliases
+            else "<span class=muted>未备注</span>"
+        )
+        + "</td>"
+        f'<td><form method=post action="/admin/members/alias" style="display:flex;gap:6px">'
+        f'<input type=hidden name=member_openid value="{_esc(openid)}">'
+        '<input name=qq_number placeholder="QQ号" style="width:120px">'
+        '<input name=note placeholder="备注(可选)" style="width:140px">'
+        "<button class=btn>保存</button></form></td></tr>"
+        for openid in distinct_members
+    )
+
     body = (
         f"<h2>影子模式判定（最近100条）</h2><p>分布：{_esc(summary)}　"
         "<span class=muted>影子模式只记录不处罚</span></p>"
         "<table><tr><th>时间</th><th>类型</th><th>判定</th><th>置信度</th><th>成员</th><th>原因</th></tr>"
         f"{rows}</table>"
+        '<div class=card style="margin-top:20px"><h3>成员QQ号备注</h3>'
+        "<p class=muted>官方接口只提供加密OpenID（拿不到真实QQ号）。管理员人工核对后在此备注QQ号，"
+        "备注后上方列表将显示QQ号。备注为人工核对结果，非平台保证。</p>"
+        f"<table><tr><th>成员OpenID</th><th>已备注</th><th>备注操作</th></tr>{alias_forms}</table></div>"
     )
     return _page("影子判定", body)
+
+
+@router.post("/members/alias")
+async def save_member_alias(
+    request: Request,
+    member_openid: str = Form(""),
+    qq_number: str = Form(""),
+    note: str = Form(""),
+) -> Response:
+    if not await _require_login(request):
+        return _login_redirect()
+    if not member_openid:
+        return RedirectResponse("/admin/shadow", status_code=303)
+    qq_clean = "".join(ch for ch in qq_number if ch.isdigit())[:16]
+    async with SessionLocal() as session:
+        from app.models import MemberAlias
+
+        existing = await session.get(MemberAlias, member_openid)
+        if existing is None:
+            existing = MemberAlias(member_openid=member_openid)
+            session.add(existing)
+        existing.qq_number = qq_clean
+        existing.note = note.strip()[:128]
+        await session.commit()
+    return RedirectResponse("/admin/shadow", status_code=303)
 
 
 # ---------- 规则视图 ----------
