@@ -114,13 +114,13 @@ def _fingerprint(msg: StandardMessage) -> str:
 
 
 def _evaluate_text_rules(
-    msg: StandardMessage, blacklist: tuple[str, ...] = BLACKLIST_EXPLICIT
+    text: str, blacklist: tuple[str, ...] = BLACKLIST_EXPLICIT
 ) -> tuple[list[RuleHit], float, str | None]:
     """返回（规则命中列表, 置信度合计, 主类别）。"""
     hits: list[RuleHit] = []
     total = 0.0
     category: str | None = None
-    variant_text = apply_variants(msg.text)
+    variant_text = apply_variants(text)
 
     explicit_hits = [kw for kw in blacklist if kw in variant_text]
     if explicit_hits:
@@ -167,7 +167,7 @@ def _evaluate_text_rules(
         total += delta
         category = category or "ad"
 
-    if has_variant_trick(msg.text) and (explicit_hits or soft_hits or contact_signals):
+    if has_variant_trick(text) and (explicit_hits or soft_hits or contact_signals):
         hits.append(
             RuleHit(
                 rule_id="R004",
@@ -229,6 +229,13 @@ class FrequencyTracker:
         return len(dq) > self._max
 
 
+def evaluate_text(
+    text: str, blacklist: tuple[str, ...] = BLACKLIST_EXPLICIT
+) -> tuple[list[RuleHit], float, str | None]:
+    """对纯文本执行规则评分（供语音转写、文件内容等非直接消息来源复用）。"""
+    return _evaluate_text_rules(text, blacklist)
+
+
 class TextRuleEngine:
     """文字规则引擎：输入统一消息，输出确定性决策。"""
 
@@ -250,7 +257,7 @@ class TextRuleEngine:
         extra_context: dict[str, Any] | None = None,
     ) -> ModerationDecision:
         """评估一条消息，返回决策（决策结构中永不存在 kick）。"""
-        hits, confidence, category = _evaluate_text_rules(msg)
+        hits, confidence, category = _evaluate_text_rules(msg.text)
         protected = msg.sender.role in ("owner", "admin")
 
         flood = self.frequency.check(msg.group_openid, msg.sender.member_openid, msg, now=now)
