@@ -18,6 +18,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.adapters.qq_official.contract import StandardMessage
 from app.adapters.qq_official.dedup import begin_processing, mark_failed, mark_processed
 from app.adapters.qq_official.parser import EventParseError, parse_group_message
+from app.moderation.ai import AIReviewService, build_default_ai_review_service
 from app.moderation.decision import ModerationDecision
 from app.moderation.dynamic_rules import load_cached_active_snapshot
 from app.moderation.image_engine import ImageModerationEngine, MediaAnalysis, merge_decisions
@@ -56,6 +57,7 @@ async def run_pipeline(
     *,
     text_engine: TextRuleEngine | None = None,
     image_engine: ImageModerationEngine | None = None,
+    ai_service: AIReviewService | None = None,
 ) -> ShadowDecision | None:
     """处理一条 GROUP_MESSAGE_CREATE 载荷。
 
@@ -98,6 +100,7 @@ async def run_pipeline(
 
     try:
         rule_version_ids: tuple[int, ...] = ()
+        local_ai_media_paths: list[Path] = []
         rule_snapshot = await load_cached_active_snapshot(session, msg.group_openid)
         rule_version_ids = rule_snapshot.version_ids
         if text_engine is None:
@@ -116,6 +119,8 @@ async def run_pipeline(
                 if not local or not local.exists():
                     media_missing = True
                     continue
+                if _is_image(att.content_type):
+                    local_ai_media_paths.append(local)
                 if _is_voice(att.content_type):
                     media_decisions.append(
                         evaluate_voice(
@@ -186,6 +191,14 @@ async def run_pipeline(
                 decision = decision.model_copy(
                     update={"verdict": "record_only", "reason": "媒体部分转人工"}
                 )
+        service = ai_service or build_default_ai_review_service()
+        decision, ai_results = await service.review_message(
+            session,
+            msg,
+            decision,
+            media_paths=local_ai_media_paths,
+            rule_version_ids=rule_version_ids,
+        )
         record = await upsert_shadow_decision(
             session,
             message_id=msg.message_id,
@@ -205,6 +218,7 @@ async def run_pipeline(
                     "text_preview": msg.text[:60],
                     "media_kinds": [a.content_type for a in msg.attachments],
                     "rule_version_ids": list(rule_version_ids),
+                    "ai_results": [r.model_dump() for r in ai_results],
                 },
                 ensure_ascii=False,
             ),

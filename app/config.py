@@ -110,6 +110,18 @@ class Settings(BaseSettings):
     qq_app_secret: str = Field(default="", alias="QQ_APP_SECRET")
     qq_api_base: str = Field(default="https://api.bot.qq.com", alias="QQ_API_BASE")
 
+    # 远程AI辅助审核（T-204）：默认关闭，按群显式启用；密钥只从环境变量读取
+    ai_enabled: bool = Field(default=False, alias="AI_ENABLED")
+    ai_enabled_groups: str = Field(default="", alias="AI_ENABLED_GROUPS")
+    ai_base_url: str = Field(default="", alias="AI_BASE_URL")
+    ai_api_key: str = Field(default="", alias="AI_API_KEY", repr=False)
+    ai_text_model: str = Field(default="", alias="AI_TEXT_MODEL")
+    ai_vision_model: str = Field(default="", alias="AI_VISION_MODEL")
+    ai_timeout_seconds: float = Field(default=5.0, ge=0.2, le=60.0, alias="AI_TIMEOUT_SECONDS")
+    ai_daily_budget_cents: int = Field(default=0, ge=0, alias="AI_DAILY_BUDGET_CENTS")
+    ai_per_minute_limit: int = Field(default=30, ge=1, le=600, alias="AI_PER_MINUTE_LIMIT")
+    ai_prompt_version: str = Field(default="t204-v1", alias="AI_PROMPT_VERSION")
+
     @model_validator(mode="after")
     def _validate(self) -> Settings:
         """跨字段校验：日志级别合法、生产环境必须设置管理员密码、SQLite 路径规范化。"""
@@ -125,6 +137,12 @@ class Settings(BaseSettings):
             )
         # 相对 SQLite 路径统一解析到项目根目录，避免依赖当前工作目录
         self.database_url = _normalize_sqlite_url(self.database_url)
+        if (
+            self.ai_enabled
+            and self.ai_base_url
+            and not self.ai_base_url.startswith(("https://", "http://"))
+        ):
+            raise ValueError("AI_BASE_URL 必须以 https:// 或 http:// 开头。")
         return self
 
 
