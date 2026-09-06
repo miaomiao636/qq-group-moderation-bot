@@ -6,9 +6,45 @@
 
 ## 当前任务
 
-**R-103正确性整改、T-105动态规则、T-204远程AI、T-205反馈学习和T-106官方动作编排的设计与任务初始化**。本轮只完成独立复验、设计规格和项目文档更新，等待负责人确认书面规格后开始代码实现。**未启用真实撤回/禁言/警告/NapCat**。
+**R-103正确性整改、T-105动态规则、T-204远程AI软证据、T-205反馈候选规则和T-106官方动作编排已完成本地实现与验证**。当前分支为 `feature/r103-ai-rule-learning`，默认仍为 `ACTION_MODE=SHADOW`，不会对真实QQ群执行处罚；真实MiMo调用、真实官方动作、Windows 24×7和NapCat仍需后续实机验收。
 
 ## 已完成内容
+
+### R-103/T-105/T-204/T-205/T-106 实现与本地复验（2026-09-06，主审Agent）
+
+- 分支：`feature/r103-ai-rule-learning`。
+- 本轮新增提交：
+  - `d22ed4d`：新增实现计划 `docs/superpowers/plans/2026-09-06-ai-rule-learning-implementation.md`。
+  - `5944e26`：R-103事件租约领取与永久失败幂等。
+  - `2f65f47`：媒体存储加固与规则语境修正。
+  - `69423b8`：后台状态修改统一CSRF和审计。
+  - `fd994b5`：T-105版本化动态规则。
+  - `da75093`：常驻引擎动态规则热刷新。
+  - `562a9e3`：T-204远程AI软证据与OpenAI-compatible适配。
+  - `3900479`：T-205管理员反馈与候选规则。
+  - `6106260`：T-106官方动作意图与 `SHADOW/OFFICIAL` 编排。
+- R-103旧阻塞已修复到自动化测试层：同事件并发领取成功数恒为1；永久契约失败重复投递不再触发唯一键异常；媒体配额、`.part`、完整SHA文件名和头部嗅探均有回归；咨询/否定/反诈教育语境不自动处罚；允许来源卡片可放行；后台POST需要登录、CSRF并记录 `AdminAudit`。
+- 动态规则：全局/群级规则集、不可变版本、草稿、添加规则项、发布、回滚、审计、5秒缓存热更新和每条判定规则版本追踪已实现；候选规则只能复制到草稿，必须人工发布。
+- 远程AI：实现供应商无关 `TextModerator`/`VisionModerator`，OpenAI-compatible/MiMo类适配器，按群显式启用，脱敏上传，严格JSON解析，缓存、限流、预算、用量记录和降级；单模型高置信只可把 `allow` 升为 `record_only`，不会自动撤回、禁言或踢人。
+- 反馈学习：后台可对影子判定标注确认违规、确认正常、误判、未知原因撤回等；本地挖掘短语、域名和联系方式候选规则；未知撤回不当真值，AI/系统自身判定不当人工真值。
+- 官方动作编排：新增 `ACTION_MODE=SHADOW/OFFICIAL` 与 `EMERGENCY_STOP`；先持久化动作意图和幂等键，再调用官方撤回、分级禁言和首次警告；数据库失败不调用外部动作；未知结果转人工，不盲目重放；任何路径都不产生踢人动作。
+- 本地验证结果：
+  - `uv run pytest -q`：203 passed / 1 skipped。
+  - `uv run mypy app`：48个源文件通过。
+  - `uv run ruff check app tests alembic`：通过。
+  - `uv run ruff format --check app tests alembic`：83个文件格式检查通过。
+  - 临时SQLite库Alembic：`upgrade head → current → downgrade base → upgrade head` 通过，head为 `a0b4d72e5f31`。
+  - 干净运行时依赖：独立临时虚拟环境执行 `uv sync --locked --no-dev` 后可导入 `app.main` 和 `app.adapters.ai.openai_compatible`，且pytest不可导入。
+- 本轮文档已同步：`.env.example`、`README.md`、`PROJECT_CONTEXT.md`、`NEXT_TASKS.md`、`MEMORY_INDEX.md`、`AGENTS.md`、`PROGRESS.md`、`HANDOFF.md`。
+- 尚未完成：远程私有仓库推送后的真实Linux/Windows CI取证；真实MiMo配置与脱敏样本效果评测；W1/W2隔离群真实官方动作验证；T-404 Windows无人值守恢复；NapCat身份镜像和踢人执行器。
+
+### 下一位Agent注意事项
+
+- 先读取 `PROJECT_CONTEXT.md`、`NEXT_TASKS.md`、`PROGRESS.md`、`DECISIONS.md` 和本文件，不要只看历史聊天。
+- 若继续收尾，优先任务是推送当前分支并获取真实GitHub Actions Linux/Windows CI证据；CI通过前不要让项目进入真实群动作测试。
+- 若接入真实MiMo，只能在本地 `.env` 或系统凭据中配置密钥；不得把密钥、模型真实返回中的敏感内容、真实群成员身份写入源码、Markdown、测试或日志。
+- 若进入W1/W2，保持 `ACTION_MODE=SHADOW` 起步；`OFFICIAL` 只可在隔离群、生产配置校验通过、负责人明确确认后启用，且仅限官方撤回/禁言/首次警告。
+- NapCat仍不参与核心识别；踢人必须人工批准，真实NapCat接入另走T-303/T-304。
 
 ### R-103与AI规则学习设计（2026-09-06，主审Agent）
 

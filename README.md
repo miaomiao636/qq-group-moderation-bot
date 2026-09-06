@@ -2,7 +2,7 @@
 
 24×7 识别 QQ 群中的垃圾广告、诈骗及自定义违规内容，支持文字、图片、GIF、表情、视频、语音、文件和卡片；自动执行高置信消息的撤回和分级禁言，整理两次违规证据并交由人工决定是否踢人。
 
-> 当前阶段：QQ官方适配、影子审核、文字/媒体规则、案件、后台和报告已有实现，但仍只记录不处罚。R-102独立复验发现核心正确性问题，必须先完成R-103；动态规则、远程AI、人工反馈学习和真实官方动作尚未实现或验收。
+> 当前阶段（2026-09-06）：R-103正确性整改、后台动态规则、远程AI软证据、人工反馈候选规则和官方撤回/禁言/警告编排已在本地实现并通过自动化测试。默认仍为 `ACTION_MODE=SHADOW`，不会对真实QQ群执行处罚；真实MiMo、真实QQ官方动作、Windows 24×7和NapCat仍需分阶段实机验收。
 
 ## 架构概览
 
@@ -46,7 +46,7 @@ uv run python -m app
 uv run python -m app.runtime
 ```
 
-该入口需要本地配置QQ官方凭据，只记录审核建议，不执行撤回、禁言或警告。R-103完成前不要将它用于真实自动处罚；同步代码或重启也不会自动开启处罚。
+该入口需要本地配置QQ官方凭据。默认 `ACTION_MODE=SHADOW`，只记录审核建议和模拟动作，不执行撤回、禁言或警告；同步代码或重启不会自动开启处罚。若未来要启用官方自动撤回/禁言，必须显式设置 `ACTION_MODE=OFFICIAL` 且满足生产配置、QQ凭据、强管理员密码和急停关闭等校验，并先完成隔离群验收。
 
 开发时如需热重载，可显式指定端口：
 ```bash
@@ -90,6 +90,7 @@ CI（`.github/workflows/ci.yml`）会在每次 push/PR 时，在 Linux 与 Windo
 
 ```text
 app/            # 应用包
+  actions/      # 官方撤回/禁言/警告动作编排（默认SHADOW）
   config.py     # 应用配置（环境变量，含校验）
   db.py         # 数据库引擎与会话（SQLite WAL）
   models.py     # 系统、事件去重与动作审计模型
@@ -104,14 +105,22 @@ docs/           # 运行手册、隐私告知、架构决策记录
 ### 已有业务目录与待补能力
 
 ```text
-app/adapters/     # 已有QQ官方适配；远程AI与NapCat适配待补
-app/moderation/   # 已有文字、图片/GIF、视频/语音/文件与复核门
+app/adapters/     # 已有QQ官方适配与OpenAI-compatible远程AI适配；NapCat适配待补
+app/moderation/   # 已有文字、图片/GIF、视频/语音/文件、动态规则、AI软证据与反馈学习
 app/cases/        # 已有违规历史、案件和审批状态机
 app/reports/      # 已有日报、周报和数据清理构建器
 app/runtime/      # WebSocket影子运行器与处理流水线
-app/web/          # 已有服务端管理后台；动态规则编辑与统一CSRF待补
+app/web/          # 已有服务端管理后台、CSRF、动态规则和反馈学习页面
 tests/fixtures/   # 脱敏QQ事件和媒体/模型固定样本
 ```
+
+## 关键配置开关
+
+- `ACTION_MODE=SHADOW`：默认，只记录；`OFFICIAL` 才会调用QQ官方撤回/禁言/警告，且必须满足生产校验。
+- `EMERGENCY_STOP=false`：急停开关；为 `true` 时禁止进入 `OFFICIAL`。
+- `AI_ENABLED=false`：远程AI默认关闭。
+- `AI_ENABLED_GROUPS=`：远程AI必须按群显式启用，例如填 `GROUP_OPENID_A,GROUP_OPENID_B`，或在测试环境用 `*`。
+- `AI_BASE_URL` / `AI_API_KEY` / `AI_TEXT_MODEL` / `AI_VISION_MODEL`：OpenAI-compatible/MiMo类接口配置；真实密钥只写本地 `.env` 或系统凭据。
 
 ## 安全与隐私
 
