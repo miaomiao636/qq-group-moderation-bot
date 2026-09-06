@@ -17,7 +17,7 @@ from app.adapters.qq_official.contract import StandardMessage
 from app.moderation.decision import ModerationDecision
 
 AUTO_PUNISH_THRESHOLD = 0.90
-_HARD_EVIDENCE_RULES = {"R001", "R003"}  # 黑名单词 / 联系方式（独立硬证据）
+_HARD_EVIDENCE_RULES = {"R001", "R003", "R006"}  # 黑名单词 / 联系方式 / 分享卡片（独立硬证据）
 
 
 class ReviewGate:

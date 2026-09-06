@@ -304,11 +304,30 @@ class TextRuleEngine:
         actions: list[str] = []
         reason = ""
 
+        share_card = msg.kind == "share_card"
+        if share_card:
+            # 群规（负责人裁定）：分享卡片发布即撤回，直接高置信违规
+            hits.append(
+                RuleHit(
+                    rule_id="R006",
+                    rule_name="share_card",
+                    category="ad",
+                    confidence_delta=0.0,
+                    evidence_masked="分享卡片（发布即撤回）",
+                )
+            )
+            category = category or "ad"
+
         has_hard_blacklist = any(h.rule_id == "R001" for h in hits)
 
         if protected:
             verdict = "record_only"
             reason = "保护角色（群主/管理员）：命中信号仅记录，不处罚"
+        elif share_card:
+            verdict = "violation_high"
+            confidence = max(confidence, 0.95)
+            actions = list(_HIGH_ACTIONS)
+            reason = "分享卡片按群规直接判高置信违规（发布即撤回）"
         elif has_hard_blacklist:
             # R-102 审计选项A：命中明确黑名单词（R001）即硬证据，直接高置信违规
             verdict = "violation_high"
