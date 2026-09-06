@@ -9,6 +9,7 @@ from alembic import context
 from app import models  # noqa: F401  确保模型注册到 metadata
 from app.config import get_settings
 from app.db import Base
+from app.moderation import dynamic_rules  # noqa: F401
 from sqlalchemy import event, pool
 from sqlalchemy.engine import Connection
 from sqlalchemy.ext.asyncio import async_engine_from_config

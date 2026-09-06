@@ -159,6 +159,84 @@ def test_state_changing_post_accepts_csrf(logged_in: TestClient) -> None:
     assert asyncio.run(_audit_exists()) is True
 
 
+def test_dynamic_rule_admin_create_item_publish_flow(logged_in: TestClient) -> None:
+    page = logged_in.get("/admin/rules")
+    assert page.status_code == 200
+    csrf = extract_csrf(page.text)
+    group_id = f"G_RULE_WEB_{uuid.uuid4().hex[:6]}"
+    word = f"后台违规词{uuid.uuid4().hex[:6]}"
+    draft_name = f"web-rule-{uuid.uuid4().hex[:6]}"
+
+    resp = logged_in.post(
+        "/admin/rules/drafts",
+        data={"scope": "group", "scope_key": group_id, "name": draft_name, "csrf": csrf},
+        follow_redirects=False,
+    )
+    assert resp.status_code == 303
+
+    import asyncio
+
+    from app.db import SessionLocal
+    from app.moderation.dynamic_rules import (
+        DynamicRuleEngine,
+        RuleSet,
+        RuleVersion,
+        load_active_snapshot,
+    )
+
+    async def _draft_id() -> int:
+        async with SessionLocal() as session:
+            row = (
+                await session.execute(
+                    select(RuleVersion)
+                    .join(RuleSet, RuleSet.id == RuleVersion.rule_set_id)
+                    .where(
+                        RuleVersion.description == draft_name,
+                        RuleVersion.status == "DRAFT",
+                        RuleSet.scope_key == group_id,
+                    )
+                )
+            ).scalar_one()
+            return row.id
+
+    version_id = asyncio.run(_draft_id())
+    csrf = extract_csrf(logged_in.get("/admin/rules").text)
+    resp = logged_in.post(
+        f"/admin/rules/drafts/{version_id}/items",
+        data={
+            "item_type": "keyword",
+            "pattern": word,
+            "category": "ad",
+            "weight": "0.95",
+            "description": "测试后台规则",
+            "csrf": csrf,
+        },
+        follow_redirects=False,
+    )
+    assert resp.status_code == 303
+
+    csrf = extract_csrf(logged_in.get("/admin/rules").text)
+    resp = logged_in.post(
+        f"/admin/rules/versions/{version_id}/publish",
+        data={"csrf": csrf},
+        follow_redirects=False,
+    )
+    assert resp.status_code == 303
+
+    async def _decision() -> str:
+        async with SessionLocal() as session:
+            snapshot = await load_active_snapshot(session, group_id)
+        msg = StandardMessage(
+            message_id=f"WEB_RULE_{uuid.uuid4().hex[:6]}",
+            group_openid=group_id,
+            sender=Sender(member_openid="M_WEB_RULE"),
+            text=word,
+        )
+        return DynamicRuleEngine(snapshot).evaluate(msg).verdict
+
+    assert asyncio.run(_decision()) == "violation_high"
+
+
 # ---------- 案件审批流 ----------
 
 

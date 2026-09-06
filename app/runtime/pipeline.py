@@ -19,6 +19,7 @@ from app.adapters.qq_official.contract import StandardMessage
 from app.adapters.qq_official.dedup import begin_processing, mark_failed, mark_processed
 from app.adapters.qq_official.parser import EventParseError, parse_group_message
 from app.moderation.decision import ModerationDecision
+from app.moderation.dynamic_rules import load_cached_active_snapshot
 from app.moderation.image_engine import ImageModerationEngine, MediaAnalysis, merge_decisions
 from app.moderation.media_engine import evaluate_file, evaluate_video, evaluate_voice
 from app.moderation.review_gate import ReviewGate
@@ -68,7 +69,6 @@ async def run_pipeline(
     if not claim.accepted:
         return None
 
-    text_engine = text_engine or TextRuleEngine()
     image_engine = image_engine or ImageModerationEngine()
     gate = ReviewGate()
 
@@ -97,6 +97,11 @@ async def run_pipeline(
         return record
 
     try:
+        rule_version_ids: tuple[int, ...] = ()
+        if text_engine is None:
+            rule_snapshot = await load_cached_active_snapshot(session, msg.group_openid)
+            rule_version_ids = rule_snapshot.version_ids
+            text_engine = TextRuleEngine(rule_snapshot=rule_snapshot)
         decision: ModerationDecision = text_engine.evaluate(msg)
         decision = gate.review(msg, decision)
 
@@ -197,6 +202,7 @@ async def run_pipeline(
                     "is_protected_sender": decision.is_protected_sender,
                     "text_preview": msg.text[:60],
                     "media_kinds": [a.content_type for a in msg.attachments],
+                    "rule_version_ids": list(rule_version_ids),
                 },
                 ensure_ascii=False,
             ),

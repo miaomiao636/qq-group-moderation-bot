@@ -11,6 +11,7 @@ import html
 import json
 from datetime import timedelta
 from typing import Any
+from urllib.parse import quote
 
 from fastapi import APIRouter, Form, HTTPException, Request, Response
 from fastapi.responses import HTMLResponse, RedirectResponse
@@ -70,6 +71,10 @@ async def _require_login(request: Request) -> str | None:
 
 def _login_redirect() -> RedirectResponse:
     return RedirectResponse("/admin/login", status_code=303)
+
+
+def _rules_notice_redirect(notice: str) -> RedirectResponse:
+    return RedirectResponse(f"/admin/rules?notice={quote(notice)}", status_code=303)
 
 
 def _csrf_field(session_token: str) -> str:
@@ -510,14 +515,128 @@ async def save_group_alias(
 
 
 @router.get("/rules", response_class=HTMLResponse)
-async def rules_page(request: Request) -> Response:
-    if not await _require_login(request):
+async def rules_page(request: Request, notice: str = "") -> Response:
+    token = await _require_login(request)
+    if not token:
         return _login_redirect()
+    csrf = _csrf_field(token)
+    from collections import defaultdict
+
+    from app.moderation.dynamic_rules import (
+        RuleItem,
+        RuleSet,
+        RuleVersion,
+        ensure_default_rules,
+    )
     from app.moderation.rules import BLACKLIST_EXPLICIT, SOFT_SIGNALS
 
+    async with SessionLocal() as session:
+        await ensure_default_rules(session)
+        version_rows = (
+            await session.execute(
+                select(RuleVersion, RuleSet)
+                .join(RuleSet, RuleSet.id == RuleVersion.rule_set_id)
+                .order_by(RuleVersion.created_at.desc(), RuleVersion.id.desc())
+            )
+        ).all()
+        version_ids = [v.id for v, _ in version_rows]
+        items_by_version: dict[int, list[RuleItem]] = defaultdict(list)
+        if version_ids:
+            items = (
+                (
+                    await session.execute(
+                        select(RuleItem)
+                        .where(RuleItem.version_id.in_(version_ids))
+                        .order_by(RuleItem.id.asc())
+                    )
+                )
+                .scalars()
+                .all()
+            )
+            for item in items:
+                items_by_version[item.version_id].append(item)
+
+    notice_html = f"<p class=warn>{_esc(notice)}</p>" if notice else ""
     blacklist = "、".join(_esc(w) for w in BLACKLIST_EXPLICIT)
     soft = "、".join(_esc(w) for w in SOFT_SIGNALS)
+    version_parts: list[str] = []
+    for version, rule_set in version_rows:
+        status = _esc(version.status)
+        item_rows = (
+            "".join(
+                "<li>"
+                f"#{item.id} [{_esc(item.item_type)} / {_esc(item.category)} / {item.weight:.2f}] "
+                f"{_esc(item.pattern)}"
+                + (f" — {_esc(item.description)}" if item.description else "")
+                + (" <span class=muted>已停用</span>" if not item.enabled else "")
+                + "</li>"
+                for item in items_by_version.get(version.id, [])
+            )
+            or "<li class=muted>暂无规则项</li>"
+        )
+
+        publish_form = (
+            f'<form method=post action="/admin/rules/versions/{version.id}/publish" '
+            f'style="display:inline">{csrf}<button class="btn ok">发布此草稿</button></form>'
+            if version.status == "DRAFT"
+            else ""
+        )
+        rollback_form = (
+            f'<form method=post action="/admin/rules/versions/{version.id}/rollback" '
+            f'style="display:inline">{csrf}<button class=btn>回滚到此版本</button></form>'
+            if version.status == "ARCHIVED"
+            else ""
+        )
+        add_item_form = (
+            f'<form method=post action="/admin/rules/drafts/{version.id}/items" '
+            'style="margin-top:10px;display:grid;grid-template-columns:120px 1fr 120px 90px 1fr auto;gap:8px">'
+            f"{csrf}"
+            "<select name=item_type>"
+            "<option value=keyword>关键词</option>"
+            "<option value=phrase_combo>组合短语</option>"
+            "<option value=domain>域名</option>"
+            "<option value=share_source>分享来源</option>"
+            "<option value=contact_combo>联系方式组合</option>"
+            "</select>"
+            '<input name=pattern placeholder="规则内容，例如 招聘+私聊 或 example.com">'
+            "<select name=category>"
+            "<option value=ad>广告</option>"
+            "<option value=fraud>诈骗</option>"
+            "<option value=porn>色情</option>"
+            "<option value=violence>暴力/违禁</option>"
+            "<option value=flood>刷屏</option>"
+            "<option value=other>其他</option>"
+            "<option value=allow>允许/白名单</option>"
+            "</select>"
+            "<input name=weight value=0.95>"
+            '<input name=description placeholder="备注，可选">'
+            "<button class=btn>添加规则项</button></form>"
+            if version.status == "DRAFT"
+            else ""
+        )
+        actions = publish_form + rollback_form or "<span class=muted>当前生效版本</span>"
+        version_parts.append(
+            "<div class=card>"
+            f"<h3>版本 #{version.id} — {status}</h3>"
+            f"<p>范围：<code>{_esc(rule_set.scope)}</code> / <code>{_esc(rule_set.scope_key)}</code>　"
+            f"版本号：{version.version}　说明：{_esc(version.description)}</p>"
+            f"<p>{actions}</p><ul>{item_rows}</ul>{add_item_form}</div>"
+        )
+
+    version_html = "".join(version_parts) or "<div class=card>暂无动态规则版本</div>"
     body = (
+        f"{notice_html}"
+        "<div class=card><h2>动态规则配置</h2>"
+        "<p class=muted>规则保存在数据库中；发布后运行时会自动读取最新 Active 版本，不需要改代码或重启。"
+        "这里只支持安全的结构化文本规则，不允许代码、SQL 或任意正则。</p>"
+        '<form method=post action="/admin/rules/drafts" '
+        'style="display:grid;grid-template-columns:120px 180px 1fr auto;gap:8px">'
+        f"{csrf}"
+        "<select name=scope><option value=global>全局规则</option><option value=group>单群规则</option></select>"
+        '<input name=scope_key placeholder="单群填 group_openid；全局可留空">'
+        '<input name=name placeholder="草稿名称，例如 9月广告规则调整">'
+        "<button class=btn>创建草稿</button></form></div>"
+        f"{version_html}"
         "<div class=card><h3>允许内容</h3><ul>"
         "<li>群主/管理员内容（保护角色，只记录不处罚）</li>"
         "<li>带「万能校园墙」小程序码的分享图（白名单）</li>"
@@ -530,6 +649,126 @@ async def rules_page(request: Request) -> Response:
         f"<div class=card><h3>弱信号词（{len(SOFT_SIGNALS)}，组合达到阈值才处罚）</h3><p>{soft}</p></div>"
     )
     return _page("规则", body)
+
+
+@router.post("/rules/drafts")
+async def create_rule_draft_submit(
+    request: Request,
+    scope: str = Form("global"),
+    scope_key: str = Form(""),
+    name: str = Form(""),
+    csrf: str = Form(""),
+) -> Response:
+    await _require_admin_post(request, csrf)
+    operator = await _operator(request)
+    from app.moderation.dynamic_rules import RuleScope, create_rule_draft
+
+    scope_clean: RuleScope = "group" if scope == "group" else "global"
+    scope_key_clean = scope_key.strip()
+    if scope_clean == "global":
+        scope_key_clean = "*"
+    if scope_clean == "group" and not scope_key_clean:
+        return _rules_notice_redirect("单群规则必须填写group_openid")
+    try:
+        async with SessionLocal() as session:
+            draft = await create_rule_draft(
+                session,
+                scope=scope_clean,
+                scope_key=scope_key_clean,
+                name=name.strip() or "未命名规则草稿",
+                operator=operator,
+            )
+        await record_admin_audit(
+            operator,
+            "rule_create_draft",
+            "rule_version",
+            str(draft.id),
+            {"scope": scope_clean, "scope_key": scope_key_clean},
+        )
+    except ValueError as exc:
+        return _rules_notice_redirect(str(exc))
+    return _rules_notice_redirect(f"已创建草稿#{draft.id}")
+
+
+@router.post("/rules/drafts/{version_id}/items")
+async def add_rule_item_submit(
+    request: Request,
+    version_id: int,
+    item_type: str = Form("keyword"),
+    pattern: str = Form(""),
+    category: str = Form("ad"),
+    weight: float = Form(0.95),
+    description: str = Form(""),
+    csrf: str = Form(""),
+) -> Response:
+    await _require_admin_post(request, csrf)
+    operator = await _operator(request)
+    from app.moderation.dynamic_rules import add_rule_item
+
+    try:
+        async with SessionLocal() as session:
+            item = await add_rule_item(
+                session,
+                version_id,
+                item_type=item_type,
+                pattern=pattern,
+                category=category,
+                weight=weight,
+                description=description,
+                operator=operator,
+            )
+        await record_admin_audit(
+            operator,
+            "rule_add_item",
+            "rule_item",
+            str(item.id),
+            {"version_id": version_id, "item_type": item_type, "category": category},
+        )
+    except ValueError as exc:
+        return _rules_notice_redirect(str(exc))
+    return _rules_notice_redirect(f"已添加规则项#{item.id}")
+
+
+@router.post("/rules/versions/{version_id}/publish")
+async def publish_rule_version_submit(
+    request: Request, version_id: int, csrf: str = Form("")
+) -> Response:
+    await _require_admin_post(request, csrf)
+    operator = await _operator(request)
+    from app.moderation.dynamic_rules import publish_rule_version
+
+    try:
+        async with SessionLocal() as session:
+            version = await publish_rule_version(session, version_id, operator=operator)
+        await record_admin_audit(
+            operator, "rule_publish", "rule_version", str(version.id), {"version": version.version}
+        )
+    except ValueError as exc:
+        return _rules_notice_redirect(str(exc))
+    return _rules_notice_redirect(f"已发布规则版本#{version.id}")
+
+
+@router.post("/rules/versions/{version_id}/rollback")
+async def rollback_rule_version_submit(
+    request: Request, version_id: int, csrf: str = Form("")
+) -> Response:
+    await _require_admin_post(request, csrf)
+    operator = await _operator(request)
+    from app.moderation.dynamic_rules import rollback_to_version
+
+    try:
+        async with SessionLocal() as session:
+            version = await rollback_to_version(session, version_id, operator=operator)
+        await record_admin_audit(
+            operator,
+            "rule_rollback",
+            "rule_version",
+            str(version.id),
+            {"version": version.version},
+        )
+    except ValueError as exc:
+        return _rules_notice_redirect(str(exc))
+    return _rules_notice_redirect(f"已回滚到规则版本#{version.id}")
 
 
 # ---------- 报告 ----------

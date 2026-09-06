@@ -14,12 +14,15 @@ from __future__ import annotations
 import hashlib
 import time
 from collections import defaultdict, deque
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from app.adapters.qq_official.contract import StandardMessage
 from app.moderation.decision import ModerationDecision, RuleHit
 from app.moderation.extract import extract_signals
 from app.moderation.normalization import apply_variants, has_variant_trick
+
+if TYPE_CHECKING:
+    from app.moderation.dynamic_rules import RuleSnapshot
 
 HIGH_THRESHOLD = 0.90
 
@@ -370,10 +373,12 @@ class TextRuleEngine:
         high_threshold: float = HIGH_THRESHOLD,
         frequency_tracker: FrequencyTracker | None = None,
         extra_blacklist: tuple[str, ...] = (),
+        rule_snapshot: RuleSnapshot | None = None,
     ) -> None:
         self._high_threshold = high_threshold
         self._blacklist = BLACKLIST_EXPLICIT + tuple(extra_blacklist)
         self.frequency = frequency_tracker or FrequencyTracker()
+        self._rule_snapshot = rule_snapshot
 
     def evaluate(
         self,
@@ -460,7 +465,7 @@ class TextRuleEngine:
             verdict = "allow"
             reason = "未命中任何规则"
 
-        return ModerationDecision(
+        decision = ModerationDecision(
             message_id=msg.message_id,
             group_openid=msg.group_openid,
             sender_member_openid=msg.sender.member_openid,
@@ -473,3 +478,33 @@ class TextRuleEngine:
             reason=reason,
             is_protected_sender=protected,
         )
+        return self._merge_dynamic_decision(msg, decision)
+
+    def _merge_dynamic_decision(
+        self, msg: StandardMessage, base: ModerationDecision
+    ) -> ModerationDecision:
+        if self._rule_snapshot is None:
+            return base
+
+        from app.moderation.dynamic_rules import DynamicRuleEngine
+
+        dynamic = DynamicRuleEngine(self._rule_snapshot).evaluate(msg)
+        if not dynamic.rule_hits:
+            return base
+        if dynamic.verdict == "allow" and base.verdict == "violation_high":
+            return base.model_copy(
+                update={
+                    "verdict": "record_only",
+                    "recommended_actions": [],
+                    "confidence": min(base.confidence, 0.85),
+                    "rule_hits": base.rule_hits + dynamic.rule_hits,
+                    "reason": base.reason + "；动态允许规则冲突，转人工复核",
+                }
+            )
+        if dynamic.verdict == "violation_high" and base.verdict != "violation_high":
+            return dynamic
+        if dynamic.verdict == "record_only" and base.verdict == "allow":
+            return dynamic
+        if dynamic.verdict == "allow" and base.verdict == "allow":
+            return dynamic
+        return base.model_copy(update={"rule_hits": base.rule_hits + dynamic.rule_hits})
