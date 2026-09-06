@@ -15,6 +15,11 @@ from typing import Any
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.actions.orchestrator import (
+    OfficialActionClient,
+    orchestrate_actions,
+    summarize_intents,
+)
 from app.adapters.qq_official.contract import StandardMessage
 from app.adapters.qq_official.dedup import begin_processing, mark_failed, mark_processed
 from app.adapters.qq_official.parser import EventParseError, parse_group_message
@@ -58,6 +63,7 @@ async def run_pipeline(
     text_engine: TextRuleEngine | None = None,
     image_engine: ImageModerationEngine | None = None,
     ai_service: AIReviewService | None = None,
+    official_action_client: OfficialActionClient | None = None,
 ) -> ShadowDecision | None:
     """处理一条 GROUP_MESSAGE_CREATE 载荷。
 
@@ -199,6 +205,15 @@ async def run_pipeline(
             media_paths=local_ai_media_paths,
             rule_version_ids=rule_version_ids,
         )
+        detail = {
+            "rule_hits": [h.model_dump() for h in decision.rule_hits],
+            "recommended_actions": list(decision.recommended_actions),
+            "is_protected_sender": decision.is_protected_sender,
+            "text_preview": msg.text[:60],
+            "media_kinds": [a.content_type for a in msg.attachments],
+            "rule_version_ids": list(rule_version_ids),
+            "ai_results": [r.model_dump() for r in ai_results],
+        }
         record = await upsert_shadow_decision(
             session,
             message_id=msg.message_id,
@@ -210,19 +225,15 @@ async def run_pipeline(
             category=decision.category or "",
             confidence=decision.confidence,
             reason=decision.reason[:500],
-            detail_json=json.dumps(
-                {
-                    "rule_hits": [h.model_dump() for h in decision.rule_hits],
-                    "recommended_actions": list(decision.recommended_actions),
-                    "is_protected_sender": decision.is_protected_sender,
-                    "text_preview": msg.text[:60],
-                    "media_kinds": [a.content_type for a in msg.attachments],
-                    "rule_version_ids": list(rule_version_ids),
-                    "ai_results": [r.model_dump() for r in ai_results],
-                },
-                ensure_ascii=False,
-            ),
+            detail_json=json.dumps(detail, ensure_ascii=False),
         )
+        action_intents = await orchestrate_actions(
+            session, msg, decision, official_client=official_action_client
+        )
+        if action_intents:
+            detail["action_intents"] = summarize_intents(action_intents)
+            record.detail_json = json.dumps(detail, ensure_ascii=False)
+            await session.commit()
         await mark_processed(session, message_id, claim.token)
         return record
     except Exception as exc:  # noqa: BLE001 - 任何处理异常必须可重试

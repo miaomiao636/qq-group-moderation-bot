@@ -1,0 +1,290 @@
+"""T-106 guarded official action orchestration tests."""
+
+from __future__ import annotations
+
+import uuid
+
+import pytest
+from app.actions.orchestrator import orchestrate_actions
+from app.adapters.qq_official.actions import ActionResult
+from app.adapters.qq_official.contract import Sender, StandardMessage
+from app.cases.models import Case, ViolationRecord
+from app.config import Settings
+from app.db import SessionLocal
+from app.models import ActionLog
+from app.moderation.decision import ModerationDecision
+from app.runtime.pipeline import run_pipeline
+from sqlalchemy import func, select
+
+
+class FakeOfficialClient:
+    def __init__(self, fail_action: str = "") -> None:
+        self.fail_action = fail_action
+        self.calls: list[tuple[str, tuple[object, ...]]] = []
+
+    async def recall(
+        self, group_openid: str, message_id: str, *, actor: str = "system"
+    ) -> ActionResult:
+        self.calls.append(("recall", (group_openid, message_id, actor)))
+        if self.fail_action == "recall":
+            raise TimeoutError("unknown")
+        return ActionResult(action="recall", ok=True, status_code=200, attempts=1)
+
+    async def mute(
+        self, group_openid: str, member_openid: str, seconds: int, *, actor: str = "system"
+    ) -> ActionResult:
+        self.calls.append(("mute", (group_openid, member_openid, seconds, actor)))
+        if self.fail_action == "mute":
+            raise TimeoutError("unknown")
+        return ActionResult(action="mute", ok=True, status_code=200, attempts=1)
+
+    async def warn(
+        self,
+        group_openid: str,
+        reply_to_message_id: str,
+        text: str,
+        *,
+        msg_seq: int = 1,
+        actor: str = "system",
+    ) -> ActionResult:
+        self.calls.append(("warn", (group_openid, reply_to_message_id, text, actor)))
+        if self.fail_action == "warn":
+            raise TimeoutError("unknown")
+        return ActionResult(action="warn", ok=True, status_code=200, attempts=1)
+
+
+def _official_settings() -> Settings:
+    return Settings(
+        app_env="prod",
+        admin_password="strong-admin-pass",
+        qq_app_id="APP",
+        qq_app_secret="SECRET",
+        action_mode="OFFICIAL",
+        _env_file=None,
+    )
+
+
+def _msg(
+    group: str, member: str, *, message_id: str | None = None, role: str = "member"
+) -> StandardMessage:
+    return StandardMessage(
+        message_id=message_id or f"ACT_MSG_{uuid.uuid4().hex[:8]}",
+        group_openid=group,
+        sender=Sender(member_openid=member, role=role),
+        text="违规测试内容",
+    )
+
+
+def _high_decision(msg: StandardMessage) -> ModerationDecision:
+    return ModerationDecision(
+        message_id=msg.message_id,
+        group_openid=msg.group_openid,
+        sender_member_openid=msg.sender.member_openid,
+        sender_role=msg.sender.role,
+        verdict="violation_high",
+        category="ad",
+        confidence=0.95,
+        recommended_actions=["recall", "mute", "warn"],
+        reason="测试高置信违规",
+        is_protected_sender=msg.sender.role in ("owner", "admin"),
+    )
+
+
+@pytest.mark.asyncio
+async def test_default_shadow_never_calls_official_client() -> None:
+    client = FakeOfficialClient()
+    group = f"G_ACT_SHADOW_{uuid.uuid4().hex[:6]}"
+    msg = _msg(group, "M1")
+    async with SessionLocal() as session:
+        intents = await orchestrate_actions(
+            session,
+            msg,
+            _high_decision(msg),
+            official_client=client,
+            settings=Settings(action_mode="SHADOW", _env_file=None),
+        )
+    assert intents == []
+    assert client.calls == []
+
+
+def test_official_mode_requires_explicit_prerequisites() -> None:
+    with pytest.raises(ValueError, match="ACTION_MODE=OFFICIAL"):
+        Settings(action_mode="OFFICIAL", app_env="local", _env_file=None)
+    with pytest.raises(ValueError, match="EMERGENCY_STOP=false"):
+        Settings(
+            app_env="prod",
+            admin_password="strong-admin-pass",
+            qq_app_id="APP",
+            qq_app_secret="SECRET",
+            action_mode="OFFICIAL",
+            emergency_stop=True,
+            _env_file=None,
+        )
+
+
+@pytest.mark.asyncio
+async def test_official_first_strike_persists_intents_then_calls() -> None:
+    client = FakeOfficialClient()
+    group = f"G_ACT_FIRST_{uuid.uuid4().hex[:6]}"
+    member = "M1"
+    msg = _msg(group, member)
+    async with SessionLocal() as session:
+        intents = await orchestrate_actions(
+            session,
+            msg,
+            _high_decision(msg),
+            official_client=client,
+            settings=_official_settings(),
+        )
+        action_log_count = (
+            await session.execute(
+                select(func.count()).select_from(ActionLog).where(ActionLog.group_openid == group)
+            )
+        ).scalar_one()
+
+    assert [intent.action for intent in intents] == ["recall", "mute", "warn"]
+    assert {intent.status for intent in intents} == {"SUCCEEDED"}
+    assert [call[0] for call in client.calls] == ["recall", "mute", "warn"]
+    assert client.calls[1][1][2] == 3600
+    assert action_log_count == 3
+    assert "kick" not in {intent.action for intent in intents}
+
+
+@pytest.mark.asyncio
+async def test_official_second_strike_uses_24h_mute_and_no_warn() -> None:
+    client = FakeOfficialClient()
+    group = f"G_ACT_SECOND_{uuid.uuid4().hex[:6]}"
+    member = "M1"
+    async with SessionLocal() as session:
+        first = _msg(group, member)
+        await orchestrate_actions(
+            session,
+            first,
+            _high_decision(first),
+            official_client=client,
+            settings=_official_settings(),
+        )
+        second = _msg(group, member)
+        intents = await orchestrate_actions(
+            session,
+            second,
+            _high_decision(second),
+            official_client=client,
+            settings=_official_settings(),
+        )
+        case = (
+            await session.execute(select(Case).where(Case.group_openid == group))
+        ).scalar_one_or_none()
+
+    assert [intent.action for intent in intents] == ["recall", "mute"]
+    assert client.calls[-2][0] == "recall"
+    assert client.calls[-1][0] == "mute"
+    assert client.calls[-1][1][2] == 24 * 3600
+    assert case is not None
+    assert case.status == "PENDING_REVIEW"
+
+
+@pytest.mark.asyncio
+async def test_duplicate_message_does_not_replay_or_create_second_violation() -> None:
+    client = FakeOfficialClient()
+    group = f"G_ACT_DUP_{uuid.uuid4().hex[:6]}"
+    member = "M1"
+    msg = _msg(group, member)
+    async with SessionLocal() as session:
+        await orchestrate_actions(
+            session,
+            msg,
+            _high_decision(msg),
+            official_client=client,
+            settings=_official_settings(),
+        )
+        intents = await orchestrate_actions(
+            session,
+            msg,
+            _high_decision(msg),
+            official_client=client,
+            settings=_official_settings(),
+        )
+        violation_count = (
+            await session.execute(
+                select(func.count())
+                .select_from(ViolationRecord)
+                .where(ViolationRecord.message_id == msg.message_id)
+            )
+        ).scalar_one()
+
+    assert len(intents) == 3
+    assert [call[0] for call in client.calls] == ["recall", "mute", "warn"]
+    assert violation_count == 1
+
+
+@pytest.mark.asyncio
+async def test_unknown_action_result_is_not_replayed() -> None:
+    client = FakeOfficialClient(fail_action="recall")
+    group = f"G_ACT_UNKNOWN_{uuid.uuid4().hex[:6]}"
+    msg = _msg(group, "M1")
+    async with SessionLocal() as session:
+        intents = await orchestrate_actions(
+            session,
+            msg,
+            _high_decision(msg),
+            official_client=client,
+            settings=_official_settings(),
+        )
+        second = await orchestrate_actions(
+            session,
+            msg,
+            _high_decision(msg),
+            official_client=client,
+            settings=_official_settings(),
+        )
+
+    assert len(intents) == 1
+    assert intents[0].status == "UNKNOWN"
+    assert second[0].status == "UNKNOWN"
+    assert [call[0] for call in client.calls] == ["recall"]
+
+
+@pytest.mark.asyncio
+async def test_protected_sender_is_blocked_at_orchestrator_layer() -> None:
+    client = FakeOfficialClient()
+    group = f"G_ACT_PROTECTED_{uuid.uuid4().hex[:6]}"
+    msg = _msg(group, "M_OWNER", role="owner")
+    async with SessionLocal() as session:
+        intents = await orchestrate_actions(
+            session,
+            msg,
+            _high_decision(msg),
+            official_client=client,
+            settings=_official_settings(),
+        )
+
+    assert len(intents) == 1
+    assert intents[0].status == "SKIPPED"
+    assert client.calls == []
+
+
+@pytest.mark.asyncio
+async def test_pipeline_default_shadow_never_calls_official_client() -> None:
+    client = FakeOfficialClient()
+    group = f"G_ACT_PIPE_{uuid.uuid4().hex[:6]}"
+    payload = {
+        "id": f"ACT_PIPE_{uuid.uuid4().hex[:8]}",
+        "group_openid": group,
+        "group_id": group,
+        "author": {
+            "member_openid": "M_ACT_PIPE",
+            "member_role": "member",
+            "bot": False,
+            "username": "tester",
+        },
+        "content": "刷单兼职加我微信abcde12345",
+        "attachments": [],
+        "timestamp": "2026-09-06T10:00:00+08:00",
+    }
+    async with SessionLocal() as session:
+        record = await run_pipeline(payload, session, official_action_client=client)
+
+    assert record is not None
+    assert record.verdict == "violation_high"
+    assert client.calls == []

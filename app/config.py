@@ -83,6 +83,8 @@ class Settings(BaseSettings):
 
     # 运行模式：SAFE（安全模式，默认）/ CONVENIENT（便捷模式）
     run_mode: Literal["SAFE", "CONVENIENT"] = Field(default="SAFE", alias="RUN_MODE")
+    action_mode: Literal["SHADOW", "OFFICIAL"] = Field(default="SHADOW", alias="ACTION_MODE")
+    emergency_stop: bool = Field(default=False, alias="EMERGENCY_STOP")
 
     # 数据库
     database_url: str = Field(
@@ -135,6 +137,24 @@ class Settings(BaseSettings):
                 "生产环境（APP_ENV=prod）必须设置非空 ADMIN_PASSWORD，"
                 "仅含空白字符的密码同样被拒绝。"
             )
+        if self.action_mode == "OFFICIAL":
+            missing = []
+            if self.app_env != "prod":
+                missing.append("APP_ENV=prod")
+            if not self.admin_password.strip():
+                missing.append("ADMIN_PASSWORD")
+            if not self.qq_app_id.strip():
+                missing.append("QQ_APP_ID")
+            if not self.qq_app_secret.strip():
+                missing.append("QQ_APP_SECRET")
+            if self.emergency_stop:
+                missing.append("EMERGENCY_STOP=false")
+            if missing:
+                raise ValueError(
+                    "ACTION_MODE=OFFICIAL 需要显式生产配置："
+                    + "、".join(missing)
+                    + "。默认保持 SHADOW，不调用官方处罚接口。"
+                )
         # 相对 SQLite 路径统一解析到项目根目录，避免依赖当前工作目录
         self.database_url = _normalize_sqlite_url(self.database_url)
         if (

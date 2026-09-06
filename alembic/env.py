@@ -7,6 +7,7 @@ from logging.config import fileConfig
 
 from alembic import context
 from app import models  # noqa: F401  确保模型注册到 metadata
+from app.actions import orchestrator  # noqa: F401
 from app.config import get_settings
 from app.db import Base
 from app.moderation import (
