@@ -2,8 +2,8 @@
 
 ## 当前状态
 
-- 当前阶段（2026-09-06）：`R-103 → T-105 → T-204 → T-205 → T-106` 已完成实现与自动化验证；功能分支已推送并通过真实Ubuntu、Windows和干净运行时依赖CI，Pull Request #1尚未合并。默认仍为 `ACTION_MODE=SHADOW`，真实QQ群自动处罚、真实MiMo调用、Windows 24×7和NapCat尚未实机验收。
-- 当前最高目标：审核并合并 Pull Request #1 后进入 W1/W2 隔离群实测；并行推进真实MiMo脱敏样本评测、T-105/T-205增强、T-002持续补样本和T-404实现，NapCat保持原门槛。
+- 当前阶段（2026-09-06）：`R-103 → T-105 → T-204 → T-205 → T-106` 已完成实现与自动化验证；功能分支已推送并通过真实Ubuntu、Windows和干净运行时依赖CI，Pull Request #1 已于 2026-09-06 合并（合并提交 `761fdba`）。默认仍为 `ACTION_MODE=SHADOW`，真实QQ群自动处罚、真实MiMo调用、Windows 24×7和NapCat尚未实机验收。
+- 当前最高目标：Pull Request #1 已合并（2026-09-06，合并提交 `761fdba`），进入 W1/W2 隔离群实测；并行推进真实MiMo脱敏样本评测、T-105/T-205增强、T-002持续补样本和T-404实现，NapCat保持原门槛。
 - 任务执行原则：每个Agent一次只认领一个边界清晰的任务；完成后更新 `PROGRESS.md` 和 `HANDOFF.md`，架构变化同步更新 `DECISIONS.md` 和 `PROJECT_CONTEXT.md`。
 - 禁止事项：在身份链路验证完成前，不实现真实QQ批量操作；任何模型结果都不能直接创建踢人动作；T-303/T-304不得自行启用，NapCat真实接入和踢人执行必须等待项目负责人明确批准。
 

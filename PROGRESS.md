@@ -2,7 +2,7 @@
 
 ## 当前阶段
 
-**R-103、T-105、T-204、T-205、T-106实现与远程CI已通过（2026-09-06，分支 `feature/r103-ai-rule-learning`）**：已修复R-103正确性问题，并实现后台版本化动态规则、远程AI软证据、管理员反馈候选规则学习和官方撤回/禁言/警告动作编排。本地全量门禁通过：pytest 203 passed / 1 skipped、mypy 48个源文件通过、ruff check/format通过；Alembic临时库完成 `upgrade head → current → downgrade base → upgrade head`；干净运行时依赖环境可导入应用和AI适配器，且不包含pytest。功能分支已推送，Pull Request #1 上分支 tip（`27fcf6d`）的最新 CI 运行 `34028677558` 与较早的 `34028509570`（@`d00960d`）均在 Ubuntu、Windows 与干净运行时依赖三个任务全部成功（详见 `HANDOFF.md`）；PR尚未合并。默认仍为 `ACTION_MODE=SHADOW`，真实QQ群自动处罚、真实MiMo调用、Windows 24×7和NapCat尚未实机验收。
+**R-103、T-105、T-204、T-205、T-106实现与远程CI已通过（2026-09-06，分支 `feature/r103-ai-rule-learning`）**：已修复R-103正确性问题，并实现后台版本化动态规则、远程AI软证据、管理员反馈候选规则学习和官方撤回/禁言/警告动作编排。本地全量门禁通过：pytest 203 passed / 1 skipped、mypy 48个源文件通过、ruff check/format通过；Alembic临时库完成 `upgrade head → current → downgrade base → upgrade head`；干净运行时依赖环境可导入应用和AI适配器，且不包含pytest。功能分支已推送，Pull Request #1 上分支 tip（`27fcf6d`）的最新 CI 运行 `34028677558` 与较早的 `34028509570`（@`d00960d`）均在 Ubuntu、Windows 与干净运行时依赖三个任务全部成功（详见 `HANDOFF.md`）；PR #1 已于 2026-09-06 合并（合并提交 `761fdba`），`main` 现含 R-103+T-105+T-204+T-205+T-106 全套实现。默认仍为 `ACTION_MODE=SHADOW`，真实QQ群自动处罚、真实MiMo调用、Windows 24×7和NapCat尚未实机验收。
 
 ## 已完成
 
@@ -143,6 +143,14 @@
 验证：通过 GitHub REST API（只读，Authorization: Bearer）直接读取 `actions/runs` 与 `actions/runs/{id}/jobs`，非本地推断；三个 job 的 conclusion 均为 `success`，无 `failure`/`cancelled`/超时。
 
 影响：分支 tip 的远程CI阻塞确认关闭；PR #1 审核与合并是进入 W1/W2 隔离群实测前的唯一前置。真实自动处罚、真实MiMo和NapCat仍不因此次CI通过而开启。
+
+日期：2026-09-06
+
+修改内容：**Pull Request #1 已合并至 `main`**。经 GitHub API 合并（合并提交 `761fdba`），`main` 现包含 R-103、T-105、T-204、T-205、T-106 全部实现与文档更新；`feature/r103-ai-rule-learning` 的 tip（`a9a73fc`，含分支 tip CI 实证刷新）已合入。本地 `git fetch` 确认 `origin/main` 由 `ce2f2f7` 推进至 `761fdba`。
+
+验证：PR 状态 `open`/`mergeable=true`，API `PUT /pulls/1/merge` 返回 `Pull Request successfully merged`，合并提交 `761fdba`；`git fetch origin` 显示 `ce2f2f7..761fdba main -> origin/main`。
+
+影响：远程CI阻塞与合并阻塞均已关闭；下一步按W1/W2门槛进入隔离群动作实测（保持 `ACTION_MODE=SHADOW` 起步）。真实自动处罚、真实MiMo和NapCat仍不得因合并而开启。
 
 ### 此前更新
 

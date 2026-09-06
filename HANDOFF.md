@@ -6,14 +6,14 @@
 
 ## 当前任务
 
-**R-103正确性整改、T-105动态规则、T-204远程AI软证据、T-205反馈候选规则和T-106官方动作编排已完成实现、本地验证和真实跨平台CI**。当前分支 `feature/r103-ai-rule-learning` 已推送，Pull Request #1尚未合并；默认仍为 `ACTION_MODE=SHADOW`，不会对真实QQ群执行处罚；真实MiMo调用、真实官方动作、Windows 24×7和NapCat仍需后续实机验收。
+**R-103正确性整改、T-105动态规则、T-204远程AI软证据、T-205反馈候选规则和T-106官方动作编排已完成实现、本地验证和真实跨平台CI**。当前分支 `feature/r103-ai-rule-learning` 已推送，Pull Request #1 已于 2026-09-06 合并至 `main`（合并提交 `761fdba`）；默认仍为 `ACTION_MODE=SHADOW`，不会对真实QQ群执行处罚；真实MiMo调用、真实官方动作、Windows 24×7和NapCat仍需后续实机验收。
 
 ## 已完成内容
 
 ### 功能分支推送与跨平台CI取证（2026-09-06，主审Agent）
 
 - 分支：`feature/r103-ai-rule-learning`，已推送并跟踪 `origin/feature/r103-ai-rule-learning`。
-- Pull Request：`https://github.com/miaomiao636/qq-group-moderation-bot/pull/1`，目标分支 `main`，尚未合并。
+- Pull Request：`https://github.com/miaomiao636/qq-group-moderation-bot/pull/1`，目标分支 `main`，**已于 2026-09-06 合并**（合并提交 `761fdba`，`main` 现含 R-103+T-105+T-204+T-205+T-106）。
 - CI运行（较早，`d00960d`，运行 `34028509570`）：`https://github.com/miaomiao636/qq-group-moderation-bot/actions/runs/34028509570`，结论 `success`。
 - Ubuntu质量（较早 `d00960d`）：`https://github.com/miaomiao636/qq-group-moderation-bot/actions/runs/34028509570/job/101473685503`，`SUCCESS`。
 - Windows质量（较早 `d00960d`）：`https://github.com/miaomiao636/qq-group-moderation-bot/actions/runs/34028509570/job/101473685547`，`SUCCESS`。
@@ -56,7 +56,7 @@
 ### 下一位Agent注意事项
 
 - 先读取 `PROJECT_CONTEXT.md`、`NEXT_TASKS.md`、`PROGRESS.md`、`DECISIONS.md` 和本文件，不要只看历史聊天。
-- 若继续收尾，优先任务是审核并合并 Pull Request #1；合并后再按W1/W2门槛进入隔离群动作测试。
+- Pull Request #1 已于 2026-09-06 合并（合并提交 `761fdba`）；下一步按W1/W2门槛进入隔离群动作测试（保持 `ACTION_MODE=SHADOW` 起步）。
 - 若接入真实MiMo，只能在本地 `.env` 或系统凭据中配置密钥；不得把密钥、模型真实返回中的敏感内容、真实群成员身份写入源码、Markdown、测试或日志。
 - 若进入W1/W2，保持 `ACTION_MODE=SHADOW` 起步；`OFFICIAL` 只可在隔离群、生产配置校验通过、负责人明确确认后启用，且仅限官方撤回/禁言/首次警告。
 - NapCat仍不参与核心识别；踢人必须人工批准，真实NapCat接入另走T-303/T-304。
