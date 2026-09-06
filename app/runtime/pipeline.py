@@ -12,6 +12,7 @@ import logging
 from pathlib import Path
 from typing import Any
 
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.adapters.qq_official.contract import StandardMessage
@@ -63,7 +64,8 @@ async def run_pipeline(
     message_id = str(payload.get("id") or "")
     if not message_id:
         return None
-    if not await begin_processing(session, message_id):
+    claim = await begin_processing(session, message_id)
+    if not claim.accepted:
         return None
 
     text_engine = text_engine or TextRuleEngine()
@@ -73,8 +75,9 @@ async def run_pipeline(
     try:
         msg: StandardMessage = parse_group_message(payload)
     except EventParseError as exc:
-        # R-102-3 解析失败 → record_only 落库（不静默丢弃），并标记 FAILED 允许重试
-        record = ShadowDecision(
+        # 永久契约解析失败只落一条 record_only，重复投递不再自动重试。
+        record = await upsert_shadow_decision(
+            session,
             message_id=message_id,
             group_openid=str(payload.get("group_openid") or ""),
             member_openid=str((payload.get("author") or {}).get("member_openid") or ""),
@@ -84,9 +87,13 @@ async def run_pipeline(
             reason=f"事件解析失败，转人工：{exc}"[:500],
             detail_json=json.dumps({"parse_error": str(exc)}, ensure_ascii=False),
         )
-        session.add(record)
-        await session.commit()
-        await mark_failed(session, message_id, f"EventParseError: {exc}")
+        await mark_failed(
+            session,
+            message_id,
+            claim.token,
+            f"EventParseError: {exc}",
+            error_kind="permanent",
+        )
         return record
 
     try:
@@ -172,7 +179,8 @@ async def run_pipeline(
                 decision = decision.model_copy(
                     update={"verdict": "record_only", "reason": "媒体部分转人工"}
                 )
-        record = ShadowDecision(
+        record = await upsert_shadow_decision(
+            session,
             message_id=msg.message_id,
             group_openid=msg.group_openid,
             member_openid=msg.sender.member_openid,
@@ -193,14 +201,12 @@ async def run_pipeline(
                 ensure_ascii=False,
             ),
         )
-        session.add(record)
-        await session.commit()
-        await mark_processed(session, message_id)
+        await mark_processed(session, message_id, claim.token)
         return record
     except Exception as exc:  # noqa: BLE001 - 任何处理异常必须可重试
         logger.exception("pipeline processing failed for %s", message_id)
         await session.rollback()
-        await mark_failed(session, message_id, f"{type(exc).__name__}: {exc}")
+        await mark_failed(session, message_id, claim.token, f"{type(exc).__name__}: {exc}")
         return None
 
 
@@ -235,3 +241,18 @@ def _media_decision_from(
         confidence=m.confidence,
         reason=m.reason,
     )
+
+
+async def upsert_shadow_decision(session: AsyncSession, **values: Any) -> ShadowDecision:
+    """按 message_id 幂等写入影子判定记录。"""
+    record = await session.scalar(
+        select(ShadowDecision).where(ShadowDecision.message_id == values["message_id"])
+    )
+    if record is None:
+        record = ShadowDecision(**values)
+        session.add(record)
+    else:
+        for key, value in values.items():
+            setattr(record, key, value)
+    await session.commit()
+    return record

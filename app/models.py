@@ -29,7 +29,7 @@ class SystemMeta(Base):
 
 
 class ProcessedEvent(Base):
-    """已处理事件登记表：成功才标记 PROCESSED，失败可重试（FAILED）。"""
+    """已处理事件登记表：带租约的幂等领取记录。"""
 
     __tablename__ = "processed_events"
 
@@ -37,8 +37,15 @@ class ProcessedEvent(Base):
     event_type: Mapped[str] = mapped_column(String(64), default="GROUP_MESSAGE_CREATE")
     status: Mapped[str] = mapped_column(
         String(16), default="PROCESSED"
-    )  # PROCESSED / PROCESSING / FAILED
+    )  # PROCESSED / PROCESSING / FAILED / DEAD
     error_message: Mapped[str] = mapped_column(String(500), default="")
+    error_kind: Mapped[str] = mapped_column(String(24), default="")
+    lease_token: Mapped[str] = mapped_column(String(64), default="", index=True)
+    lease_expires_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    attempts: Mapped[int] = mapped_column(default=0)
+    next_retry_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     processed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
 
 
