@@ -16,6 +16,7 @@ from app.moderation.dynamic_rules import (
     publish_rule_version,
     rollback_to_version,
 )
+from app.moderation.rules import TextRuleEngine
 from app.runtime.pipeline import run_pipeline
 
 
@@ -182,3 +183,39 @@ async def test_pipeline_loads_published_dynamic_rules_without_restart() -> None:
     detail = json.loads(record.detail_json)
     assert draft.id in detail["rule_version_ids"]
     assert any(hit["rule_id"].startswith("DR_") for hit in detail["rule_hits"])
+
+
+@pytest.mark.asyncio
+async def test_pipeline_refreshes_dynamic_rules_for_injected_text_engine() -> None:
+    group = f"G_PIPE_ENGINE_{uuid.uuid4().hex[:6]}"
+    word = f"常驻引擎违规词{uuid.uuid4().hex[:6]}"
+    long_lived_engine = TextRuleEngine()
+    async with SessionLocal() as session:
+        draft = await create_rule_draft(session, scope="group", scope_key=group, name="runner")
+        await add_rule_item(
+            session,
+            draft.id,
+            item_type="keyword",
+            pattern=word,
+            category="ad",
+            weight=0.95,
+        )
+        await publish_rule_version(session, draft.id, operator="test")
+        payload = {
+            "id": f"DYN_ENGINE_{uuid.uuid4().hex[:8]}",
+            "group_openid": group,
+            "group_id": group,
+            "author": {
+                "member_openid": "M_PIPE_ENGINE",
+                "member_role": "member",
+                "bot": False,
+                "username": "tester",
+            },
+            "content": word,
+            "attachments": [],
+            "timestamp": "2026-09-06T10:00:00+08:00",
+        }
+        record = await run_pipeline(payload, session, text_engine=long_lived_engine)
+
+    assert record is not None
+    assert record.verdict == "violation_high"

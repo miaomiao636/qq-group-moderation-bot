@@ -380,6 +380,10 @@ class TextRuleEngine:
         self.frequency = frequency_tracker or FrequencyTracker()
         self._rule_snapshot = rule_snapshot
 
+    def set_rule_snapshot(self, rule_snapshot: RuleSnapshot | None) -> None:
+        """替换运行时动态规则快照，同时保留刷屏等进程内状态。"""
+        self._rule_snapshot = rule_snapshot
+
     def evaluate(
         self,
         msg: StandardMessage,

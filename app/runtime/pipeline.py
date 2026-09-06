@@ -98,10 +98,12 @@ async def run_pipeline(
 
     try:
         rule_version_ids: tuple[int, ...] = ()
+        rule_snapshot = await load_cached_active_snapshot(session, msg.group_openid)
+        rule_version_ids = rule_snapshot.version_ids
         if text_engine is None:
-            rule_snapshot = await load_cached_active_snapshot(session, msg.group_openid)
-            rule_version_ids = rule_snapshot.version_ids
             text_engine = TextRuleEngine(rule_snapshot=rule_snapshot)
+        else:
+            text_engine.set_rule_snapshot(rule_snapshot)
         decision: ModerationDecision = text_engine.evaluate(msg)
         decision = gate.review(msg, decision)
 
