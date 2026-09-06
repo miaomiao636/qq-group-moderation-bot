@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-from app.adapters.qq_official.contract import Attachment, Sender, StandardMessage
+from app.adapters.qq_official.contract import Attachment, Sender, ShareCardInfo, StandardMessage
 from app.adapters.qq_official.parser import parse_group_message
 from app.moderation.rules import TextRuleEngine
 
@@ -21,13 +21,17 @@ def make_message(
     member_openid: str = "MEM_TEST",
     attachments: list[Attachment] | None = None,
     message_id: str = "MSG_TEST_0001",
+    kind: str = "text",
+    share_card: ShareCardInfo | None = None,
 ) -> StandardMessage:
     return StandardMessage(
         message_id=message_id,
         group_openid="GROUP_TEST",
-        sender=Sender(member_openid=member_openid, role=role),  # type: ignore[arg-type]
+        sender=Sender(member_openid=member_openid, role=role),
+        kind=kind,
         text=text,
         attachments=attachments or [],
+        share_card=share_card,
     )
 
 
@@ -100,6 +104,46 @@ def test_spam_texts_flagged(text: str) -> None:
 def test_normal_texts_allowed(text: str) -> None:
     decision = TextRuleEngine().evaluate(make_message(text=text))
     assert decision.verdict == "allow", f"正常聊天不应命中: {decision.reason}"
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "大家觉得兼职靠谱吗？我怕被骗",
+        "学校让我们讨论刷单骗局，请大家不要上当",
+        "我不做兼职，谢谢",
+    ],
+)
+def test_discussion_and_negation_are_not_high_risk(text: str) -> None:
+    decision = TextRuleEngine().evaluate(make_message(text=text))
+    assert decision.verdict != "violation_high"
+    assert decision.recommended_actions == []
+
+
+def test_allowed_share_source_is_allowed() -> None:
+    msg = make_message(
+        text="[卡片消息] 小程序\nsource: 万能校园墙\ntitle: 校园墙信息",
+        kind="share_card",
+        share_card=ShareCardInfo(source="万能校园墙", title="校园墙信息"),
+    )
+
+    decision = TextRuleEngine().evaluate(msg)
+
+    assert decision.verdict == "allow"
+    assert decision.recommended_actions == []
+
+
+def test_unknown_share_card_is_record_only_without_ad_evidence() -> None:
+    msg = make_message(
+        text="[卡片消息] 小程序\nsource: 未知小程序\ntitle: 普通分享",
+        kind="share_card",
+        share_card=ShareCardInfo(source="未知小程序", title="普通分享"),
+    )
+
+    decision = TextRuleEngine().evaluate(msg)
+
+    assert decision.verdict == "record_only"
+    assert decision.recommended_actions == []
 
 
 # ---------- 保护角色 ----------

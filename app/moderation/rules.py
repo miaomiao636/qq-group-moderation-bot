@@ -23,16 +23,57 @@ from app.moderation.normalization import apply_variants, has_variant_trick
 
 HIGH_THRESHOLD = 0.90
 
-# 明确黑名单词（命中即贡献0.70，覆盖实测样本与常见违法词）
-# 命中 R001 视为硬证据：在 TextRuleEngine.evaluate 中直接升级为 violation_high（见下）。
+CONTEXT_SENSITIVE_AD_TERMS: tuple[str, ...] = (
+    "兼职",
+    "刷单",
+    "一单",
+    "日结",
+    "秒结",
+    "评论员",
+    "试做",
+)
+
+DISCUSSION_MARKERS: tuple[str, ...] = (
+    "靠谱吗",
+    "靠谱么",
+    "被骗",
+    "骗局",
+    "不要上当",
+    "讨论",
+    "不做",
+    "拒绝",
+    "真的假的",
+    "是否可靠",
+)
+
+AD_INTENT_MARKERS: tuple[str, ...] = (
+    "招",
+    "招募",
+    "招聘",
+    "接单",
+    "操作",
+    "结算",
+    "联系",
+    "私聊",
+    "加我",
+    "加微",
+    "群里到",
+    "开始干活",
+    "长期",
+)
+
+ALLOWED_SHARE_SOURCES: tuple[str, ...] = ("万能校园墙",)
+SEVERE_CATEGORIES: set[str] = {"porn", "violence", "fraud"}
+
+# 明确黑名单词（命中即贡献0.70，覆盖实测样本与常见违法词）。
+# R-103 后，兼职/刷单/一单等语境敏感词不会单独形成硬证据，
+# 必须结合广告意图且不处于反诈/询问/拒绝语境。
 BLACKLIST_EXPLICIT: tuple[str, ...] = (
     "刷单",
     "代发一条",
     "口令红包",
     "红包结算",
     "日结",
-    # 2026-09-06 负责人裁定（R-102 审计选项A）：强广告招募词提升至硬黑名单 R001，
-    # 使「刷单/兼职/日结/加微信/一单X结」类内容无论是否带联系方式都判高置信违规。
     "兼职",
     "加我微信",
     "加微",
@@ -148,7 +189,14 @@ def _evaluate_text_rules(
     category: str | None = None
     variant_text = apply_variants(text)
 
-    explicit_hits = [kw for kw in blacklist if kw in variant_text]
+    discussion_context = _is_discussion_context(variant_text)
+    sensitive_hits = [
+        kw for kw in CONTEXT_SENSITIVE_AD_TERMS if kw in blacklist and kw in variant_text
+    ]
+    explicit_hits = [
+        kw for kw in blacklist if kw in variant_text and kw not in CONTEXT_SENSITIVE_AD_TERMS
+    ]
+    hard_ad_combo = bool(sensitive_hits) and _has_ad_intent(variant_text) and not discussion_context
     if explicit_hits:
         hits.append(
             RuleHit(
@@ -160,6 +208,32 @@ def _evaluate_text_rules(
             )
         )
         total += 0.70
+        category = category or "ad"
+
+    if hard_ad_combo:
+        hits.append(
+            RuleHit(
+                rule_id="R001",
+                rule_name="explicit_ad_combo",
+                category="ad",
+                confidence_delta=0.70,
+                evidence_masked=f"广告意图+{len(sensitive_hits)}个语境词",
+            )
+        )
+        total += 0.70
+        category = category or "ad"
+
+    if sensitive_hits and not hard_ad_combo:
+        hits.append(
+            RuleHit(
+                rule_id="R007",
+                rule_name="contextual_ad_terms",
+                category="ad",
+                confidence_delta=min(0.25 + 0.10 * (len(sensitive_hits) - 1), 0.45),
+                evidence_masked=f"{len(sensitive_hits)}个语境敏感词",
+            )
+        )
+        total += min(0.25 + 0.10 * (len(sensitive_hits) - 1), 0.45)
         category = category or "ad"
 
     soft_hits = [kw for kw in SOFT_SIGNALS if kw in variant_text]
@@ -224,6 +298,32 @@ def _evaluate_text_rules(
         )
 
     return hits, min(total, 1.0), category
+
+
+def _is_discussion_context(text: str) -> bool:
+    return any(marker in text for marker in DISCUSSION_MARKERS)
+
+
+def _has_ad_intent(text: str) -> bool:
+    return any(marker in text for marker in AD_INTENT_MARKERS)
+
+
+def _is_share_source_allowed(msg: StandardMessage) -> bool:
+    if msg.kind != "share_card":
+        return False
+    card = msg.share_card
+    source_text = " ".join(
+        part
+        for part in (
+            card.source if card else "",
+            card.title if card else "",
+            card.prompt if card else "",
+            card.tag if card else "",
+            msg.text,
+        )
+        if part
+    )
+    return any(source in source_text for source in ALLOWED_SHARE_SOURCES)
 
 
 class FrequencyTracker:
@@ -305,15 +405,15 @@ class TextRuleEngine:
         reason = ""
 
         share_card = msg.kind == "share_card"
-        if share_card:
-            # 群规（负责人裁定）：分享卡片发布即撤回，直接高置信违规
+        share_source_allowed = _is_share_source_allowed(msg)
+        if share_card and not share_source_allowed:
             hits.append(
                 RuleHit(
                     rule_id="R006",
                     rule_name="share_card",
                     category="ad",
                     confidence_delta=0.0,
-                    evidence_masked="分享卡片（发布即撤回）",
+                    evidence_masked="未知来源分享卡片",
                 )
             )
             category = category or "ad"
@@ -323,11 +423,24 @@ class TextRuleEngine:
         if protected:
             verdict = "record_only"
             reason = "保护角色（群主/管理员）：命中信号仅记录，不处罚"
+        elif share_card and share_source_allowed:
+            if category in SEVERE_CATEGORIES:
+                verdict = "record_only"
+                reason = "允许来源分享卡片含高风险类别信号，转人工复核"
+            else:
+                verdict = "allow"
+                confidence = 0.0
+                actions = []
+                reason = "允许来源分享卡片，放行"
+        elif share_card and not has_hard_blacklist and confidence < self._high_threshold:
+            verdict = "record_only"
+            actions = []
+            reason = "未知来源分享卡片，转人工复核"
         elif share_card:
             verdict = "violation_high"
             confidence = max(confidence, 0.95)
             actions = list(_HIGH_ACTIONS)
-            reason = "分享卡片按群规直接判高置信违规（发布即撤回）"
+            reason = "未知来源分享卡片含明确引流或违规证据"
         elif has_hard_blacklist:
             # R-102 审计选项A：命中明确黑名单词（R001）即硬证据，直接高置信违规
             verdict = "violation_high"
