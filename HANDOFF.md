@@ -14,10 +14,14 @@
 
 - 分支：`feature/r103-ai-rule-learning`，已推送并跟踪 `origin/feature/r103-ai-rule-learning`。
 - Pull Request：`https://github.com/miaomiao636/qq-group-moderation-bot/pull/1`，目标分支 `main`，尚未合并。
-- CI运行：`https://github.com/miaomiao636/qq-group-moderation-bot/actions/runs/34028509570`，初次取证head提交 `d00960d340a752bcd0ebd800eb27e0b5994f0ac1`，结论 `success`。
-- Ubuntu质量：`https://github.com/miaomiao636/qq-group-moderation-bot/actions/runs/34028509570/job/101473685503`，`SUCCESS`。
-- Windows质量：`https://github.com/miaomiao636/qq-group-moderation-bot/actions/runs/34028509570/job/101473685547`，`SUCCESS`。
-- 干净运行时依赖：`https://github.com/miaomiao636/qq-group-moderation-bot/actions/runs/34028509570/job/101473685476`，`SUCCESS`。
+- CI运行（较早，`d00960d`，运行 `34028509570`）：`https://github.com/miaomiao636/qq-group-moderation-bot/actions/runs/34028509570`，结论 `success`。
+- Ubuntu质量（较早 `d00960d`）：`https://github.com/miaomiao636/qq-group-moderation-bot/actions/runs/34028509570/job/101473685503`，`SUCCESS`。
+- Windows质量（较早 `d00960d`）：`https://github.com/miaomiao636/qq-group-moderation-bot/actions/runs/34028509570/job/101473685547`，`SUCCESS`。
+- 干净运行时依赖（较早 `d00960d`）：`https://github.com/miaomiao636/qq-group-moderation-bot/actions/runs/34028509570/job/101473685476`，`SUCCESS`。
+- CI运行（分支 tip，`27fcf6d`，运行 `34028677558`）：`https://github.com/miaomiao636/qq-group-moderation-bot/actions/runs/34028677558`，结论 `success`（2026-09-06 经只读 API 直接取证）。
+- Ubuntu质量（tip `27fcf6d`）：`https://github.com/miaomiao636/qq-group-moderation-bot/actions/runs/34028677558/job/101474132870`，`SUCCESS`。
+- Windows质量（tip `27fcf6d`）：`https://github.com/miaomiao636/qq-group-moderation-bot/actions/runs/34028677558/job/101474132911`，`SUCCESS`。
+- 干净运行时依赖（tip `27fcf6d`）：`https://github.com/miaomiao636/qq-group-moderation-bot/actions/runs/34028677558/job/101474132949`，`SUCCESS`。
 - 推送前复验：pytest、mypy、ruff check和ruff format检查全部通过。
 - 结论：远程CI阻塞关闭；PR通过审核并合并后可进入W1/W2隔离群实测。CI证据不替代真实MiMo、真实QQ动作、Windows 24×7或NapCat实机验收。
 

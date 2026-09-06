@@ -2,7 +2,7 @@
 
 ## 当前阶段
 
-**R-103、T-105、T-204、T-205、T-106实现与远程CI已通过（2026-09-06，分支 `feature/r103-ai-rule-learning`）**：已修复R-103正确性问题，并实现后台版本化动态规则、远程AI软证据、管理员反馈候选规则学习和官方撤回/禁言/警告动作编排。本地全量门禁通过：pytest 203 passed / 1 skipped、mypy 48个源文件通过、ruff check/format通过；Alembic临时库完成 `upgrade head → current → downgrade base → upgrade head`；干净运行时依赖环境可导入应用和AI适配器，且不包含pytest。功能分支已推送，Pull Request #1 的Ubuntu、Windows和干净运行时依赖CI全部成功；PR尚未合并。默认仍为 `ACTION_MODE=SHADOW`，真实QQ群自动处罚、真实MiMo调用、Windows 24×7和NapCat尚未实机验收。
+**R-103、T-105、T-204、T-205、T-106实现与远程CI已通过（2026-09-06，分支 `feature/r103-ai-rule-learning`）**：已修复R-103正确性问题，并实现后台版本化动态规则、远程AI软证据、管理员反馈候选规则学习和官方撤回/禁言/警告动作编排。本地全量门禁通过：pytest 203 passed / 1 skipped、mypy 48个源文件通过、ruff check/format通过；Alembic临时库完成 `upgrade head → current → downgrade base → upgrade head`；干净运行时依赖环境可导入应用和AI适配器，且不包含pytest。功能分支已推送，Pull Request #1 上分支 tip（`27fcf6d`）的最新 CI 运行 `34028677558` 与较早的 `34028509570`（@`d00960d`）均在 Ubuntu、Windows 与干净运行时依赖三个任务全部成功（详见 `HANDOFF.md`）；PR尚未合并。默认仍为 `ACTION_MODE=SHADOW`，真实QQ群自动处罚、真实MiMo调用、Windows 24×7和NapCat尚未实机验收。
 
 ## 已完成
 
@@ -16,7 +16,7 @@
   7. 反馈学习已接入后台：管理员可标注确认违规/确认正常/误判/未知原因等反馈，本地挖掘短语、域名、联系方式候选规则，未知撤回不当真值。
   8. 官方动作编排新增 `ACTION_MODE=SHADOW/OFFICIAL` 和 `EMERGENCY_STOP`：先落库动作意图和幂等键，再调用官方撤回、分级禁言和首次警告；数据库失败不调用外部动作，未知结果转人工，不盲目重放；任何路径都不产生踢人动作。
   9. 本地验证：`uv run pytest -q` 203 passed / 1 skipped；`uv run mypy app` 48文件通过；`uv run ruff check app tests alembic` 与 `uv run ruff format --check app tests alembic` 通过；临时SQLite库Alembic完整升降级通过；独立运行时虚拟环境 `uv sync --locked --no-dev` 可导入 `app.main` 和 `app.adapters.ai.openai_compatible`，且pytest不可导入。
-  10. 远程验证：分支已推送至 `origin/feature/r103-ai-rule-learning`；Pull Request #1 的CI运行 `34028509570` 在head提交 `d00960d` 上完成，Ubuntu质量、Windows质量和干净运行时依赖三个任务全部成功。
+  10. 远程验证：分支已推送至 `origin/feature/r103-ai-rule-learning`；Pull Request #1 的CI运行 `34028509570` 在head提交 `d00960d` 上完成，Ubuntu质量、Windows质量和干净运行时依赖三个任务全部成功；分支 tip 现推进至 `27fcf6d`，对应最新 CI 运行 `34028677558` 同样三个任务全部成功（链接见 `HANDOFF.md` 远程CI证据小节）。
 
 - **R-102 核心正确性整改（已交付，2026-09-06）**：
   1. 流水线按图片/GIF/语音/视频/文件类型分发对应引擎（pipeline._is_* + media_engine），禁止全部进图片引擎；
@@ -121,7 +121,7 @@
 
 - **Windows CI 编码问题已修复**：Windows runner cp1252 编码读取含中文注释的 `alembic.ini` 会报 `UnicodeDecodeError`；现已 ASCII 化并在 CI 强制 `PYTHONUTF8=1`。
 - **SQLite相对路径**：配置层规范化（`_normalize_sqlite_url`）与13项回归测试已就位；Windows盘符相对路径被明确拒绝；测试使用 `tmp_path` 并带真实数据目录守卫，不触碰真实数据库。
-- **远程CI证据**：提交 `0e0dd73` 三个任务真实成功，运行链接记录于 `HANDOFF.md`。
+- **远程CI证据**：功能分支 `feature/r103-ai-rule-learning` 最新 CI 运行（tip `27fcf6d`，运行 `34028677558`）在 Ubuntu、Windows 与干净运行时依赖三个任务全部 `success`，运行链接见 `HANDOFF.md` 远程CI证据小节。
 - 注意：`anyio.abc.BlockingPortal` 弃用警告来自 starlette 库，已在 pytest 配置中锁定。
 - 注意：Windows 真实运行、自启动、重启和更新恢复需在 Windows 专用机通过 T-404 演练验证，当前 Mac 环境无法验证。
 - 尚无NapCat身份镜像和踢人执行器；QQ官方适配、审核、案件、后台和报告已有代码，但未完成正式动作与整体验收。
@@ -135,6 +135,14 @@
 验证：推送前重新执行 `uv run pytest -q`、`uv run mypy app`、`uv run ruff check app tests alembic` 和 `uv run ruff format --check app tests alembic`，全部通过；远程三项检查均为 `SUCCESS`。
 
 影响：其他电脑和Agent现可获取功能分支；远程CI阻塞已关闭。下一步是审核并合并PR，之后按门槛进入W1/W2隔离群实测、真实MiMo脱敏评测和T-404实现。CI通过不等于真实QQ群处罚、Windows 24×7或NapCat整体验收通过。
+
+日期：2026-09-06
+
+修改内容：**分支 tip 最新跨平台CI实证刷新（只读API直接取证）**。功能分支 `feature/r103-ai-rule-learning` 当前 tip 提交 `27fcf6d` 的 CI 运行 `34028677558` 三个任务全部 `success`：Ubuntu 质量（`.../job/101474132870`）、Windows 质量（`.../job/101474132911`）、干净运行时依赖回归（`.../job/101474132949`）。较早的 `34028509570`（@`d00960d`）结论一致；两运行均属同一 Pull Request #1。
+
+验证：通过 GitHub REST API（只读，Authorization: Bearer）直接读取 `actions/runs` 与 `actions/runs/{id}/jobs`，非本地推断；三个 job 的 conclusion 均为 `success`，无 `failure`/`cancelled`/超时。
+
+影响：分支 tip 的远程CI阻塞确认关闭；PR #1 审核与合并是进入 W1/W2 隔离群实测前的唯一前置。真实自动处罚、真实MiMo和NapCat仍不因此次CI通过而开启。
 
 ### 此前更新
 
