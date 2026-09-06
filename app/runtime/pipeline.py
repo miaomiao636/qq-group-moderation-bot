@@ -12,12 +12,20 @@ import logging
 from pathlib import Path
 from typing import Any
 
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.actions.orchestrator import (
+    OfficialActionClient,
+    orchestrate_actions,
+    summarize_intents,
+)
 from app.adapters.qq_official.contract import StandardMessage
 from app.adapters.qq_official.dedup import begin_processing, mark_failed, mark_processed
 from app.adapters.qq_official.parser import EventParseError, parse_group_message
+from app.moderation.ai import AIReviewService, build_default_ai_review_service
 from app.moderation.decision import ModerationDecision
+from app.moderation.dynamic_rules import load_cached_active_snapshot
 from app.moderation.image_engine import ImageModerationEngine, MediaAnalysis, merge_decisions
 from app.moderation.media_engine import evaluate_file, evaluate_video, evaluate_voice
 from app.moderation.review_gate import ReviewGate
@@ -54,6 +62,8 @@ async def run_pipeline(
     *,
     text_engine: TextRuleEngine | None = None,
     image_engine: ImageModerationEngine | None = None,
+    ai_service: AIReviewService | None = None,
+    official_action_client: OfficialActionClient | None = None,
 ) -> ShadowDecision | None:
     """处理一条 GROUP_MESSAGE_CREATE 载荷。
 
@@ -63,18 +73,19 @@ async def run_pipeline(
     message_id = str(payload.get("id") or "")
     if not message_id:
         return None
-    if not await begin_processing(session, message_id):
+    claim = await begin_processing(session, message_id)
+    if not claim.accepted:
         return None
 
-    text_engine = text_engine or TextRuleEngine()
     image_engine = image_engine or ImageModerationEngine()
     gate = ReviewGate()
 
     try:
         msg: StandardMessage = parse_group_message(payload)
     except EventParseError as exc:
-        # R-102-3 解析失败 → record_only 落库（不静默丢弃），并标记 FAILED 允许重试
-        record = ShadowDecision(
+        # 永久契约解析失败只落一条 record_only，重复投递不再自动重试。
+        record = await upsert_shadow_decision(
+            session,
             message_id=message_id,
             group_openid=str(payload.get("group_openid") or ""),
             member_openid=str((payload.get("author") or {}).get("member_openid") or ""),
@@ -84,12 +95,24 @@ async def run_pipeline(
             reason=f"事件解析失败，转人工：{exc}"[:500],
             detail_json=json.dumps({"parse_error": str(exc)}, ensure_ascii=False),
         )
-        session.add(record)
-        await session.commit()
-        await mark_failed(session, message_id, f"EventParseError: {exc}")
+        await mark_failed(
+            session,
+            message_id,
+            claim.token,
+            f"EventParseError: {exc}",
+            error_kind="permanent",
+        )
         return record
 
     try:
+        rule_version_ids: tuple[int, ...] = ()
+        local_ai_media_paths: list[Path] = []
+        rule_snapshot = await load_cached_active_snapshot(session, msg.group_openid)
+        rule_version_ids = rule_snapshot.version_ids
+        if text_engine is None:
+            text_engine = TextRuleEngine(rule_snapshot=rule_snapshot)
+        else:
+            text_engine.set_rule_snapshot(rule_snapshot)
         decision: ModerationDecision = text_engine.evaluate(msg)
         decision = gate.review(msg, decision)
 
@@ -102,6 +125,8 @@ async def run_pipeline(
                 if not local or not local.exists():
                     media_missing = True
                     continue
+                if _is_image(att.content_type):
+                    local_ai_media_paths.append(local)
                 if _is_voice(att.content_type):
                     media_decisions.append(
                         evaluate_voice(
@@ -172,7 +197,25 @@ async def run_pipeline(
                 decision = decision.model_copy(
                     update={"verdict": "record_only", "reason": "媒体部分转人工"}
                 )
-        record = ShadowDecision(
+        service = ai_service or build_default_ai_review_service()
+        decision, ai_results = await service.review_message(
+            session,
+            msg,
+            decision,
+            media_paths=local_ai_media_paths,
+            rule_version_ids=rule_version_ids,
+        )
+        detail = {
+            "rule_hits": [h.model_dump() for h in decision.rule_hits],
+            "recommended_actions": list(decision.recommended_actions),
+            "is_protected_sender": decision.is_protected_sender,
+            "text_preview": msg.text[:60],
+            "media_kinds": [a.content_type for a in msg.attachments],
+            "rule_version_ids": list(rule_version_ids),
+            "ai_results": [r.model_dump() for r in ai_results],
+        }
+        record = await upsert_shadow_decision(
+            session,
             message_id=msg.message_id,
             group_openid=msg.group_openid,
             member_openid=msg.sender.member_openid,
@@ -182,25 +225,21 @@ async def run_pipeline(
             category=decision.category or "",
             confidence=decision.confidence,
             reason=decision.reason[:500],
-            detail_json=json.dumps(
-                {
-                    "rule_hits": [h.model_dump() for h in decision.rule_hits],
-                    "recommended_actions": list(decision.recommended_actions),
-                    "is_protected_sender": decision.is_protected_sender,
-                    "text_preview": msg.text[:60],
-                    "media_kinds": [a.content_type for a in msg.attachments],
-                },
-                ensure_ascii=False,
-            ),
+            detail_json=json.dumps(detail, ensure_ascii=False),
         )
-        session.add(record)
-        await session.commit()
-        await mark_processed(session, message_id)
+        action_intents = await orchestrate_actions(
+            session, msg, decision, official_client=official_action_client
+        )
+        if action_intents:
+            detail["action_intents"] = summarize_intents(action_intents)
+            record.detail_json = json.dumps(detail, ensure_ascii=False)
+            await session.commit()
+        await mark_processed(session, message_id, claim.token)
         return record
     except Exception as exc:  # noqa: BLE001 - 任何处理异常必须可重试
         logger.exception("pipeline processing failed for %s", message_id)
         await session.rollback()
-        await mark_failed(session, message_id, f"{type(exc).__name__}: {exc}")
+        await mark_failed(session, message_id, claim.token, f"{type(exc).__name__}: {exc}")
         return None
 
 
@@ -235,3 +274,18 @@ def _media_decision_from(
         confidence=m.confidence,
         reason=m.reason,
     )
+
+
+async def upsert_shadow_decision(session: AsyncSession, **values: Any) -> ShadowDecision:
+    """按 message_id 幂等写入影子判定记录。"""
+    record = await session.scalar(
+        select(ShadowDecision).where(ShadowDecision.message_id == values["message_id"])
+    )
+    if record is None:
+        record = ShadowDecision(**values)
+        session.add(record)
+    else:
+        for key, value in values.items():
+            setattr(record, key, value)
+    await session.commit()
+    return record

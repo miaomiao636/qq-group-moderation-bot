@@ -157,8 +157,8 @@ async def test_pipeline_media_missing_is_record_only() -> None:
 
 
 @pytest.mark.asyncio
-async def test_pipeline_parse_failure_is_record_only_and_retryable() -> None:
-    """解析失败落 record_only 记录且事件标记 FAILED 可重试。"""
+async def test_pipeline_parse_failure_is_record_only_and_not_retried() -> None:
+    """永久契约解析失败落 record_only 记录，重复投递被跳过。"""
     from app.adapters.qq_official.dedup import begin_processing
 
     payload = json.loads(
@@ -171,9 +171,9 @@ async def test_pipeline_parse_failure_is_record_only_and_retryable() -> None:
         assert record is not None
         assert record.verdict == "record_only"
         assert "解析失败" in record.reason
-    # 失败后可重试
+    # 永久解析失败后不再自动重试，避免重复判定和重复处罚风险。
     async with SessionLocal() as session:
-        assert await begin_processing(session, payload["id"]) is True
+        assert (await begin_processing(session, payload["id"])).accepted is False
 
 
 def _image_payload(*, filename: str) -> dict:

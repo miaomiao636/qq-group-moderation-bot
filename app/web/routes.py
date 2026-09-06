@@ -11,6 +11,7 @@ import html
 import json
 from datetime import timedelta
 from typing import Any
+from urllib.parse import quote
 
 from fastapi import APIRouter, Form, HTTPException, Request, Response
 from fastapi.responses import HTMLResponse, RedirectResponse
@@ -18,7 +19,9 @@ from sqlalchemy import select
 
 from app.cases.case_sm import IllegalTransitionError
 from app.cases.models import Case, ViolationRecord
+from app.config import get_settings
 from app.db import SessionLocal
+from app.models import AdminAudit
 from app.reports.cleanup import purge_expired
 from app.reports.service import build_daily, build_weekly, pending_manual_review
 from app.web import auth
@@ -47,6 +50,7 @@ def _page(title: str, body: str, logged_in: bool = True) -> Response:
             '<a href="/admin" style="color:#93c5fd">案件</a> &nbsp; '
             '<a href="/admin/shadow" style="color:#93c5fd">影子判定</a> &nbsp; '
             '<a href="/admin/rules" style="color:#93c5fd">规则</a> &nbsp; '
+            '<a href="/admin/feedback" style="color:#93c5fd">反馈学习</a> &nbsp; '
             '<a href="/admin/reports" style="color:#93c5fd">报告</a> &nbsp; '
             '<a href="/admin/logout" style="color:#fca5a5">退出</a></div></header>'
         )
@@ -68,6 +72,48 @@ async def _require_login(request: Request) -> str | None:
 
 def _login_redirect() -> RedirectResponse:
     return RedirectResponse("/admin/login", status_code=303)
+
+
+def _rules_notice_redirect(notice: str) -> RedirectResponse:
+    return RedirectResponse(f"/admin/rules?notice={quote(notice)}", status_code=303)
+
+
+def _feedback_notice_redirect(notice: str) -> RedirectResponse:
+    return RedirectResponse(f"/admin/feedback?notice={quote(notice)}", status_code=303)
+
+
+def _csrf_field(session_token: str) -> str:
+    return f'<input type=hidden name="csrf" value="{_esc(auth.csrf_token(session_token))}">'
+
+
+async def _require_admin_post(request: Request, csrf: str) -> str:
+    token = await _require_login(request)
+    if not token:
+        raise HTTPException(401, "需要先登录管理后台")
+    if not auth.validate_csrf(token, csrf):
+        raise HTTPException(403, "CSRF token invalid")
+    return token
+
+
+async def record_admin_audit(
+    operator: str,
+    action: str,
+    target_type: str,
+    target_id: str,
+    details: dict[str, Any] | None = None,
+) -> None:
+    safe_details = details or {}
+    async with SessionLocal() as session:
+        session.add(
+            AdminAudit(
+                operator=operator,
+                action=action,
+                target_type=target_type,
+                target_id=str(target_id)[:128],
+                detail_json=json.dumps(safe_details, ensure_ascii=False),
+            )
+        )
+        await session.commit()
 
 
 # ---------- 登录/退出 ----------
@@ -92,8 +138,16 @@ async def login_submit(username: str = Form(""), password: str = Form("")) -> Re
         token = auth.login(username, password)
     except auth.AuthError as exc:
         return RedirectResponse(f"/admin/login?error={_esc(str(exc))}", status_code=303)
+    settings = get_settings()
     resp = RedirectResponse("/admin", status_code=303)
-    resp.set_cookie(auth.SESSION_COOKIE, token, httponly=True, samesite="lax")
+    resp.set_cookie(
+        auth.SESSION_COOKIE,
+        token,
+        httponly=True,
+        samesite="lax",
+        secure=settings.app_env == "prod",
+        max_age=12 * 3600,
+    )
     return resp
 
 
@@ -169,8 +223,10 @@ def _evidence_html(records: list[ViolationRecord]) -> str:
 
 @router.get("/cases/{case_id}", response_class=HTMLResponse)
 async def case_detail(request: Request, case_id: int, code: str = "", notice: str = "") -> Response:
-    if not await _require_login(request):
+    token = await _require_login(request)
+    if not token:
         return _login_redirect()
+    csrf = _csrf_field(token)
     case, records = await _load_case(case_id)
     show_code = (
         f'<p>一次性确认码（5分钟有效，仅显示一次）：<b style="font-size:22px">{_esc(code)}</b></p>'
@@ -184,21 +240,21 @@ async def case_detail(request: Request, case_id: int, code: str = "", notice: st
         buttons = (
             '<form method=post style="display:inline" action="'
             + f"/admin/cases/{case.id}/approve-manual"
-            + '"><button class=btn ok>① 人工处理：预览并生成确认码</button></form>'
+            + f'">{csrf}<button class=btn ok>① 人工处理：预览并生成确认码</button></form>'
             '<form method=post style="display:inline" action="'
             + f"/admin/cases/{case.id}/keep"
-            + '"><button class=btn>保留（不处罚）</button></form>'
+            + f'">{csrf}<button class=btn>保留（不处罚）</button></form>'
             '<form method=post style="display:inline" action="'
             + f"/admin/cases/{case.id}/false-positive"
-            + '"><button class=btn>标记误判（撤销违规）</button></form>'
+            + f'">{csrf}<button class=btn>标记误判（撤销违规）</button></form>'
         )
     elif case.status == "MANUAL_PENDING":
         buttons = (
             f'<form method=post action="/admin/cases/{case.id}/confirm-kick">'
-            "已在QQ客户端手动踢出？输入确认码：<input name=code maxlength=6 style=width:90px> "
+            f"{csrf}已在QQ客户端手动踢出？输入确认码：<input name=code maxlength=6 style=width:90px> "
             '<button class="btn danger">② 确认已踢出</button></form>'
             f'<form method=post action="/admin/cases/{case.id}/cancel" style="margin-top:8px">'
-            "<button class=btn>无法确认成员/取消</button></form>"
+            f"{csrf}<button class=btn>无法确认成员/取消</button></form>"
         )
     audit = _esc(json.dumps(json.loads(case.audit_json), ensure_ascii=False, indent=1))
     body = (
@@ -218,15 +274,14 @@ async def case_detail(request: Request, case_id: int, code: str = "", notice: st
 
 
 @router.post("/cases/{case_id}/approve-manual")
-async def approve_manual(request: Request, case_id: int) -> Response:
-    token = await _require_login(request)
-    if not token:
-        return _login_redirect()
+async def approve_manual(request: Request, case_id: int, csrf: str = Form("")) -> Response:
+    await _require_admin_post(request, csrf)
     operator = await _operator(request)
     case, _ = await _load_case(case_id)
     try:
         await transition_with_session(case_id, "APPROVED_MANUAL", operator)
         await transition_with_session(case_id, "MANUAL_PENDING", operator)
+        await record_admin_audit(operator, "case_approve_manual", "case", str(case_id))
     except IllegalTransitionError as exc:
         return _page(
             "错误",
@@ -237,15 +292,18 @@ async def approve_manual(request: Request, case_id: int) -> Response:
 
 
 @router.post("/cases/{case_id}/confirm-kick")
-async def confirm_kick(request: Request, case_id: int, code: str = Form("")) -> Response:
-    token = await _require_login(request)
-    if not token:
-        return _login_redirect()
+async def confirm_kick(
+    request: Request, case_id: int, code: str = Form(""), csrf: str = Form("")
+) -> Response:
+    await _require_admin_post(request, csrf)
     if not verify_and_consume(case_id, code):
         return await case_detail(request, case_id, notice="确认码错误或已过期，请重新生成预览")
     try:
         await transition_with_session(case_id, "KICKED", await _operator(request))
         await transition_with_session(case_id, "CLOSED", await _operator(request))
+        await record_admin_audit(
+            await _operator(request), "case_confirm_manual_kick", "case", str(case_id)
+        )
     except IllegalTransitionError as exc:
         return _page(
             "错误",
@@ -257,21 +315,20 @@ async def confirm_kick(request: Request, case_id: int, code: str = Form("")) -> 
 
 
 @router.post("/cases/{case_id}/keep")
-async def keep_case(request: Request, case_id: int) -> Response:
-    if not await _require_login(request):
-        return _login_redirect()
+async def keep_case(request: Request, case_id: int, csrf: str = Form("")) -> Response:
+    await _require_admin_post(request, csrf)
     try:
         await transition_with_session(case_id, "KEEP", await _operator(request))
         await transition_with_session(case_id, "CLOSED", await _operator(request))
+        await record_admin_audit(await _operator(request), "case_keep", "case", str(case_id))
     except IllegalTransitionError as exc:
         return _page("错误", f"<div class=card><p class=warn>{_esc(str(exc))}</p></div>")
     return RedirectResponse("/admin", status_code=303)
 
 
 @router.post("/cases/{case_id}/false-positive")
-async def false_positive(request: Request, case_id: int) -> Response:
-    if not await _require_login(request):
-        return _login_redirect()
+async def false_positive(request: Request, case_id: int, csrf: str = Form("")) -> Response:
+    await _require_admin_post(request, csrf)
     case, records = await _load_case(case_id)
     try:
         await transition_with_session(case_id, "FALSE_POSITIVE", await _operator(request))
@@ -284,18 +341,25 @@ async def false_positive(request: Request, case_id: int) -> Response:
                     stored.revoked = True
                     stored.revoke_reason = f"管理员标记误判（案件{case.case_no}）"
             await session.commit()
+        await record_admin_audit(
+            await _operator(request),
+            "case_false_positive",
+            "case",
+            str(case_id),
+            {"case_no": case.case_no, "records": len(records)},
+        )
     except IllegalTransitionError as exc:
         return _page("错误", f"<div class=card><p class=warn>{_esc(str(exc))}</p></div>")
     return RedirectResponse("/admin", status_code=303)
 
 
 @router.post("/cases/{case_id}/cancel")
-async def cancel_case(request: Request, case_id: int) -> Response:
-    if not await _require_login(request):
-        return _login_redirect()
+async def cancel_case(request: Request, case_id: int, csrf: str = Form("")) -> Response:
+    await _require_admin_post(request, csrf)
     try:
         await transition_with_session(case_id, "CANCELLED", await _operator(request))
         await transition_with_session(case_id, "CLOSED", await _operator(request))
+        await record_admin_audit(await _operator(request), "case_cancel", "case", str(case_id))
     except IllegalTransitionError as exc:
         return _page("错误", f"<div class=card><p class=warn>{_esc(str(exc))}</p></div>")
     return RedirectResponse("/admin", status_code=303)
@@ -340,8 +404,10 @@ def _zh_kind(kind: str) -> str:
 
 @router.get("/shadow", response_class=HTMLResponse)
 async def shadow_page(request: Request, verdict: str = "") -> Response:
-    if not await _require_login(request):
+    token = await _require_login(request)
+    if not token:
         return _login_redirect()
+    csrf = _csrf_field(token)
     from app.models import GroupAlias
     from app.runtime.models import ShadowDecision
 
@@ -375,6 +441,24 @@ async def shadow_page(request: Request, verdict: str = "") -> Response:
         name = group_names.get(openid)
         return _esc(name) if name else f"<code>{_esc(openid[:10])}…</code>"
 
+    def _feedback_form(record: Any) -> str:
+        category = _esc(record.category or "other")
+        return (
+            '<form method=post action="/admin/feedback" style="display:grid;gap:4px">'
+            f"{csrf}"
+            f'<input type=hidden name=message_id value="{_esc(record.message_id)}">'
+            f'<input type=hidden name=category value="{category}">'
+            "<select name=label>"
+            "<option value=confirmed_violation>确认违规</option>"
+            "<option value=confirmed_normal>确认正常</option>"
+            "<option value=false_positive>误判</option>"
+            "<option value=unknown_recall>未知原因撤回</option>"
+            "<option value=other_recall>其他原因撤回</option>"
+            "</select>"
+            '<input name=reason placeholder="原因，可选" style="width:140px">'
+            "<button class=btn>保存反馈</button></form>"
+        )
+
     rows = "".join(
         "<tr>"
         f"<td>{_esc(_beijing(r.created_at))}</td>"
@@ -384,6 +468,7 @@ async def shadow_page(request: Request, verdict: str = "") -> Response:
         f"<td>{r.confidence}</td>"
         f"<td>{_member_display(r)}</td>"
         f"<td>{_esc(r.reason[:80])}</td>"
+        f"<td>{_feedback_form(r)}</td>"
         "</tr>"
         for r in records
     )
@@ -398,6 +483,7 @@ async def shadow_page(request: Request, verdict: str = "") -> Response:
         )
         + "</td>"
         f'<td><form method=post action="/admin/groups/alias" style="display:flex;gap:6px">'
+        f"{csrf}"
         f'<input type=hidden name=group_openid value="{_esc(openid)}">'
         '<input name=name placeholder="群名称" style="width:160px">'
         "<button class=btn>保存</button></form></td></tr>"
@@ -407,13 +493,14 @@ async def shadow_page(request: Request, verdict: str = "") -> Response:
     body = (
         f"<h2>影子模式判定（最近100条）</h2><p>分布：{_esc(summary)}　"
         "<span class=muted>影子模式只记录不处罚；时间为北京时间</span></p>"
+        f'<form style="display:none">{csrf}</form>'
         "<div class=card><b>判定说明：</b>高置信违规=确定违规（正式模式自动撤回+禁言+警告）；"
         "转人工复核=有疑点但证据不足（不处罚，人工确认）；放行=正常内容。"
         "<b>置信度</b>=系统对判定的把握程度（0~1），≥0.90才自动处罚。</div>"
         '<div class=card style="border-color:#b45309"><b>首次使用：</b>'
         "群名称尚未备注时，列表「群」列显示OpenID代码——请在<b>页面最底部「群名称备注」表格</b>"
         "把每个代码对应的群名填一次并保存，之后列表直接显示群名。</div>"
-        "<table><tr><th>时间</th><th>群</th><th>类型</th><th>判定</th><th>置信度</th><th>成员（群昵称）</th><th>原因</th></tr>"
+        "<table><tr><th>时间</th><th>群</th><th>类型</th><th>判定</th><th>置信度</th><th>成员（群昵称）</th><th>原因</th><th>人工反馈</th></tr>"
         f"{rows}</table>"
         '<div class=card style="margin-top:20px"><h3>群名称备注</h3>'
         "<p class=muted>官方接口只提供群加密OpenID。把下面各OpenID对应的群名填一次，"
@@ -428,9 +515,9 @@ async def save_group_alias(
     request: Request,
     group_openid: str = Form(""),
     name: str = Form(""),
+    csrf: str = Form(""),
 ) -> Response:
-    if not await _require_login(request):
-        return _login_redirect()
+    await _require_admin_post(request, csrf)
     if not group_openid:
         return RedirectResponse("/admin/shadow", status_code=303)
     async with SessionLocal() as session:
@@ -442,6 +529,9 @@ async def save_group_alias(
             session.add(existing)
         existing.name = name.strip()[:64]
         await session.commit()
+    await record_admin_audit(
+        await _operator(request), "group_alias_save", "group", group_openid, {"name": name[:64]}
+    )
     return RedirectResponse("/admin/shadow", status_code=303)
 
 
@@ -449,12 +539,128 @@ async def save_group_alias(
 
 
 @router.get("/rules", response_class=HTMLResponse)
-async def rules_page() -> Response:
+async def rules_page(request: Request, notice: str = "") -> Response:
+    token = await _require_login(request)
+    if not token:
+        return _login_redirect()
+    csrf = _csrf_field(token)
+    from collections import defaultdict
+
+    from app.moderation.dynamic_rules import (
+        RuleItem,
+        RuleSet,
+        RuleVersion,
+        ensure_default_rules,
+    )
     from app.moderation.rules import BLACKLIST_EXPLICIT, SOFT_SIGNALS
 
+    async with SessionLocal() as session:
+        await ensure_default_rules(session)
+        version_rows = (
+            await session.execute(
+                select(RuleVersion, RuleSet)
+                .join(RuleSet, RuleSet.id == RuleVersion.rule_set_id)
+                .order_by(RuleVersion.created_at.desc(), RuleVersion.id.desc())
+            )
+        ).all()
+        version_ids = [v.id for v, _ in version_rows]
+        items_by_version: dict[int, list[RuleItem]] = defaultdict(list)
+        if version_ids:
+            items = (
+                (
+                    await session.execute(
+                        select(RuleItem)
+                        .where(RuleItem.version_id.in_(version_ids))
+                        .order_by(RuleItem.id.asc())
+                    )
+                )
+                .scalars()
+                .all()
+            )
+            for item in items:
+                items_by_version[item.version_id].append(item)
+
+    notice_html = f"<p class=warn>{_esc(notice)}</p>" if notice else ""
     blacklist = "、".join(_esc(w) for w in BLACKLIST_EXPLICIT)
     soft = "、".join(_esc(w) for w in SOFT_SIGNALS)
+    version_parts: list[str] = []
+    for version, rule_set in version_rows:
+        status = _esc(version.status)
+        item_rows = (
+            "".join(
+                "<li>"
+                f"#{item.id} [{_esc(item.item_type)} / {_esc(item.category)} / {item.weight:.2f}] "
+                f"{_esc(item.pattern)}"
+                + (f" — {_esc(item.description)}" if item.description else "")
+                + (" <span class=muted>已停用</span>" if not item.enabled else "")
+                + "</li>"
+                for item in items_by_version.get(version.id, [])
+            )
+            or "<li class=muted>暂无规则项</li>"
+        )
+
+        publish_form = (
+            f'<form method=post action="/admin/rules/versions/{version.id}/publish" '
+            f'style="display:inline">{csrf}<button class="btn ok">发布此草稿</button></form>'
+            if version.status == "DRAFT"
+            else ""
+        )
+        rollback_form = (
+            f'<form method=post action="/admin/rules/versions/{version.id}/rollback" '
+            f'style="display:inline">{csrf}<button class=btn>回滚到此版本</button></form>'
+            if version.status == "ARCHIVED"
+            else ""
+        )
+        add_item_form = (
+            f'<form method=post action="/admin/rules/drafts/{version.id}/items" '
+            'style="margin-top:10px;display:grid;grid-template-columns:120px 1fr 120px 90px 1fr auto;gap:8px">'
+            f"{csrf}"
+            "<select name=item_type>"
+            "<option value=keyword>关键词</option>"
+            "<option value=phrase_combo>组合短语</option>"
+            "<option value=domain>域名</option>"
+            "<option value=share_source>分享来源</option>"
+            "<option value=contact_combo>联系方式组合</option>"
+            "</select>"
+            '<input name=pattern placeholder="规则内容，例如 招聘+私聊 或 example.com">'
+            "<select name=category>"
+            "<option value=ad>广告</option>"
+            "<option value=fraud>诈骗</option>"
+            "<option value=porn>色情</option>"
+            "<option value=violence>暴力/违禁</option>"
+            "<option value=flood>刷屏</option>"
+            "<option value=other>其他</option>"
+            "<option value=allow>允许/白名单</option>"
+            "</select>"
+            "<input name=weight value=0.95>"
+            '<input name=description placeholder="备注，可选">'
+            "<button class=btn>添加规则项</button></form>"
+            if version.status == "DRAFT"
+            else ""
+        )
+        actions = publish_form + rollback_form or "<span class=muted>当前生效版本</span>"
+        version_parts.append(
+            "<div class=card>"
+            f"<h3>版本 #{version.id} — {status}</h3>"
+            f"<p>范围：<code>{_esc(rule_set.scope)}</code> / <code>{_esc(rule_set.scope_key)}</code>　"
+            f"版本号：{version.version}　说明：{_esc(version.description)}</p>"
+            f"<p>{actions}</p><ul>{item_rows}</ul>{add_item_form}</div>"
+        )
+
+    version_html = "".join(version_parts) or "<div class=card>暂无动态规则版本</div>"
     body = (
+        f"{notice_html}"
+        "<div class=card><h2>动态规则配置</h2>"
+        "<p class=muted>规则保存在数据库中；发布后运行时会自动读取最新 Active 版本，不需要改代码或重启。"
+        "这里只支持安全的结构化文本规则，不允许代码、SQL 或任意正则。</p>"
+        '<form method=post action="/admin/rules/drafts" '
+        'style="display:grid;grid-template-columns:120px 180px 1fr auto;gap:8px">'
+        f"{csrf}"
+        "<select name=scope><option value=global>全局规则</option><option value=group>单群规则</option></select>"
+        '<input name=scope_key placeholder="单群填 group_openid；全局可留空">'
+        '<input name=name placeholder="草稿名称，例如 9月广告规则调整">'
+        "<button class=btn>创建草稿</button></form></div>"
+        f"{version_html}"
         "<div class=card><h3>允许内容</h3><ul>"
         "<li>群主/管理员内容（保护角色，只记录不处罚）</li>"
         "<li>带「万能校园墙」小程序码的分享图（白名单）</li>"
@@ -469,13 +675,292 @@ async def rules_page() -> Response:
     return _page("规则", body)
 
 
+@router.post("/rules/drafts")
+async def create_rule_draft_submit(
+    request: Request,
+    scope: str = Form("global"),
+    scope_key: str = Form(""),
+    name: str = Form(""),
+    csrf: str = Form(""),
+) -> Response:
+    await _require_admin_post(request, csrf)
+    operator = await _operator(request)
+    from app.moderation.dynamic_rules import RuleScope, create_rule_draft
+
+    scope_clean: RuleScope = "group" if scope == "group" else "global"
+    scope_key_clean = scope_key.strip()
+    if scope_clean == "global":
+        scope_key_clean = "*"
+    if scope_clean == "group" and not scope_key_clean:
+        return _rules_notice_redirect("单群规则必须填写group_openid")
+    try:
+        async with SessionLocal() as session:
+            draft = await create_rule_draft(
+                session,
+                scope=scope_clean,
+                scope_key=scope_key_clean,
+                name=name.strip() or "未命名规则草稿",
+                operator=operator,
+            )
+        await record_admin_audit(
+            operator,
+            "rule_create_draft",
+            "rule_version",
+            str(draft.id),
+            {"scope": scope_clean, "scope_key": scope_key_clean},
+        )
+    except ValueError as exc:
+        return _rules_notice_redirect(str(exc))
+    return _rules_notice_redirect(f"已创建草稿#{draft.id}")
+
+
+@router.post("/rules/drafts/{version_id}/items")
+async def add_rule_item_submit(
+    request: Request,
+    version_id: int,
+    item_type: str = Form("keyword"),
+    pattern: str = Form(""),
+    category: str = Form("ad"),
+    weight: float = Form(0.95),
+    description: str = Form(""),
+    csrf: str = Form(""),
+) -> Response:
+    await _require_admin_post(request, csrf)
+    operator = await _operator(request)
+    from app.moderation.dynamic_rules import add_rule_item
+
+    try:
+        async with SessionLocal() as session:
+            item = await add_rule_item(
+                session,
+                version_id,
+                item_type=item_type,
+                pattern=pattern,
+                category=category,
+                weight=weight,
+                description=description,
+                operator=operator,
+            )
+        await record_admin_audit(
+            operator,
+            "rule_add_item",
+            "rule_item",
+            str(item.id),
+            {"version_id": version_id, "item_type": item_type, "category": category},
+        )
+    except ValueError as exc:
+        return _rules_notice_redirect(str(exc))
+    return _rules_notice_redirect(f"已添加规则项#{item.id}")
+
+
+@router.post("/rules/versions/{version_id}/publish")
+async def publish_rule_version_submit(
+    request: Request, version_id: int, csrf: str = Form("")
+) -> Response:
+    await _require_admin_post(request, csrf)
+    operator = await _operator(request)
+    from app.moderation.dynamic_rules import publish_rule_version
+
+    try:
+        async with SessionLocal() as session:
+            version = await publish_rule_version(session, version_id, operator=operator)
+        await record_admin_audit(
+            operator, "rule_publish", "rule_version", str(version.id), {"version": version.version}
+        )
+    except ValueError as exc:
+        return _rules_notice_redirect(str(exc))
+    return _rules_notice_redirect(f"已发布规则版本#{version.id}")
+
+
+@router.post("/rules/versions/{version_id}/rollback")
+async def rollback_rule_version_submit(
+    request: Request, version_id: int, csrf: str = Form("")
+) -> Response:
+    await _require_admin_post(request, csrf)
+    operator = await _operator(request)
+    from app.moderation.dynamic_rules import rollback_to_version
+
+    try:
+        async with SessionLocal() as session:
+            version = await rollback_to_version(session, version_id, operator=operator)
+        await record_admin_audit(
+            operator,
+            "rule_rollback",
+            "rule_version",
+            str(version.id),
+            {"version": version.version},
+        )
+    except ValueError as exc:
+        return _rules_notice_redirect(str(exc))
+    return _rules_notice_redirect(f"已回滚到规则版本#{version.id}")
+
+
+# ---------- 反馈学习 ----------
+
+
+@router.get("/feedback", response_class=HTMLResponse)
+async def feedback_page(request: Request, notice: str = "") -> Response:
+    token = await _require_login(request)
+    if not token:
+        return _login_redirect()
+    csrf = _csrf_field(token)
+    from app.moderation.feedback import FeedbackRecord, RuleCandidate
+
+    async with SessionLocal() as session:
+        feedback_rows = (
+            (
+                await session.execute(
+                    select(FeedbackRecord)
+                    .order_by(FeedbackRecord.created_at.desc(), FeedbackRecord.id.desc())
+                    .limit(80)
+                )
+            )
+            .scalars()
+            .all()
+        )
+        candidates = (
+            (
+                await session.execute(
+                    select(RuleCandidate)
+                    .order_by(RuleCandidate.created_at.desc(), RuleCandidate.id.desc())
+                    .limit(80)
+                )
+            )
+            .scalars()
+            .all()
+        )
+
+    feedback_html = (
+        "".join(
+            "<tr>"
+            f"<td>{fb.id}</td><td><code>{_esc(fb.message_id)}</code></td>"
+            f"<td>{_esc(fb.label)}</td><td>{_esc(fb.category)}</td>"
+            f"<td><code>{_esc(fb.group_openid[:16])}</code></td>"
+            f"<td>{_esc(fb.reason)}</td><td>{_esc(fb.sample_text_masked[:120])}</td>"
+            "</tr>"
+            for fb in feedback_rows
+        )
+        or "<tr><td colspan=7 class=muted>暂无人工反馈</td></tr>"
+    )
+    candidate_html = (
+        "".join(
+            "<tr>"
+            f"<td>{c.id}</td><td>{_esc(c.status)}</td><td>{_esc(c.scope)}/{_esc(c.scope_key[:16])}</td>"
+            f"<td>{_esc(c.item_type)}</td><td>{_esc(c.pattern)}</td><td>{_esc(c.category)}</td>"
+            f"<td>{c.support_count}/{c.member_count}</td><td>{c.conflict_count}</td>"
+            "<td>"
+            + (
+                f'<form method=post action="/admin/feedback/candidates/{c.id}/copy-to-draft">'
+                f"{csrf}<button class=btn>复制为草稿</button></form>"
+                if c.status == "PROPOSED"
+                else f"<span class=muted>草稿#{_esc(c.copied_version_id or '')}</span>"
+            )
+            + "</td></tr>"
+            for c in candidates
+        )
+        or "<tr><td colspan=9 class=muted>暂无候选规则</td></tr>"
+    )
+    notice_html = f"<p class=warn>{_esc(notice)}</p>" if notice else ""
+    body = (
+        f"{notice_html}"
+        "<div class=card><h2>反馈学习</h2>"
+        "<p class=muted>这里只把管理员明确标注作为真值；未知原因撤回只保存，不参与候选规则挖掘。"
+        "候选规则复制后仍是草稿，必须在规则页人工发布才会生效。</p>"
+        f'<form method=post action="/admin/feedback/mine">{csrf}'
+        "<button class=btn>从确认反馈挖掘候选规则</button></form></div>"
+        "<div class=card><h3>候选规则</h3>"
+        "<table><tr><th>ID</th><th>状态</th><th>范围</th><th>类型</th><th>内容</th><th>类别</th><th>支持/成员</th><th>负例冲突</th><th>操作</th></tr>"
+        f"{candidate_html}</table></div>"
+        "<div class=card><h3>最近反馈</h3>"
+        "<table><tr><th>ID</th><th>消息</th><th>标签</th><th>类别</th><th>群</th><th>原因</th><th>脱敏样本</th></tr>"
+        f"{feedback_html}</table></div>"
+    )
+    return _page("反馈学习", body)
+
+
+@router.post("/feedback")
+async def record_feedback_submit(
+    request: Request,
+    message_id: str = Form(""),
+    label: str = Form(""),
+    category: str = Form("other"),
+    reason: str = Form(""),
+    csrf: str = Form(""),
+) -> Response:
+    await _require_admin_post(request, csrf)
+    operator = await _operator(request)
+    from app.moderation.feedback import record_feedback
+
+    try:
+        async with SessionLocal() as session:
+            feedback = await record_feedback(
+                session,
+                message_id,
+                label,
+                category,
+                operator,
+                reason,
+            )
+        await record_admin_audit(
+            operator,
+            "feedback_record",
+            "message",
+            message_id,
+            {"label": label, "feedback_id": feedback.id},
+        )
+    except ValueError as exc:
+        return _feedback_notice_redirect(str(exc))
+    return _feedback_notice_redirect(f"已保存反馈#{feedback.id}")
+
+
+@router.post("/feedback/mine")
+async def mine_feedback_submit(request: Request, csrf: str = Form("")) -> Response:
+    await _require_admin_post(request, csrf)
+    operator = await _operator(request)
+    from app.moderation.feedback import mine_rule_candidates
+
+    async with SessionLocal() as session:
+        candidates = await mine_rule_candidates(session)
+    await record_admin_audit(
+        operator, "feedback_mine_candidates", "rule_candidate", "batch", {"count": len(candidates)}
+    )
+    return _feedback_notice_redirect(f"已生成{len(candidates)}条候选规则")
+
+
+@router.post("/feedback/candidates/{candidate_id}/copy-to-draft")
+async def copy_candidate_to_draft_submit(
+    request: Request, candidate_id: int, csrf: str = Form("")
+) -> Response:
+    await _require_admin_post(request, csrf)
+    operator = await _operator(request)
+    from app.moderation.feedback import copy_candidate_to_draft
+
+    try:
+        async with SessionLocal() as session:
+            draft_id = await copy_candidate_to_draft(session, candidate_id, operator=operator)
+        await record_admin_audit(
+            operator,
+            "feedback_candidate_copy_to_draft",
+            "rule_candidate",
+            str(candidate_id),
+            {"draft_id": draft_id},
+        )
+    except ValueError as exc:
+        return _feedback_notice_redirect(str(exc))
+    return _rules_notice_redirect(
+        f"候选规则#{candidate_id}已复制为草稿#{draft_id}，请预览后人工发布"
+    )
+
+
 # ---------- 报告 ----------
 
 
 @router.get("/reports", response_class=HTMLResponse)
 async def reports_page(request: Request) -> Response:
-    if not await _require_login(request):
+    token = await _require_login(request)
+    if not token:
         return _login_redirect()
+    csrf = _csrf_field(token)
     async with SessionLocal() as session:
         daily = await build_daily(session)
         weekly = await build_weekly(session)
@@ -491,15 +976,15 @@ async def reports_page(request: Request) -> Response:
         + "".join(f"<li>{_esc(p['case_no'])} — {_esc(p['member_openid'])}</li>" for p in pending)
         + "</ul></div>"
         "<div class=card><h3>数据保留清理</h3>"
-        '<form method=post action="/admin/cleanup"><button class=btn>立即执行保留期清理</button></form></div>'
+        f'<form method=post action="/admin/cleanup">{csrf}<button class=btn>立即执行保留期清理</button></form></div>'
     )
     return _page("报告", body)
 
 
 @router.post("/cleanup")
-async def cleanup_now(request: Request) -> RedirectResponse:
-    if not await _require_login(request):
-        return _login_redirect()
+async def cleanup_now(request: Request, csrf: str = Form("")) -> RedirectResponse:
+    await _require_admin_post(request, csrf)
     async with SessionLocal() as session:
         await purge_expired(session)
+    await record_admin_audit(await _operator(request), "cleanup_now", "retention", "manual")
     return RedirectResponse("/admin/reports", status_code=303)

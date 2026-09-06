@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import uuid
+from collections.abc import Generator
 from datetime import UTC, datetime, timedelta
 
 import pytest
@@ -64,8 +65,16 @@ def make_case(group: str, member: str, message_id: str) -> int:
     return asyncio.run(_run())
 
 
+def extract_csrf(html: str) -> str:
+    import re
+
+    match = re.search(r'name="csrf" value="([^"]+)"', html)
+    assert match, "页面应包含CSRF令牌"
+    return match.group(1)
+
+
 @pytest.fixture()
-def client() -> TestClient:
+def client() -> Generator[TestClient, None, None]:
     from app.main import app
 
     with TestClient(app) as c:
@@ -105,6 +114,129 @@ def test_login_success_sets_cookie(logged_in: TestClient) -> None:
     assert "admin_session" in logged_in.cookies
 
 
+def test_admin_rules_requires_login(client: TestClient) -> None:
+    resp = client.get("/admin/rules", follow_redirects=True)
+    assert resp.status_code == 200
+    assert "管理后台登录" in resp.text
+
+
+def test_state_changing_post_requires_csrf(logged_in: TestClient) -> None:
+    resp = logged_in.post(
+        "/admin/groups/alias",
+        data={"group_openid": "G_NO_CSRF", "name": "测试群"},
+    )
+    assert resp.status_code == 403
+
+
+def test_state_changing_post_accepts_csrf(logged_in: TestClient) -> None:
+    page = logged_in.get("/admin/shadow")
+    csrf = extract_csrf(page.text)
+    group_id = f"G_WITH_CSRF_{uuid.uuid4().hex[:6]}"
+    resp = logged_in.post(
+        "/admin/groups/alias",
+        data={"group_openid": group_id, "name": "测试群", "csrf": csrf},
+        follow_redirects=False,
+    )
+    assert resp.status_code == 303
+
+    import asyncio
+
+    from app.db import SessionLocal
+    from app.models import AdminAudit
+
+    async def _audit_exists() -> bool:
+        async with SessionLocal() as session:
+            row = (
+                await session.execute(
+                    select(AdminAudit).where(
+                        AdminAudit.action == "group_alias_save",
+                        AdminAudit.target_id == group_id,
+                    )
+                )
+            ).scalar_one_or_none()
+            return row is not None
+
+    assert asyncio.run(_audit_exists()) is True
+
+
+def test_dynamic_rule_admin_create_item_publish_flow(logged_in: TestClient) -> None:
+    page = logged_in.get("/admin/rules")
+    assert page.status_code == 200
+    csrf = extract_csrf(page.text)
+    group_id = f"G_RULE_WEB_{uuid.uuid4().hex[:6]}"
+    word = f"后台违规词{uuid.uuid4().hex[:6]}"
+    draft_name = f"web-rule-{uuid.uuid4().hex[:6]}"
+
+    resp = logged_in.post(
+        "/admin/rules/drafts",
+        data={"scope": "group", "scope_key": group_id, "name": draft_name, "csrf": csrf},
+        follow_redirects=False,
+    )
+    assert resp.status_code == 303
+
+    import asyncio
+
+    from app.db import SessionLocal
+    from app.moderation.dynamic_rules import (
+        DynamicRuleEngine,
+        RuleSet,
+        RuleVersion,
+        load_active_snapshot,
+    )
+
+    async def _draft_id() -> int:
+        async with SessionLocal() as session:
+            row = (
+                await session.execute(
+                    select(RuleVersion)
+                    .join(RuleSet, RuleSet.id == RuleVersion.rule_set_id)
+                    .where(
+                        RuleVersion.description == draft_name,
+                        RuleVersion.status == "DRAFT",
+                        RuleSet.scope_key == group_id,
+                    )
+                )
+            ).scalar_one()
+            return row.id
+
+    version_id = asyncio.run(_draft_id())
+    csrf = extract_csrf(logged_in.get("/admin/rules").text)
+    resp = logged_in.post(
+        f"/admin/rules/drafts/{version_id}/items",
+        data={
+            "item_type": "keyword",
+            "pattern": word,
+            "category": "ad",
+            "weight": "0.95",
+            "description": "测试后台规则",
+            "csrf": csrf,
+        },
+        follow_redirects=False,
+    )
+    assert resp.status_code == 303
+
+    csrf = extract_csrf(logged_in.get("/admin/rules").text)
+    resp = logged_in.post(
+        f"/admin/rules/versions/{version_id}/publish",
+        data={"csrf": csrf},
+        follow_redirects=False,
+    )
+    assert resp.status_code == 303
+
+    async def _decision() -> str:
+        async with SessionLocal() as session:
+            snapshot = await load_active_snapshot(session, group_id)
+        msg = StandardMessage(
+            message_id=f"WEB_RULE_{uuid.uuid4().hex[:6]}",
+            group_openid=group_id,
+            sender=Sender(member_openid="M_WEB_RULE"),
+            text=word,
+        )
+        return DynamicRuleEngine(snapshot).evaluate(msg).verdict
+
+    assert asyncio.run(_decision()) == "violation_high"
+
+
 # ---------- 案件审批流 ----------
 
 
@@ -113,7 +245,9 @@ def test_full_manual_kick_flow(logged_in: TestClient) -> None:
     case_id = make_case(group, member, f"WEB_MSG_{uuid.uuid4().hex[:6]}")
 
     # ① 预览并生成确认码（页面仅显示一次，从第一次响应提取）
-    resp = logged_in.post(f"/admin/cases/{case_id}/approve-manual")
+    page = logged_in.get(f"/admin/cases/{case_id}")
+    csrf = extract_csrf(page.text)
+    resp = logged_in.post(f"/admin/cases/{case_id}/approve-manual", data={"csrf": csrf})
     assert resp.status_code == 200
     assert "一次性确认码" in resp.text
     assert "未验证QQ号" in resp.text  # 证据页标注
@@ -124,16 +258,18 @@ def test_full_manual_kick_flow(logged_in: TestClient) -> None:
     code = match.group(1)
 
     # 错误确认码被拒
-    resp = logged_in.post(f"/admin/cases/{case_id}/confirm-kick", data={"code": "000000"})
+    resp = logged_in.post(
+        f"/admin/cases/{case_id}/confirm-kick", data={"code": "000000", "csrf": csrf}
+    )
     assert "错误或已过期" in resp.text
 
     # ② 凭码确认已人工踢出 → 结案（TestClient 默认跟随重定向，最终应回到详情页并带结案通知）
-    resp = logged_in.post(f"/admin/cases/{case_id}/confirm-kick", data={"code": code})
+    resp = logged_in.post(f"/admin/cases/{case_id}/confirm-kick", data={"code": code, "csrf": csrf})
     assert resp.status_code == 200
     assert "已记录为人工踢出并结案" in resp.text
 
     # 确认码一次性：重放被拒
-    resp = logged_in.post(f"/admin/cases/{case_id}/confirm-kick", data={"code": code})
+    resp = logged_in.post(f"/admin/cases/{case_id}/confirm-kick", data={"code": code, "csrf": csrf})
     assert "错误或已过期" in resp.text
 
     from app.cases.models import Case
@@ -153,7 +289,10 @@ def test_full_manual_kick_flow(logged_in: TestClient) -> None:
 def test_keep_flow(logged_in: TestClient) -> None:
     group, member = unique_ids()
     case_id = make_case(group, member, f"WEB_KEEP_{uuid.uuid4().hex[:6]}")
-    resp = logged_in.post(f"/admin/cases/{case_id}/keep", follow_redirects=False)
+    csrf = extract_csrf(logged_in.get(f"/admin/cases/{case_id}").text)
+    resp = logged_in.post(
+        f"/admin/cases/{case_id}/keep", data={"csrf": csrf}, follow_redirects=False
+    )
     assert resp.status_code == 303
 
     from app.cases.models import Case
@@ -173,7 +312,12 @@ def test_keep_flow(logged_in: TestClient) -> None:
 def test_false_positive_flow_revokes_violations(logged_in: TestClient) -> None:
     group, member = unique_ids()
     case_id = make_case(group, member, f"WEB_FP_{uuid.uuid4().hex[:6]}")
-    resp = logged_in.post(f"/admin/cases/{case_id}/false-positive", follow_redirects=False)
+    csrf = extract_csrf(logged_in.get(f"/admin/cases/{case_id}").text)
+    resp = logged_in.post(
+        f"/admin/cases/{case_id}/false-positive",
+        data={"csrf": csrf},
+        follow_redirects=False,
+    )
     assert resp.status_code == 303
 
     from app.cases.models import ViolationRecord
@@ -200,8 +344,11 @@ def test_false_positive_flow_revokes_violations(logged_in: TestClient) -> None:
 def test_double_exit_mutual_exclusion_via_web(logged_in: TestClient) -> None:
     group, member = unique_ids()
     case_id = make_case(group, member, f"WEB_MX_{uuid.uuid4().hex[:6]}")
-    logged_in.post(f"/admin/cases/{case_id}/approve-manual")
-    resp = logged_in.post(f"/admin/cases/{case_id}/confirm-kick", data={"code": "wrongcode"})
+    csrf = extract_csrf(logged_in.get(f"/admin/cases/{case_id}").text)
+    logged_in.post(f"/admin/cases/{case_id}/approve-manual", data={"csrf": csrf})
+    resp = logged_in.post(
+        f"/admin/cases/{case_id}/confirm-kick", data={"code": "wrongcode", "csrf": csrf}
+    )
     assert "错误或已过期" in resp.text
     # 手动尝试直接切 NapCat 出口（绕过UI）应被状态机拒绝
     from app.cases.service import transition_case

@@ -9,8 +9,9 @@
 
 from __future__ import annotations
 
+import asyncio
+import hashlib
 import logging
-import re
 import time
 from datetime import datetime
 from pathlib import Path
@@ -32,13 +33,13 @@ _MAGIC = [
     (b"\x1aE\xdf\xa3", ".mkv"),
     (b"%PDF-", ".pdf"),
 ]
-_SAFE_NAME = re.compile(r"[^A-Za-z0-9_-]")
+_QUOTA_LOCK = asyncio.Lock()
 
 
 def safe_filename(message_id: str, idx: int) -> str:
     """从消息ID与序号生成安全文件名（不含扩展名）。"""
-    stem = _SAFE_NAME.sub("_", message_id)[-24:].lstrip("_") or "msg"
-    return f"{stem}_{idx}"
+    digest = hashlib.sha256(message_id.encode("utf-8")).hexdigest()
+    return f"{digest}_{idx}"
 
 
 def sniff_ext(data: bytes, declared: str) -> str:
@@ -60,12 +61,24 @@ def total_media_size(media_dir: Path) -> int:
     return sum(f.stat().st_size for f in media_dir.iterdir() if f.is_file())
 
 
+def ensure_media_dir(media_dir: Path) -> None:
+    media_dir.mkdir(parents=True, exist_ok=True)
+
+
+def sniff_file_head(path: Path, limit: int = 16) -> bytes:
+    """只读取文件头，避免为魔数嗅探把完整媒体读入内存。"""
+    with path.open("rb") as f:
+        return f.read(limit)
+
+
 async def stream_download(
     client: httpx.AsyncClient,
     url: str,
     dest: Path,
     *,
     size_limit: int = DEFAULT_FILE_LIMIT,
+    media_dir: Path | None = None,
+    quota_bytes: int = MEDIA_QUOTA_BYTES,
 ) -> tuple[bool, str, int]:
     """流式下载到 dest，超限时中止。返回 (ok, reason, bytes)。"""
     bytes_written = 0
@@ -73,6 +86,14 @@ async def stream_download(
         async with client.stream("GET", url, timeout=30, follow_redirects=True) as resp:
             resp.raise_for_status()
             tmp = dest.with_suffix(dest.suffix + ".part")
+            tmp.unlink(missing_ok=True)
+            quota_dir = media_dir or dest.parent
+            base_size = total_media_size(quota_dir)
+            content_length = resp.headers.get("content-length")
+            if content_length and content_length.isdigit():
+                expected_size = int(content_length)
+                if base_size + expected_size > quota_bytes:
+                    return False, f"磁盘配额不足，剩余{max(quota_bytes - base_size, 0)}字节", 0
             with tmp.open("wb") as f:
                 async for chunk in resp.aiter_bytes(chunk_size=65536):
                     bytes_written += len(chunk)
@@ -80,7 +101,18 @@ async def stream_download(
                         f.close()
                         tmp.unlink(missing_ok=True)
                         return False, f"文件超过{size_limit}字节上限", bytes_written
+                    if base_size + bytes_written > quota_bytes:
+                        f.close()
+                        tmp.unlink(missing_ok=True)
+                        return (
+                            False,
+                            f"磁盘配额不足，剩余{max(quota_bytes - base_size, 0)}字节",
+                            bytes_written,
+                        )
                     f.write(chunk)
+            if total_media_size(quota_dir) > quota_bytes:
+                tmp.unlink(missing_ok=True)
+                return False, "磁盘配额不足", bytes_written
             tmp.replace(dest)
         return True, "", bytes_written
     except httpx.HTTPError as exc:
@@ -96,6 +128,8 @@ async def download_attachment(
     message_id: str,
     idx: int,
     content_type: str,
+    *,
+    quota_bytes: int = MEDIA_QUOTA_BYTES,
 ) -> tuple[str | None, str, str]:
     """下载单个附件。返回 (filename, ext, reason)。
 
@@ -106,28 +140,37 @@ async def download_attachment(
     if url.startswith("//"):
         url = "https:" + url
 
-    if total_media_size(media_dir) >= MEDIA_QUOTA_BYTES:
-        return None, "", "磁盘配额已满"
+    ensure_media_dir(media_dir)
+    async with _QUOTA_LOCK:
+        if total_media_size(media_dir) >= quota_bytes:
+            return None, "", "磁盘配额已满"
 
-    kind = "video" if content_type.startswith("video/") else "default"
-    limit = _LIMITS_BY_KIND.get(kind, DEFAULT_FILE_LIMIT)
+        kind = "video" if content_type.startswith("video/") else "default"
+        limit = _LIMITS_BY_KIND.get(kind, DEFAULT_FILE_LIMIT)
 
-    # 先流式下载到 .bin 临时，再嗅探扩展名重命名
-    stem = safe_filename(message_id, idx)
-    tmp_path = media_dir / f"{stem}.bin"
-    ok, reason, _bytes = await stream_download(client, url, tmp_path, size_limit=limit)
-    if not ok:
-        tmp_path.unlink(missing_ok=True)
-        return None, "", reason or "下载失败"
-    data_head = tmp_path.read_bytes()[:16]
-    ext = sniff_ext(data_head, content_type)
-    final_path = media_dir / f"{stem}{ext}"
-    try:
-        tmp_path.replace(final_path)
-    except OSError:
-        final_path = tmp_path.with_suffix(ext)
-        tmp_path.rename(final_path)
-    return final_path.name, ext, ""
+        # 先流式下载到 .bin 临时，再嗅探扩展名重命名
+        stem = safe_filename(message_id, idx)
+        tmp_path = media_dir / f"{stem}.bin"
+        ok, reason, _bytes = await stream_download(
+            client,
+            url,
+            tmp_path,
+            size_limit=limit,
+            media_dir=media_dir,
+            quota_bytes=quota_bytes,
+        )
+        if not ok:
+            tmp_path.unlink(missing_ok=True)
+            return None, "", reason or "下载失败"
+        data_head = sniff_file_head(tmp_path)
+        ext = sniff_ext(data_head, content_type)
+        final_path = media_dir / f"{stem}{ext}"
+        try:
+            tmp_path.replace(final_path)
+        except OSError:
+            final_path = tmp_path.with_suffix(ext)
+            tmp_path.rename(final_path)
+        return final_path.name, ext, ""
 
 
 def purge_media(media_dir: Path, retention_days: int = 30, now: float | None = None) -> int:

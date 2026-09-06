@@ -20,6 +20,11 @@ AUTO_PUNISH_THRESHOLD = 0.90
 _HARD_EVIDENCE_RULES = {"R001", "R003", "R006"}  # 黑名单词 / 联系方式 / 分享卡片（独立硬证据）
 
 
+def _is_hard_evidence(rule_id: str) -> bool:
+    """动态禁止规则是管理员显式发布的结构化规则，也算硬证据。"""
+    return rule_id in _HARD_EVIDENCE_RULES or rule_id.startswith("DR_")
+
+
 class ReviewGate:
     """独立硬证据复核门（R-102-7 重做）。"""
 
@@ -40,7 +45,7 @@ class ReviewGate:
             )
 
         # R-102-7：不重复调用主规则，从主决策的命中里判断是否存在硬证据
-        has_hard_evidence = any(hit.rule_id in _HARD_EVIDENCE_RULES for hit in primary.rule_hits)
+        has_hard_evidence = any(_is_hard_evidence(hit.rule_id) for hit in primary.rule_hits)
         if has_hard_evidence:
             return primary
         # 主决策仅靠弱信号凑分 → 必须拦截，软信号不算独立硬证据

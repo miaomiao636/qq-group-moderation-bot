@@ -2,13 +2,73 @@
 
 ## 日期
 
-2026-09-04
+2026-09-06
 
 ## 当前任务
 
-**R-102 核心正确性整改已交付（2026-09-06，基于远程 main de523dd）**。10项整改全部完成并补回归测试，全量门禁通过。**未启用真实撤回/禁言/警告/NapCat**；未推进 T-404/正式处罚/NapCat，已推送远程等待主审核。
+**R-103正确性整改、T-105动态规则、T-204远程AI软证据、T-205反馈候选规则和T-106官方动作编排已完成实现、本地验证和真实跨平台CI**。当前分支 `feature/r103-ai-rule-learning` 已推送，Pull Request #1尚未合并；默认仍为 `ACTION_MODE=SHADOW`，不会对真实QQ群执行处罚；真实MiMo调用、真实官方动作、Windows 24×7和NapCat仍需后续实机验收。
 
 ## 已完成内容
+
+### 功能分支推送与跨平台CI取证（2026-09-06，主审Agent）
+
+- 分支：`feature/r103-ai-rule-learning`，已推送并跟踪 `origin/feature/r103-ai-rule-learning`。
+- Pull Request：`https://github.com/miaomiao636/qq-group-moderation-bot/pull/1`，目标分支 `main`，尚未合并。
+- CI运行（较早，`d00960d`，运行 `34028509570`）：`https://github.com/miaomiao636/qq-group-moderation-bot/actions/runs/34028509570`，结论 `success`。
+- Ubuntu质量（较早 `d00960d`）：`https://github.com/miaomiao636/qq-group-moderation-bot/actions/runs/34028509570/job/101473685503`，`SUCCESS`。
+- Windows质量（较早 `d00960d`）：`https://github.com/miaomiao636/qq-group-moderation-bot/actions/runs/34028509570/job/101473685547`，`SUCCESS`。
+- 干净运行时依赖（较早 `d00960d`）：`https://github.com/miaomiao636/qq-group-moderation-bot/actions/runs/34028509570/job/101473685476`，`SUCCESS`。
+- CI运行（分支 tip，`27fcf6d`，运行 `34028677558`）：`https://github.com/miaomiao636/qq-group-moderation-bot/actions/runs/34028677558`，结论 `success`（2026-09-06 经只读 API 直接取证）。
+- Ubuntu质量（tip `27fcf6d`）：`https://github.com/miaomiao636/qq-group-moderation-bot/actions/runs/34028677558/job/101474132870`，`SUCCESS`。
+- Windows质量（tip `27fcf6d`）：`https://github.com/miaomiao636/qq-group-moderation-bot/actions/runs/34028677558/job/101474132911`，`SUCCESS`。
+- 干净运行时依赖（tip `27fcf6d`）：`https://github.com/miaomiao636/qq-group-moderation-bot/actions/runs/34028677558/job/101474132949`，`SUCCESS`。
+- 推送前复验：pytest、mypy、ruff check和ruff format检查全部通过。
+- 结论：远程CI阻塞关闭；PR通过审核并合并后可进入W1/W2隔离群实测。CI证据不替代真实MiMo、真实QQ动作、Windows 24×7或NapCat实机验收。
+
+### R-103/T-105/T-204/T-205/T-106 实现与本地复验（2026-09-06，主审Agent）
+
+- 分支：`feature/r103-ai-rule-learning`。
+- 本轮新增提交：
+  - `d22ed4d`：新增实现计划 `docs/superpowers/plans/2026-09-06-ai-rule-learning-implementation.md`。
+  - `5944e26`：R-103事件租约领取与永久失败幂等。
+  - `2f65f47`：媒体存储加固与规则语境修正。
+  - `69423b8`：后台状态修改统一CSRF和审计。
+  - `fd994b5`：T-105版本化动态规则。
+  - `da75093`：常驻引擎动态规则热刷新。
+  - `562a9e3`：T-204远程AI软证据与OpenAI-compatible适配。
+  - `3900479`：T-205管理员反馈与候选规则。
+  - `6106260`：T-106官方动作意图与 `SHADOW/OFFICIAL` 编排。
+- R-103旧阻塞已修复到自动化测试层：同事件并发领取成功数恒为1；永久契约失败重复投递不再触发唯一键异常；媒体配额、`.part`、完整SHA文件名和头部嗅探均有回归；咨询/否定/反诈教育语境不自动处罚；允许来源卡片可放行；后台POST需要登录、CSRF并记录 `AdminAudit`。
+- 动态规则：全局/群级规则集、不可变版本、草稿、添加规则项、发布、回滚、审计、5秒缓存热更新和每条判定规则版本追踪已实现；候选规则只能复制到草稿，必须人工发布。
+- 远程AI：实现供应商无关 `TextModerator`/`VisionModerator`，OpenAI-compatible/MiMo类适配器，按群显式启用，脱敏上传，严格JSON解析，缓存、限流、预算、用量记录和降级；单模型高置信只可把 `allow` 升为 `record_only`，不会自动撤回、禁言或踢人。
+- 反馈学习：后台可对影子判定标注确认违规、确认正常、误判、未知原因撤回等；本地挖掘短语、域名和联系方式候选规则；未知撤回不当真值，AI/系统自身判定不当人工真值。
+- 官方动作编排：新增 `ACTION_MODE=SHADOW/OFFICIAL` 与 `EMERGENCY_STOP`；先持久化动作意图和幂等键，再调用官方撤回、分级禁言和首次警告；数据库失败不调用外部动作；未知结果转人工，不盲目重放；任何路径都不产生踢人动作。
+- 本地验证结果：
+  - `uv run pytest -q`：203 passed / 1 skipped。
+  - `uv run mypy app`：48个源文件通过。
+  - `uv run ruff check app tests alembic`：通过。
+  - `uv run ruff format --check app tests alembic`：83个文件格式检查通过。
+  - 临时SQLite库Alembic：`upgrade head → current → downgrade base → upgrade head` 通过，head为 `a0b4d72e5f31`。
+  - 干净运行时依赖：独立临时虚拟环境执行 `uv sync --locked --no-dev` 后可导入 `app.main` 和 `app.adapters.ai.openai_compatible`，且pytest不可导入。
+- 本轮文档已同步：`.env.example`、`README.md`、`PROJECT_CONTEXT.md`、`NEXT_TASKS.md`、`MEMORY_INDEX.md`、`AGENTS.md`、`PROGRESS.md`、`HANDOFF.md`。
+- 尚未完成：Pull Request #1审核与合并；真实MiMo配置与脱敏样本效果评测；W1/W2隔离群真实官方动作验证；T-404 Windows无人值守恢复；NapCat身份镜像和踢人执行器。
+
+### 下一位Agent注意事项
+
+- 先读取 `PROJECT_CONTEXT.md`、`NEXT_TASKS.md`、`PROGRESS.md`、`DECISIONS.md` 和本文件，不要只看历史聊天。
+- 若继续收尾，优先任务是审核并合并 Pull Request #1；合并后再按W1/W2门槛进入隔离群动作测试。
+- 若接入真实MiMo，只能在本地 `.env` 或系统凭据中配置密钥；不得把密钥、模型真实返回中的敏感内容、真实群成员身份写入源码、Markdown、测试或日志。
+- 若进入W1/W2，保持 `ACTION_MODE=SHADOW` 起步；`OFFICIAL` 只可在隔离群、生产配置校验通过、负责人明确确认后启用，且仅限官方撤回/禁言/首次警告。
+- NapCat仍不参与核心识别；踢人必须人工批准，真实NapCat接入另走T-303/T-304。
+
+### R-103与AI规则学习设计（2026-09-06，主审Agent）
+
+- 本地仓库已快进到远程 `main` 提交 `ce2f2f7`，并在分支 `feature/r103-ai-rule-learning` 进行设计记录。
+- 新增设计规格 `docs/superpowers/specs/2026-09-06-ai-rule-learning-design.md`，明确分层级联AI、版本化动态规则、后台人工反馈、候选规则回放/发布和影子默认动作边界。
+- 新增任务R-103、T-105、T-204、T-205、T-106；追加决策D-016至D-018；同步更新AGENTS、PROJECT_CONTEXT、MEMORY_INDEX、PROGRESS和README。
+- 独立门禁：现有160项pytest通过（1项skip），mypy 41个源文件通过，ruff check和format检查通过。
+- 独立复现：同一消息两个会话领取结果 `True, True`；永久解析失败第二次投递触发 `shadow_decisions.message_id` 唯一键异常；媒体目录8/10字节时仍接受5字节并增长到13；不同消息ID同尾24字符生成同名文件；三条反诈/否定/咨询文本均被判 `violation_high`。
+- 本轮没有修改应用代码或数据库迁移，没有声称上述缺陷已修复；下一步必须先由负责人确认书面规格，再按R-103开始测试驱动实现。
 
 ### R-102 核心正确性整改（2026-09-06，接手Agent）
 

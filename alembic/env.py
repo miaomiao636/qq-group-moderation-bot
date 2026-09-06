@@ -7,8 +7,14 @@ from logging.config import fileConfig
 
 from alembic import context
 from app import models  # noqa: F401  确保模型注册到 metadata
+from app.actions import orchestrator  # noqa: F401
 from app.config import get_settings
 from app.db import Base
+from app.moderation import (
+    ai,  # noqa: F401
+    dynamic_rules,  # noqa: F401
+    feedback,  # noqa: F401
+)
 from sqlalchemy import event, pool
 from sqlalchemy.engine import Connection
 from sqlalchemy.ext.asyncio import async_engine_from_config

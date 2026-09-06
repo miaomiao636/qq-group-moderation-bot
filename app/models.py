@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 
-from sqlalchemy import DateTime, String
+from sqlalchemy import DateTime, String, Text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db import Base
@@ -29,7 +29,7 @@ class SystemMeta(Base):
 
 
 class ProcessedEvent(Base):
-    """已处理事件登记表：成功才标记 PROCESSED，失败可重试（FAILED）。"""
+    """已处理事件登记表：带租约的幂等领取记录。"""
 
     __tablename__ = "processed_events"
 
@@ -37,8 +37,15 @@ class ProcessedEvent(Base):
     event_type: Mapped[str] = mapped_column(String(64), default="GROUP_MESSAGE_CREATE")
     status: Mapped[str] = mapped_column(
         String(16), default="PROCESSED"
-    )  # PROCESSED / PROCESSING / FAILED
+    )  # PROCESSED / PROCESSING / FAILED / DEAD
     error_message: Mapped[str] = mapped_column(String(500), default="")
+    error_kind: Mapped[str] = mapped_column(String(24), default="")
+    lease_token: Mapped[str] = mapped_column(String(64), default="", index=True)
+    lease_expires_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    attempts: Mapped[int] = mapped_column(default=0)
+    next_retry_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     processed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
 
 
@@ -70,4 +77,18 @@ class ActionLog(Base):
     err_message: Mapped[str] = mapped_column(String(500), default="")
     attempts: Mapped[int] = mapped_column(default=0)
     actor: Mapped[str] = mapped_column(String(64), default="system")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
+
+
+class AdminAudit(Base):
+    """管理后台审计表：记录所有持久化状态修改。"""
+
+    __tablename__ = "admin_audits"
+
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    operator: Mapped[str] = mapped_column(String(64))
+    action: Mapped[str] = mapped_column(String(64))
+    target_type: Mapped[str] = mapped_column(String(64), default="")
+    target_id: Mapped[str] = mapped_column(String(128), default="")
+    detail_json: Mapped[str] = mapped_column(Text, default="{}")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
