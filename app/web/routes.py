@@ -50,6 +50,7 @@ def _page(title: str, body: str, logged_in: bool = True) -> Response:
             '<a href="/admin" style="color:#93c5fd">案件</a> &nbsp; '
             '<a href="/admin/shadow" style="color:#93c5fd">影子判定</a> &nbsp; '
             '<a href="/admin/rules" style="color:#93c5fd">规则</a> &nbsp; '
+            '<a href="/admin/feedback" style="color:#93c5fd">反馈学习</a> &nbsp; '
             '<a href="/admin/reports" style="color:#93c5fd">报告</a> &nbsp; '
             '<a href="/admin/logout" style="color:#fca5a5">退出</a></div></header>'
         )
@@ -75,6 +76,10 @@ def _login_redirect() -> RedirectResponse:
 
 def _rules_notice_redirect(notice: str) -> RedirectResponse:
     return RedirectResponse(f"/admin/rules?notice={quote(notice)}", status_code=303)
+
+
+def _feedback_notice_redirect(notice: str) -> RedirectResponse:
+    return RedirectResponse(f"/admin/feedback?notice={quote(notice)}", status_code=303)
 
 
 def _csrf_field(session_token: str) -> str:
@@ -436,6 +441,24 @@ async def shadow_page(request: Request, verdict: str = "") -> Response:
         name = group_names.get(openid)
         return _esc(name) if name else f"<code>{_esc(openid[:10])}…</code>"
 
+    def _feedback_form(record: Any) -> str:
+        category = _esc(record.category or "other")
+        return (
+            '<form method=post action="/admin/feedback" style="display:grid;gap:4px">'
+            f"{csrf}"
+            f'<input type=hidden name=message_id value="{_esc(record.message_id)}">'
+            f'<input type=hidden name=category value="{category}">'
+            "<select name=label>"
+            "<option value=confirmed_violation>确认违规</option>"
+            "<option value=confirmed_normal>确认正常</option>"
+            "<option value=false_positive>误判</option>"
+            "<option value=unknown_recall>未知原因撤回</option>"
+            "<option value=other_recall>其他原因撤回</option>"
+            "</select>"
+            '<input name=reason placeholder="原因，可选" style="width:140px">'
+            "<button class=btn>保存反馈</button></form>"
+        )
+
     rows = "".join(
         "<tr>"
         f"<td>{_esc(_beijing(r.created_at))}</td>"
@@ -445,6 +468,7 @@ async def shadow_page(request: Request, verdict: str = "") -> Response:
         f"<td>{r.confidence}</td>"
         f"<td>{_member_display(r)}</td>"
         f"<td>{_esc(r.reason[:80])}</td>"
+        f"<td>{_feedback_form(r)}</td>"
         "</tr>"
         for r in records
     )
@@ -476,7 +500,7 @@ async def shadow_page(request: Request, verdict: str = "") -> Response:
         '<div class=card style="border-color:#b45309"><b>首次使用：</b>'
         "群名称尚未备注时，列表「群」列显示OpenID代码——请在<b>页面最底部「群名称备注」表格</b>"
         "把每个代码对应的群名填一次并保存，之后列表直接显示群名。</div>"
-        "<table><tr><th>时间</th><th>群</th><th>类型</th><th>判定</th><th>置信度</th><th>成员（群昵称）</th><th>原因</th></tr>"
+        "<table><tr><th>时间</th><th>群</th><th>类型</th><th>判定</th><th>置信度</th><th>成员（群昵称）</th><th>原因</th><th>人工反馈</th></tr>"
         f"{rows}</table>"
         '<div class=card style="margin-top:20px"><h3>群名称备注</h3>'
         "<p class=muted>官方接口只提供群加密OpenID。把下面各OpenID对应的群名填一次，"
@@ -769,6 +793,163 @@ async def rollback_rule_version_submit(
     except ValueError as exc:
         return _rules_notice_redirect(str(exc))
     return _rules_notice_redirect(f"已回滚到规则版本#{version.id}")
+
+
+# ---------- 反馈学习 ----------
+
+
+@router.get("/feedback", response_class=HTMLResponse)
+async def feedback_page(request: Request, notice: str = "") -> Response:
+    token = await _require_login(request)
+    if not token:
+        return _login_redirect()
+    csrf = _csrf_field(token)
+    from app.moderation.feedback import FeedbackRecord, RuleCandidate
+
+    async with SessionLocal() as session:
+        feedback_rows = (
+            (
+                await session.execute(
+                    select(FeedbackRecord)
+                    .order_by(FeedbackRecord.created_at.desc(), FeedbackRecord.id.desc())
+                    .limit(80)
+                )
+            )
+            .scalars()
+            .all()
+        )
+        candidates = (
+            (
+                await session.execute(
+                    select(RuleCandidate)
+                    .order_by(RuleCandidate.created_at.desc(), RuleCandidate.id.desc())
+                    .limit(80)
+                )
+            )
+            .scalars()
+            .all()
+        )
+
+    feedback_html = (
+        "".join(
+            "<tr>"
+            f"<td>{fb.id}</td><td><code>{_esc(fb.message_id)}</code></td>"
+            f"<td>{_esc(fb.label)}</td><td>{_esc(fb.category)}</td>"
+            f"<td><code>{_esc(fb.group_openid[:16])}</code></td>"
+            f"<td>{_esc(fb.reason)}</td><td>{_esc(fb.sample_text_masked[:120])}</td>"
+            "</tr>"
+            for fb in feedback_rows
+        )
+        or "<tr><td colspan=7 class=muted>暂无人工反馈</td></tr>"
+    )
+    candidate_html = (
+        "".join(
+            "<tr>"
+            f"<td>{c.id}</td><td>{_esc(c.status)}</td><td>{_esc(c.scope)}/{_esc(c.scope_key[:16])}</td>"
+            f"<td>{_esc(c.item_type)}</td><td>{_esc(c.pattern)}</td><td>{_esc(c.category)}</td>"
+            f"<td>{c.support_count}/{c.member_count}</td><td>{c.conflict_count}</td>"
+            "<td>"
+            + (
+                f'<form method=post action="/admin/feedback/candidates/{c.id}/copy-to-draft">'
+                f"{csrf}<button class=btn>复制为草稿</button></form>"
+                if c.status == "PROPOSED"
+                else f"<span class=muted>草稿#{_esc(c.copied_version_id or '')}</span>"
+            )
+            + "</td></tr>"
+            for c in candidates
+        )
+        or "<tr><td colspan=9 class=muted>暂无候选规则</td></tr>"
+    )
+    notice_html = f"<p class=warn>{_esc(notice)}</p>" if notice else ""
+    body = (
+        f"{notice_html}"
+        "<div class=card><h2>反馈学习</h2>"
+        "<p class=muted>这里只把管理员明确标注作为真值；未知原因撤回只保存，不参与候选规则挖掘。"
+        "候选规则复制后仍是草稿，必须在规则页人工发布才会生效。</p>"
+        f'<form method=post action="/admin/feedback/mine">{csrf}'
+        "<button class=btn>从确认反馈挖掘候选规则</button></form></div>"
+        "<div class=card><h3>候选规则</h3>"
+        "<table><tr><th>ID</th><th>状态</th><th>范围</th><th>类型</th><th>内容</th><th>类别</th><th>支持/成员</th><th>负例冲突</th><th>操作</th></tr>"
+        f"{candidate_html}</table></div>"
+        "<div class=card><h3>最近反馈</h3>"
+        "<table><tr><th>ID</th><th>消息</th><th>标签</th><th>类别</th><th>群</th><th>原因</th><th>脱敏样本</th></tr>"
+        f"{feedback_html}</table></div>"
+    )
+    return _page("反馈学习", body)
+
+
+@router.post("/feedback")
+async def record_feedback_submit(
+    request: Request,
+    message_id: str = Form(""),
+    label: str = Form(""),
+    category: str = Form("other"),
+    reason: str = Form(""),
+    csrf: str = Form(""),
+) -> Response:
+    await _require_admin_post(request, csrf)
+    operator = await _operator(request)
+    from app.moderation.feedback import record_feedback
+
+    try:
+        async with SessionLocal() as session:
+            feedback = await record_feedback(
+                session,
+                message_id,
+                label,
+                category,
+                operator,
+                reason,
+            )
+        await record_admin_audit(
+            operator,
+            "feedback_record",
+            "message",
+            message_id,
+            {"label": label, "feedback_id": feedback.id},
+        )
+    except ValueError as exc:
+        return _feedback_notice_redirect(str(exc))
+    return _feedback_notice_redirect(f"已保存反馈#{feedback.id}")
+
+
+@router.post("/feedback/mine")
+async def mine_feedback_submit(request: Request, csrf: str = Form("")) -> Response:
+    await _require_admin_post(request, csrf)
+    operator = await _operator(request)
+    from app.moderation.feedback import mine_rule_candidates
+
+    async with SessionLocal() as session:
+        candidates = await mine_rule_candidates(session)
+    await record_admin_audit(
+        operator, "feedback_mine_candidates", "rule_candidate", "batch", {"count": len(candidates)}
+    )
+    return _feedback_notice_redirect(f"已生成{len(candidates)}条候选规则")
+
+
+@router.post("/feedback/candidates/{candidate_id}/copy-to-draft")
+async def copy_candidate_to_draft_submit(
+    request: Request, candidate_id: int, csrf: str = Form("")
+) -> Response:
+    await _require_admin_post(request, csrf)
+    operator = await _operator(request)
+    from app.moderation.feedback import copy_candidate_to_draft
+
+    try:
+        async with SessionLocal() as session:
+            draft_id = await copy_candidate_to_draft(session, candidate_id, operator=operator)
+        await record_admin_audit(
+            operator,
+            "feedback_candidate_copy_to_draft",
+            "rule_candidate",
+            str(candidate_id),
+            {"draft_id": draft_id},
+        )
+    except ValueError as exc:
+        return _feedback_notice_redirect(str(exc))
+    return _rules_notice_redirect(
+        f"候选规则#{candidate_id}已复制为草稿#{draft_id}，请预览后人工发布"
+    )
 
 
 # ---------- 报告 ----------

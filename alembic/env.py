@@ -12,6 +12,7 @@ from app.db import Base
 from app.moderation import (
     ai,  # noqa: F401
     dynamic_rules,  # noqa: F401
+    feedback,  # noqa: F401
 )
 from sqlalchemy import event, pool
 from sqlalchemy.engine import Connection
