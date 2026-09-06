@@ -18,7 +18,9 @@ from sqlalchemy import select
 
 from app.cases.case_sm import IllegalTransitionError
 from app.cases.models import Case, ViolationRecord
+from app.config import get_settings
 from app.db import SessionLocal
+from app.models import AdminAudit
 from app.reports.cleanup import purge_expired
 from app.reports.service import build_daily, build_weekly, pending_manual_review
 from app.web import auth
@@ -70,6 +72,40 @@ def _login_redirect() -> RedirectResponse:
     return RedirectResponse("/admin/login", status_code=303)
 
 
+def _csrf_field(session_token: str) -> str:
+    return f'<input type=hidden name="csrf" value="{_esc(auth.csrf_token(session_token))}">'
+
+
+async def _require_admin_post(request: Request, csrf: str) -> str:
+    token = await _require_login(request)
+    if not token:
+        raise HTTPException(401, "需要先登录管理后台")
+    if not auth.validate_csrf(token, csrf):
+        raise HTTPException(403, "CSRF token invalid")
+    return token
+
+
+async def record_admin_audit(
+    operator: str,
+    action: str,
+    target_type: str,
+    target_id: str,
+    details: dict[str, Any] | None = None,
+) -> None:
+    safe_details = details or {}
+    async with SessionLocal() as session:
+        session.add(
+            AdminAudit(
+                operator=operator,
+                action=action,
+                target_type=target_type,
+                target_id=str(target_id)[:128],
+                detail_json=json.dumps(safe_details, ensure_ascii=False),
+            )
+        )
+        await session.commit()
+
+
 # ---------- 登录/退出 ----------
 
 
@@ -92,8 +128,16 @@ async def login_submit(username: str = Form(""), password: str = Form("")) -> Re
         token = auth.login(username, password)
     except auth.AuthError as exc:
         return RedirectResponse(f"/admin/login?error={_esc(str(exc))}", status_code=303)
+    settings = get_settings()
     resp = RedirectResponse("/admin", status_code=303)
-    resp.set_cookie(auth.SESSION_COOKIE, token, httponly=True, samesite="lax")
+    resp.set_cookie(
+        auth.SESSION_COOKIE,
+        token,
+        httponly=True,
+        samesite="lax",
+        secure=settings.app_env == "prod",
+        max_age=12 * 3600,
+    )
     return resp
 
 
@@ -169,8 +213,10 @@ def _evidence_html(records: list[ViolationRecord]) -> str:
 
 @router.get("/cases/{case_id}", response_class=HTMLResponse)
 async def case_detail(request: Request, case_id: int, code: str = "", notice: str = "") -> Response:
-    if not await _require_login(request):
+    token = await _require_login(request)
+    if not token:
         return _login_redirect()
+    csrf = _csrf_field(token)
     case, records = await _load_case(case_id)
     show_code = (
         f'<p>一次性确认码（5分钟有效，仅显示一次）：<b style="font-size:22px">{_esc(code)}</b></p>'
@@ -184,21 +230,21 @@ async def case_detail(request: Request, case_id: int, code: str = "", notice: st
         buttons = (
             '<form method=post style="display:inline" action="'
             + f"/admin/cases/{case.id}/approve-manual"
-            + '"><button class=btn ok>① 人工处理：预览并生成确认码</button></form>'
+            + f'">{csrf}<button class=btn ok>① 人工处理：预览并生成确认码</button></form>'
             '<form method=post style="display:inline" action="'
             + f"/admin/cases/{case.id}/keep"
-            + '"><button class=btn>保留（不处罚）</button></form>'
+            + f'">{csrf}<button class=btn>保留（不处罚）</button></form>'
             '<form method=post style="display:inline" action="'
             + f"/admin/cases/{case.id}/false-positive"
-            + '"><button class=btn>标记误判（撤销违规）</button></form>'
+            + f'">{csrf}<button class=btn>标记误判（撤销违规）</button></form>'
         )
     elif case.status == "MANUAL_PENDING":
         buttons = (
             f'<form method=post action="/admin/cases/{case.id}/confirm-kick">'
-            "已在QQ客户端手动踢出？输入确认码：<input name=code maxlength=6 style=width:90px> "
+            f"{csrf}已在QQ客户端手动踢出？输入确认码：<input name=code maxlength=6 style=width:90px> "
             '<button class="btn danger">② 确认已踢出</button></form>'
             f'<form method=post action="/admin/cases/{case.id}/cancel" style="margin-top:8px">'
-            "<button class=btn>无法确认成员/取消</button></form>"
+            f"{csrf}<button class=btn>无法确认成员/取消</button></form>"
         )
     audit = _esc(json.dumps(json.loads(case.audit_json), ensure_ascii=False, indent=1))
     body = (
@@ -218,15 +264,14 @@ async def case_detail(request: Request, case_id: int, code: str = "", notice: st
 
 
 @router.post("/cases/{case_id}/approve-manual")
-async def approve_manual(request: Request, case_id: int) -> Response:
-    token = await _require_login(request)
-    if not token:
-        return _login_redirect()
+async def approve_manual(request: Request, case_id: int, csrf: str = Form("")) -> Response:
+    await _require_admin_post(request, csrf)
     operator = await _operator(request)
     case, _ = await _load_case(case_id)
     try:
         await transition_with_session(case_id, "APPROVED_MANUAL", operator)
         await transition_with_session(case_id, "MANUAL_PENDING", operator)
+        await record_admin_audit(operator, "case_approve_manual", "case", str(case_id))
     except IllegalTransitionError as exc:
         return _page(
             "错误",
@@ -237,15 +282,18 @@ async def approve_manual(request: Request, case_id: int) -> Response:
 
 
 @router.post("/cases/{case_id}/confirm-kick")
-async def confirm_kick(request: Request, case_id: int, code: str = Form("")) -> Response:
-    token = await _require_login(request)
-    if not token:
-        return _login_redirect()
+async def confirm_kick(
+    request: Request, case_id: int, code: str = Form(""), csrf: str = Form("")
+) -> Response:
+    await _require_admin_post(request, csrf)
     if not verify_and_consume(case_id, code):
         return await case_detail(request, case_id, notice="确认码错误或已过期，请重新生成预览")
     try:
         await transition_with_session(case_id, "KICKED", await _operator(request))
         await transition_with_session(case_id, "CLOSED", await _operator(request))
+        await record_admin_audit(
+            await _operator(request), "case_confirm_manual_kick", "case", str(case_id)
+        )
     except IllegalTransitionError as exc:
         return _page(
             "错误",
@@ -257,21 +305,20 @@ async def confirm_kick(request: Request, case_id: int, code: str = Form("")) -> 
 
 
 @router.post("/cases/{case_id}/keep")
-async def keep_case(request: Request, case_id: int) -> Response:
-    if not await _require_login(request):
-        return _login_redirect()
+async def keep_case(request: Request, case_id: int, csrf: str = Form("")) -> Response:
+    await _require_admin_post(request, csrf)
     try:
         await transition_with_session(case_id, "KEEP", await _operator(request))
         await transition_with_session(case_id, "CLOSED", await _operator(request))
+        await record_admin_audit(await _operator(request), "case_keep", "case", str(case_id))
     except IllegalTransitionError as exc:
         return _page("错误", f"<div class=card><p class=warn>{_esc(str(exc))}</p></div>")
     return RedirectResponse("/admin", status_code=303)
 
 
 @router.post("/cases/{case_id}/false-positive")
-async def false_positive(request: Request, case_id: int) -> Response:
-    if not await _require_login(request):
-        return _login_redirect()
+async def false_positive(request: Request, case_id: int, csrf: str = Form("")) -> Response:
+    await _require_admin_post(request, csrf)
     case, records = await _load_case(case_id)
     try:
         await transition_with_session(case_id, "FALSE_POSITIVE", await _operator(request))
@@ -284,18 +331,25 @@ async def false_positive(request: Request, case_id: int) -> Response:
                     stored.revoked = True
                     stored.revoke_reason = f"管理员标记误判（案件{case.case_no}）"
             await session.commit()
+        await record_admin_audit(
+            await _operator(request),
+            "case_false_positive",
+            "case",
+            str(case_id),
+            {"case_no": case.case_no, "records": len(records)},
+        )
     except IllegalTransitionError as exc:
         return _page("错误", f"<div class=card><p class=warn>{_esc(str(exc))}</p></div>")
     return RedirectResponse("/admin", status_code=303)
 
 
 @router.post("/cases/{case_id}/cancel")
-async def cancel_case(request: Request, case_id: int) -> Response:
-    if not await _require_login(request):
-        return _login_redirect()
+async def cancel_case(request: Request, case_id: int, csrf: str = Form("")) -> Response:
+    await _require_admin_post(request, csrf)
     try:
         await transition_with_session(case_id, "CANCELLED", await _operator(request))
         await transition_with_session(case_id, "CLOSED", await _operator(request))
+        await record_admin_audit(await _operator(request), "case_cancel", "case", str(case_id))
     except IllegalTransitionError as exc:
         return _page("错误", f"<div class=card><p class=warn>{_esc(str(exc))}</p></div>")
     return RedirectResponse("/admin", status_code=303)
@@ -340,8 +394,10 @@ def _zh_kind(kind: str) -> str:
 
 @router.get("/shadow", response_class=HTMLResponse)
 async def shadow_page(request: Request, verdict: str = "") -> Response:
-    if not await _require_login(request):
+    token = await _require_login(request)
+    if not token:
         return _login_redirect()
+    csrf = _csrf_field(token)
     from app.models import GroupAlias
     from app.runtime.models import ShadowDecision
 
@@ -398,6 +454,7 @@ async def shadow_page(request: Request, verdict: str = "") -> Response:
         )
         + "</td>"
         f'<td><form method=post action="/admin/groups/alias" style="display:flex;gap:6px">'
+        f"{csrf}"
         f'<input type=hidden name=group_openid value="{_esc(openid)}">'
         '<input name=name placeholder="群名称" style="width:160px">'
         "<button class=btn>保存</button></form></td></tr>"
@@ -407,6 +464,7 @@ async def shadow_page(request: Request, verdict: str = "") -> Response:
     body = (
         f"<h2>影子模式判定（最近100条）</h2><p>分布：{_esc(summary)}　"
         "<span class=muted>影子模式只记录不处罚；时间为北京时间</span></p>"
+        f'<form style="display:none">{csrf}</form>'
         "<div class=card><b>判定说明：</b>高置信违规=确定违规（正式模式自动撤回+禁言+警告）；"
         "转人工复核=有疑点但证据不足（不处罚，人工确认）；放行=正常内容。"
         "<b>置信度</b>=系统对判定的把握程度（0~1），≥0.90才自动处罚。</div>"
@@ -428,9 +486,9 @@ async def save_group_alias(
     request: Request,
     group_openid: str = Form(""),
     name: str = Form(""),
+    csrf: str = Form(""),
 ) -> Response:
-    if not await _require_login(request):
-        return _login_redirect()
+    await _require_admin_post(request, csrf)
     if not group_openid:
         return RedirectResponse("/admin/shadow", status_code=303)
     async with SessionLocal() as session:
@@ -442,6 +500,9 @@ async def save_group_alias(
             session.add(existing)
         existing.name = name.strip()[:64]
         await session.commit()
+    await record_admin_audit(
+        await _operator(request), "group_alias_save", "group", group_openid, {"name": name[:64]}
+    )
     return RedirectResponse("/admin/shadow", status_code=303)
 
 
@@ -449,7 +510,9 @@ async def save_group_alias(
 
 
 @router.get("/rules", response_class=HTMLResponse)
-async def rules_page() -> Response:
+async def rules_page(request: Request) -> Response:
+    if not await _require_login(request):
+        return _login_redirect()
     from app.moderation.rules import BLACKLIST_EXPLICIT, SOFT_SIGNALS
 
     blacklist = "、".join(_esc(w) for w in BLACKLIST_EXPLICIT)
@@ -474,8 +537,10 @@ async def rules_page() -> Response:
 
 @router.get("/reports", response_class=HTMLResponse)
 async def reports_page(request: Request) -> Response:
-    if not await _require_login(request):
+    token = await _require_login(request)
+    if not token:
         return _login_redirect()
+    csrf = _csrf_field(token)
     async with SessionLocal() as session:
         daily = await build_daily(session)
         weekly = await build_weekly(session)
@@ -491,15 +556,15 @@ async def reports_page(request: Request) -> Response:
         + "".join(f"<li>{_esc(p['case_no'])} — {_esc(p['member_openid'])}</li>" for p in pending)
         + "</ul></div>"
         "<div class=card><h3>数据保留清理</h3>"
-        '<form method=post action="/admin/cleanup"><button class=btn>立即执行保留期清理</button></form></div>'
+        f'<form method=post action="/admin/cleanup">{csrf}<button class=btn>立即执行保留期清理</button></form></div>'
     )
     return _page("报告", body)
 
 
 @router.post("/cleanup")
-async def cleanup_now(request: Request) -> RedirectResponse:
-    if not await _require_login(request):
-        return _login_redirect()
+async def cleanup_now(request: Request, csrf: str = Form("")) -> RedirectResponse:
+    await _require_admin_post(request, csrf)
     async with SessionLocal() as session:
         await purge_expired(session)
+    await record_admin_audit(await _operator(request), "cleanup_now", "retention", "manual")
     return RedirectResponse("/admin/reports", status_code=303)

@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 
-from sqlalchemy import DateTime, String
+from sqlalchemy import DateTime, String, Text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db import Base
@@ -77,4 +77,18 @@ class ActionLog(Base):
     err_message: Mapped[str] = mapped_column(String(500), default="")
     attempts: Mapped[int] = mapped_column(default=0)
     actor: Mapped[str] = mapped_column(String(64), default="system")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
+
+
+class AdminAudit(Base):
+    """管理后台审计表：记录所有持久化状态修改。"""
+
+    __tablename__ = "admin_audits"
+
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    operator: Mapped[str] = mapped_column(String(64))
+    action: Mapped[str] = mapped_column(String(64))
+    target_type: Mapped[str] = mapped_column(String(64), default="")
+    target_id: Mapped[str] = mapped_column(String(128), default="")
+    detail_json: Mapped[str] = mapped_column(Text, default="{}")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)

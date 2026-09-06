@@ -12,6 +12,7 @@ import secrets
 from app.config import get_settings
 
 _SESSIONS: set[str] = set()
+_CSRF_TOKENS: dict[str, str] = {}
 
 SESSION_COOKIE = "admin_session"
 
@@ -31,12 +32,33 @@ def login(username: str, password: str) -> str:
         raise AuthError("用户名或密码错误")
     token = secrets.token_urlsafe(32)
     _SESSIONS.add(token)
+    _CSRF_TOKENS[token] = secrets.token_urlsafe(24)
     return token
 
 
 def logout(token: str) -> None:
     _SESSIONS.discard(token)
+    _CSRF_TOKENS.pop(token, None)
 
 
 def is_valid(token: str | None) -> bool:
     return bool(token) and token in _SESSIONS
+
+
+def csrf_token(session_token: str) -> str:
+    """Return a stable CSRF token for the current in-memory admin session."""
+    token = _CSRF_TOKENS.get(session_token)
+    if token is None:
+        token = secrets.token_urlsafe(24)
+        _CSRF_TOKENS[session_token] = token
+    return token
+
+
+def validate_csrf(session_token: str | None, submitted: str | None) -> bool:
+    """Validate a submitted CSRF token for a logged-in admin session."""
+    if not session_token or not submitted:
+        return False
+    expected = _CSRF_TOKENS.get(session_token)
+    if expected is None:
+        return False
+    return secrets.compare_digest(expected, submitted)
