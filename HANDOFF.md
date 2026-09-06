@@ -6,9 +6,20 @@
 
 ## 当前任务
 
-**R-103正确性整改、T-105动态规则、T-204远程AI软证据、T-205反馈候选规则和T-106官方动作编排已完成本地实现与验证**。当前分支为 `feature/r103-ai-rule-learning`，默认仍为 `ACTION_MODE=SHADOW`，不会对真实QQ群执行处罚；真实MiMo调用、真实官方动作、Windows 24×7和NapCat仍需后续实机验收。
+**R-103正确性整改、T-105动态规则、T-204远程AI软证据、T-205反馈候选规则和T-106官方动作编排已完成实现、本地验证和真实跨平台CI**。当前分支 `feature/r103-ai-rule-learning` 已推送，Pull Request #1尚未合并；默认仍为 `ACTION_MODE=SHADOW`，不会对真实QQ群执行处罚；真实MiMo调用、真实官方动作、Windows 24×7和NapCat仍需后续实机验收。
 
 ## 已完成内容
+
+### 功能分支推送与跨平台CI取证（2026-09-06，主审Agent）
+
+- 分支：`feature/r103-ai-rule-learning`，已推送并跟踪 `origin/feature/r103-ai-rule-learning`。
+- Pull Request：`https://github.com/miaomiao636/qq-group-moderation-bot/pull/1`，目标分支 `main`，尚未合并。
+- CI运行：`https://github.com/miaomiao636/qq-group-moderation-bot/actions/runs/34028509570`，初次取证head提交 `d00960d340a752bcd0ebd800eb27e0b5994f0ac1`，结论 `success`。
+- Ubuntu质量：`https://github.com/miaomiao636/qq-group-moderation-bot/actions/runs/34028509570/job/101473685503`，`SUCCESS`。
+- Windows质量：`https://github.com/miaomiao636/qq-group-moderation-bot/actions/runs/34028509570/job/101473685547`，`SUCCESS`。
+- 干净运行时依赖：`https://github.com/miaomiao636/qq-group-moderation-bot/actions/runs/34028509570/job/101473685476`，`SUCCESS`。
+- 推送前复验：pytest、mypy、ruff check和ruff format检查全部通过。
+- 结论：远程CI阻塞关闭；PR通过审核并合并后可进入W1/W2隔离群实测。CI证据不替代真实MiMo、真实QQ动作、Windows 24×7或NapCat实机验收。
 
 ### R-103/T-105/T-204/T-205/T-106 实现与本地复验（2026-09-06，主审Agent）
 
@@ -36,12 +47,12 @@
   - 临时SQLite库Alembic：`upgrade head → current → downgrade base → upgrade head` 通过，head为 `a0b4d72e5f31`。
   - 干净运行时依赖：独立临时虚拟环境执行 `uv sync --locked --no-dev` 后可导入 `app.main` 和 `app.adapters.ai.openai_compatible`，且pytest不可导入。
 - 本轮文档已同步：`.env.example`、`README.md`、`PROJECT_CONTEXT.md`、`NEXT_TASKS.md`、`MEMORY_INDEX.md`、`AGENTS.md`、`PROGRESS.md`、`HANDOFF.md`。
-- 尚未完成：远程私有仓库推送后的真实Linux/Windows CI取证；真实MiMo配置与脱敏样本效果评测；W1/W2隔离群真实官方动作验证；T-404 Windows无人值守恢复；NapCat身份镜像和踢人执行器。
+- 尚未完成：Pull Request #1审核与合并；真实MiMo配置与脱敏样本效果评测；W1/W2隔离群真实官方动作验证；T-404 Windows无人值守恢复；NapCat身份镜像和踢人执行器。
 
 ### 下一位Agent注意事项
 
 - 先读取 `PROJECT_CONTEXT.md`、`NEXT_TASKS.md`、`PROGRESS.md`、`DECISIONS.md` 和本文件，不要只看历史聊天。
-- 若继续收尾，优先任务是推送当前分支并获取真实GitHub Actions Linux/Windows CI证据；CI通过前不要让项目进入真实群动作测试。
+- 若继续收尾，优先任务是审核并合并 Pull Request #1；合并后再按W1/W2门槛进入隔离群动作测试。
 - 若接入真实MiMo，只能在本地 `.env` 或系统凭据中配置密钥；不得把密钥、模型真实返回中的敏感内容、真实群成员身份写入源码、Markdown、测试或日志。
 - 若进入W1/W2，保持 `ACTION_MODE=SHADOW` 起步；`OFFICIAL` 只可在隔离群、生产配置校验通过、负责人明确确认后启用，且仅限官方撤回/禁言/首次警告。
 - NapCat仍不参与核心识别；踢人必须人工批准，真实NapCat接入另走T-303/T-304。

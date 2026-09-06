@@ -2,7 +2,7 @@
 
 ## 当前阶段
 
-**R-103、T-105、T-204、T-205、T-106本地实现已完成（2026-09-06，分支 `feature/r103-ai-rule-learning`）**：已修复R-103正确性问题，并实现后台版本化动态规则、远程AI软证据、管理员反馈候选规则学习和官方撤回/禁言/警告动作编排。本地全量门禁通过：pytest 203 passed / 1 skipped、mypy 48个源文件通过、ruff check/format通过；Alembic临时库完成 `upgrade head → current → downgrade base → upgrade head`；干净运行时依赖环境可导入应用和AI适配器，且不包含pytest。默认仍为 `ACTION_MODE=SHADOW`，真实QQ群自动处罚、真实MiMo调用、Windows 24×7和NapCat尚未实机验收。
+**R-103、T-105、T-204、T-205、T-106实现与远程CI已通过（2026-09-06，分支 `feature/r103-ai-rule-learning`）**：已修复R-103正确性问题，并实现后台版本化动态规则、远程AI软证据、管理员反馈候选规则学习和官方撤回/禁言/警告动作编排。本地全量门禁通过：pytest 203 passed / 1 skipped、mypy 48个源文件通过、ruff check/format通过；Alembic临时库完成 `upgrade head → current → downgrade base → upgrade head`；干净运行时依赖环境可导入应用和AI适配器，且不包含pytest。功能分支已推送，Pull Request #1 的Ubuntu、Windows和干净运行时依赖CI全部成功；PR尚未合并。默认仍为 `ACTION_MODE=SHADOW`，真实QQ群自动处罚、真实MiMo调用、Windows 24×7和NapCat尚未实机验收。
 
 ## 已完成
 
@@ -16,6 +16,7 @@
   7. 反馈学习已接入后台：管理员可标注确认违规/确认正常/误判/未知原因等反馈，本地挖掘短语、域名、联系方式候选规则，未知撤回不当真值。
   8. 官方动作编排新增 `ACTION_MODE=SHADOW/OFFICIAL` 和 `EMERGENCY_STOP`：先落库动作意图和幂等键，再调用官方撤回、分级禁言和首次警告；数据库失败不调用外部动作，未知结果转人工，不盲目重放；任何路径都不产生踢人动作。
   9. 本地验证：`uv run pytest -q` 203 passed / 1 skipped；`uv run mypy app` 48文件通过；`uv run ruff check app tests alembic` 与 `uv run ruff format --check app tests alembic` 通过；临时SQLite库Alembic完整升降级通过；独立运行时虚拟环境 `uv sync --locked --no-dev` 可导入 `app.main` 和 `app.adapters.ai.openai_compatible`，且pytest不可导入。
+  10. 远程验证：分支已推送至 `origin/feature/r103-ai-rule-learning`；Pull Request #1 的CI运行 `34028509570` 在head提交 `d00960d` 上完成，Ubuntu质量、Windows质量和干净运行时依赖三个任务全部成功。
 
 - **R-102 核心正确性整改（已交付，2026-09-06）**：
   1. 流水线按图片/GIF/语音/视频/文件类型分发对应引擎（pipeline._is_* + media_engine），禁止全部进图片引擎；
@@ -104,7 +105,6 @@
 
 ## 进行中
 
-- **本分支收尾验证**：本地全量质量门禁与Alembic升降级已通过；仍需推送远程私有仓库并取得真实Linux/Windows CI证据，之后再进入W1/W2隔离群实测。
 - **T-001 QQ官方能力验证**：**进行中（核心能力已全部实测通过，2026-09-05）**。连通性、全量消息、撤回（含幂等）、禁言3600s/86400s（含解除）、保护角色拒绝均已实测；结论已写入决策D-012；9类脱敏样本入库。剩余：限流响应与媒体URL失效未实际触发、分享卡片事件形态待确认。
 - **T-002 群规与样本准备**：**进行中（2026-09-05解除阻塞）**。群规边界初版+8张违规例图+5条违规文字已归档（规则基线 `docs/group-rules.md`，媒体存本机 `data/t002_media/` 不入库）；仍需万能校园墙允许海报归档、刷屏量化定义、色情/暴力类样本并补齐至验收数量。
 - **T-404 Windows无人值守运行与故障恢复**：仅完成需求和验收标准，尚未实现或在Windows实机演练。
@@ -112,7 +112,6 @@
 
 ## 已知问题
 
-- **远程CI待取证**：本分支本地质量门禁已过，但尚未推送并取得真实Linux/Windows CI成功记录；在CI通过前不要合并到主分支或进入真实群动作测试。
 - **真实MiMo/其他远程AI待评测**：适配层已实现，真实模型ID、接口区域、计费、延迟、视觉能力和精确率/召回率必须用脱敏样本单独评测；模型结果当前只作为软证据。
 - **T-105增强项未完成**：发布前差异预览、历史消息模拟回放、并发发布冲突提示仍需补强，当前基础后台可编辑/发布/回滚/热更新已经实现。
 - **T-205增强项未完成**：候选规则目前主要覆盖短语、域名和联系方式；二维码、媒体哈希、来源和行为类候选、案件级批量标注与完整回放仍需后续增强。
@@ -131,13 +130,23 @@
 
 日期：2026-09-06
 
+修改内容：**功能分支已推送并取得真实跨平台CI证据**。`feature/r103-ai-rule-learning` 已推送至私有远程仓库并建立 Pull Request #1；CI运行 `34028509570` 在提交 `d00960d` 上完成，Ubuntu质量、Windows质量和干净运行时依赖三个任务全部成功。PR尚未合并，`main`仍保持原状态。
+
+验证：推送前重新执行 `uv run pytest -q`、`uv run mypy app`、`uv run ruff check app tests alembic` 和 `uv run ruff format --check app tests alembic`，全部通过；远程三项检查均为 `SUCCESS`。
+
+影响：其他电脑和Agent现可获取功能分支；远程CI阻塞已关闭。下一步是审核并合并PR，之后按门槛进入W1/W2隔离群实测、真实MiMo脱敏评测和T-404实现。CI通过不等于真实QQ群处罚、Windows 24×7或NapCat整体验收通过。
+
+### 此前更新
+
+日期：2026-09-06
+
 修改内容：**R-103正确性整改与AI/动态规则/反馈学习/官方动作编排实现完成本地验证**。分支 `feature/r103-ai-rule-learning` 新增并提交：事件租约领取、永久失败幂等、媒体存储加固、规则语境校准、后台CSRF/审计、动态规则数据库版本、OpenAI-compatible远程AI软证据、管理员反馈候选规则、官方动作意图与 `SHADOW/OFFICIAL` 编排。同步更新 `.env.example`、`README.md`、`PROJECT_CONTEXT.md`、`NEXT_TASKS.md`、`MEMORY_INDEX.md`、`AGENTS.md` 和交接记录。
 
 验证：本地 `uv run pytest -q` 为203 passed / 1 skipped；`uv run mypy app` 48个源文件通过；`uv run ruff check app tests alembic` 与 `uv run ruff format --check app tests alembic` 通过；临时SQLite库Alembic完成 `upgrade head → current → downgrade base → upgrade head`；独立运行时虚拟环境 `uv sync --locked --no-dev` 可导入应用和AI适配器，且pytest不可导入。
 
-影响：R-103旧阻塞已关闭到本地自动化层面；下一步必须先推送并取得Linux/Windows CI证据，再让其他Agent做W1/W2隔离群实测、真实MiMo脱敏样本评测和T-404 Windows无人值守恢复实现。真实自动处罚、真实MiMo和NapCat均不得因本地实现完成而直接开启。
+影响：R-103旧阻塞已关闭到本地自动化层面；当时下一步为推送并取得Linux/Windows CI证据。真实自动处罚、真实MiMo和NapCat均不得因本地实现完成而直接开启。
 
-### 此前更新
+### 更早更新
 
 日期：2026-09-05（第四轮）
 
