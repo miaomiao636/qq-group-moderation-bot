@@ -2,13 +2,14 @@
 
 24×7 识别 QQ 群中的垃圾广告、诈骗及自定义违规内容，支持文字、图片、GIF、表情、视频、语音、文件和卡片；自动执行高置信消息的撤回和分级禁言，整理两次违规证据并交由人工决定是否踢人。
 
-> 当前阶段（2026-09-06）：R-103正确性整改、后台动态规则、远程AI软证据、人工反馈候选规则和官方撤回/禁言/警告编排已在本地实现并通过自动化测试。默认仍为 `ACTION_MODE=SHADOW`，不会对真实QQ群执行处罚；真实MiMo、真实QQ官方动作、Windows 24×7和NapCat仍需分阶段实机验收。
+> 当前阶段（2026-09-07）：个人认证官方机器人无法开启“添加到任意群聊”，目标大群不显示该机器人。决策D-019已将生产大群主通道改为NapCat/OneBot，官方机器人降为可选/测试通道。当前代码已有官方通道、审核、AI、规则、案件和报告，但尚未实现NapCat入站及撤回/禁言/警告Adapter，不得用于目标大群真实处罚。
 
 ## 架构概览
 
-- **QQ 官方机器人**：主消息通道，负责消息接收、官方撤回、禁言和首次警告。
+- **NapCatQQ + OneBot 11**：目标大群的计划主消息和撤回/禁言/警告通道；当前尚未实现。
+- **QQ 官方机器人**：已实现的可选/测试Adapter，只能用于它实际可进入的群。
 - **审核服务**：规则、行为、多模态识别、独立复核、违规累计、案件、证据、审批和报告。
-- **人工 QQ 客户端 / NapCat**：互斥的踢人执行出口，踢人必须人工批准。
+- **人工 QQ 客户端 / NapCat**：互斥的踢人执行出口，踢人必须人工批准；首版可仅使用人工QQ客户端踢人。
 - 详见 `PROJECT_CONTEXT.md`、`DECISIONS.md` 与 [`AI辅助审核、动态规则与反馈学习设计`](docs/superpowers/specs/2026-09-06-ai-rule-learning-design.md)。
 
 ## 环境要求
@@ -40,13 +41,13 @@ uv run python -m app
 
 健康检查：`GET http://127.0.0.1:8000/healthz`（端口以 `.env` 中 `WEB_PORT` 为准）
 
-当前QQ常驻运行器只能用于隔离群影子观察：
+当前常驻运行器是**QQ官方通道影子运行器**，只能用于机器人实际可进入的隔离群：
 
 ```bash
 uv run python -m app.runtime
 ```
 
-该入口需要本地配置QQ官方凭据。默认 `ACTION_MODE=SHADOW`，只记录审核建议和模拟动作，不执行撤回、禁言或警告；同步代码或重启不会自动开启处罚。若未来要启用官方自动撤回/禁言，必须显式设置 `ACTION_MODE=OFFICIAL` 且满足生产配置、QQ凭据、强管理员密码和急停关闭等校验，并先完成隔离群验收。
+该入口需要本地配置QQ官方凭据。默认 `ACTION_MODE=SHADOW`，只记录审核建议和模拟动作，不执行撤回、禁言或警告。它不是目标大群的NapCat运行命令；NapCat运行入口、配置名和安装步骤将由T-306/T-404实现后写入本文件，在那之前不得虚构命令。
 
 开发时如需热重载，可显式指定端口：
 ```bash
@@ -84,6 +85,8 @@ uv run mypy app
 
 CI（`.github/workflows/ci.yml`）会在每次 push/PR 时，在 Linux 与 Windows 上自动运行以上全部检查。
 
+> 当前基线提醒（2026-09-07）：`main` 代码基线 `88ac433` 的CI运行 `34083954491` 因 `app/reports/stats.py` 未通过 `ruff format --check` 而失败。下一个开发任务必须先完成 `NEXT_TASKS.md` 的R-104，取得新的Ubuntu/Windows全绿CI后再开始T-305。
+
 ## 目录结构
 
 ### 当前实际存在的目录
@@ -105,7 +108,7 @@ docs/           # 运行手册、隐私告知、架构决策记录
 ### 已有业务目录与待补能力
 
 ```text
-app/adapters/     # 已有QQ官方适配与OpenAI-compatible远程AI适配；NapCat适配待补
+app/adapters/     # 已有QQ官方适配与OpenAI-compatible远程AI适配；NapCat主通道适配待T-305/T-306/T-307补齐
 app/moderation/   # 已有文字、图片/GIF、视频/语音/文件、动态规则、AI软证据与反馈学习
 app/cases/        # 已有违规历史、案件和审批状态机
 app/reports/      # 已有日报、周报和数据清理构建器
@@ -117,6 +120,7 @@ tests/fixtures/   # 脱敏QQ事件和媒体/模型固定样本
 ## 关键配置开关
 
 - `ACTION_MODE=SHADOW`：默认，只记录；`OFFICIAL` 才会调用QQ官方撤回/禁言/警告，且必须满足生产校验。
+- 上述 `OFFICIAL` 是已有官方Adapter的专用模式，不代表NapCat已支持真实动作；NapCat的provider路由和按群影子/实时开关尚待T-305/T-307实现。
 - `EMERGENCY_STOP=false`：急停开关；为 `true` 时禁止进入 `OFFICIAL`。
 - `AI_ENABLED=false`：远程AI默认关闭。
 - `AI_ENABLED_GROUPS=`：远程AI必须按群显式启用，例如填 `GROUP_OPENID_A,GROUP_OPENID_B`，或在测试环境用 `*`。
@@ -146,4 +150,4 @@ tests/fixtures/   # 脱敏QQ事件和媒体/模型固定样本
 
 屏幕可以关闭并锁屏，但主机不能进入睡眠或休眠。开发命令 `uv run uvicorn app.main:app --reload` 只用于开发，不得作为生产运行方式；生产运行使用 `uv run python -m app` 或由 Windows Service 管理。
 
-项目已确定使用一台空白Windows电脑进行正式整机测试。该电脑按W0至W5分阶段投入，不需要等全部功能写完才第一次测试：R-101通过后先做基础兼容性，T-102后测试QQ官方链路，核心业务完成后测试安全模式，T-404后测试无人值守恢复，NapCat只在单独批准后测试。详细进入条件见 [`docs/windows-operations.md`](docs/windows-operations.md) 的“分阶段测试计划”。
+项目已确定使用一台空白Windows电脑进行正式整机测试。W0基础兼容性已通过；新路线为：R-104/T-305/T-306后进入W1 NapCat影子接收，W2验证完整影子闭环，T-307后进入W3隔离群管理动作，T-404后执行W4无人值守恢复，最后才进入W5目标群分阶段上线。详细进入条件见 [`docs/windows-operations.md`](docs/windows-operations.md) 的“分阶段测试计划”。

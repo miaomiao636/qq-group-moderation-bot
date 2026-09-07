@@ -2,13 +2,32 @@
 
 ## 日期
 
-2026-09-06
+2026-09-07
 
 ## 当前任务
 
-**R-103正确性整改、T-105动态规则、T-204远程AI软证据、T-205反馈候选规则和T-106官方动作编排已完成实现、本地验证和真实跨平台CI**。当前分支 `feature/r103-ai-rule-learning` 已推送，Pull Request #1 已于 2026-09-06 合并至 `main`（合并提交 `761fdba`）；默认仍为 `ACTION_MODE=SHADOW`，不会对真实QQ群执行处罚；真实MiMo调用、真实官方动作、Windows 24×7和NapCat仍需后续实机验收。
+**D-019 NapCat主通道架构与后续任务已写入项目文档，本轮没有实现代码**。负责人实际确认个人认证官方机器人无法开启“添加到任意群聊”，数百/数千人目标群不显示该机器人。因此生产大群改用NapCatQQ + OneBot 11为主消息与管理动作通道，官方机器人保留为可选/测试Adapter。下一个只可开始R-104；R-104通过后按 `T-305 → T-306 → T-303 → T-307 → T-404 → T-403` 推进，T-304人工批准踢人是T-307之后的独立可选增强。
 
 ## 已完成内容
+
+### D-019架构与任务重排（2026-09-07，主审Agent）
+
+- 修改 `AGENTS.md`、`MEMORY_INDEX.md`、`PROJECT_CONTEXT.md`、`NEXT_TASKS.md`、`PROGRESS.md`、`DECISIONS.md`、`HANDOFF.md`、`README.md` 和 `docs/windows-operations.md`，将目标大群主通道从QQ官方机器人改为NapCat/OneBot。
+- D-001被D-019替代；D-004/D-006/D-010与旧NapCat定位或Windows W1–W5相关的部分被替代；D-018保留为官方Adapter专用规则。
+- 新增R-104恢复当前 `main` CI，T-305传输中立契约与expand/migrate/contract迁移，T-306 NapCat入站与影子运行器，T-307 NapCat撤回/禁言/警告Adapter；重写T-303实机验证、T-304人工批准踢人、T-403上线和T-404恢复依赖。
+- 保留官方Adapter、T-001/D-012小群实测、已有审核/AI/案件/报告代码；不删除现有数据列，不将OneBot数字ID冒充成OpenID。
+- 安全边界不变：踢人必须人工批准；NapCat不参与核心识别；影子模式不发出外部处罚；不实现QQ风控绕过。
+- 当前 `main`/`origin/main` 均为 `88ac433`，修改前工作区干净。GitHub Actions运行 `34083954491` 实际失败：Ubuntu/Windows的 `ruff format --check` 均未通过，后续mypy与pytest被跳过；干净运行时任务成功。本地独立复现唯一未格式化文件为 `app/reports/stats.py`。
+- 本轮仅文档更新，未运行全量pytest/mypy；文档完成后已执行链接、状态与关键矛盾检查，结果见本轮最终交接。
+
+### 下一位Agent注意事项（2026-09-07更新）
+
+- 只先认领R-104：格式化 `app/reports/stats.py`，运行pytest、mypy、ruff check/format，推送后取得Ubuntu、Windows和干净运行时任务全部成功的新CI证据。
+- R-104未通过前不开始T-305；T-305未通过前不得将OneBot事件直接塞入官方专用 `StandardMessage`或复用 `ACTION_MODE=OFFICIAL`。
+- NapCat真实验收只在Windows 10专用机、专用QQ和隔离群完成；凭据只留本机，不得写入文档或Git。
+- 官方机器人实测只证明可接入小群的技术能力，不得再声称目标大群的官方上线前提已满足。
+
+### 历史交接
 
 ### 功能分支推送与跨平台CI取证（2026-09-06，主审Agent）
 
