@@ -227,8 +227,12 @@ def provider_payload_to_result(
     ).hexdigest()
     category_raw = payload.get("category")
     category: Category = None
-    if category_raw not in (None, "", "none", "normal", "allow"):
-        category = cast(Category, str(category_raw).lower())
+    _VALID_CATEGORIES = {"ad", "fraud", "porn", "violence", "flood", "other"}
+    # 词表外的良性表达（safe/benign/clean 等）或未知值一律视为无违规（None），
+    # 避免模型对正常消息返回词表外类别时触发契约校验错误而整体降级。
+    if category_raw not in (None, "", "none", "normal", "allow", "safe", "benign", "clean"):
+        lowered = str(category_raw).lower()
+        category = cast(Category, lowered) if lowered in _VALID_CATEGORIES else None
     confidence_raw = payload.get("confidence", 0.0)
     try:
         confidence = float(confidence_raw)

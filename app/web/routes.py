@@ -24,6 +24,7 @@ from app.db import SessionLocal
 from app.models import AdminAudit
 from app.reports.cleanup import purge_expired
 from app.reports.service import build_daily, build_weekly, pending_manual_review
+from app.reports.stats import build_stats
 from app.web import auth
 from app.web.confirm import generate, verify_and_consume
 
@@ -51,6 +52,7 @@ def _page(title: str, body: str, logged_in: bool = True) -> Response:
             '<a href="/admin/shadow" style="color:#93c5fd">影子判定</a> &nbsp; '
             '<a href="/admin/rules" style="color:#93c5fd">规则</a> &nbsp; '
             '<a href="/admin/feedback" style="color:#93c5fd">反馈学习</a> &nbsp; '
+            '<a href="/admin/stats" style="color:#93c5fd">统计</a> &nbsp; '
             '<a href="/admin/reports" style="color:#93c5fd">报告</a> &nbsp; '
             '<a href="/admin/logout" style="color:#fca5a5">退出</a></div></header>'
         )
@@ -61,6 +63,75 @@ def _page(title: str, body: str, logged_in: bool = True) -> Response:
 
 def _esc(value: object) -> str:
     return html.escape(str(value))
+
+
+def _kpis(cards: list[tuple[str, object]]) -> str:
+    items = "".join(
+        "<div class=card style='flex:1;min-width:140px;text-align:center;margin:0 8px 16px 0'>"
+        f"<div style='font-size:26px;font-weight:600'>{_esc(value)}</div>"
+        f"<div class=muted>{_esc(label)}</div></div>"
+        for label, value in cards
+    )
+    return f"<div style='display:flex;flex-wrap:wrap'>{items}</div>"
+
+
+def _bars(title: str, rows: list[tuple[str, int]]) -> str:
+    if not rows:
+        return f"<div class=card><h3>{_esc(title)}</h3><p class=muted>暂无数据</p></div>"
+    maxv = max(v for _, v in rows) or 1
+    items = []
+    for label, value in rows:
+        pct = (value / maxv * 100) if maxv else 0
+        items.append(
+            "<div style='display:flex;align-items:center;margin:4px 0'>"
+            f"<div style='width:150px;font-size:13px'>{_esc(label)}</div>"
+            "<div style='flex:1;background:#eef0f3;border-radius:4px;height:18px'>"
+            f"<div style='width:{pct:.1f}%;background:#2563eb;height:18px;border-radius:4px'></div></div>"
+            f"<div style='width:60px;text-align:right;font-size:13px'>{value}</div></div>"
+        )
+    return f"<div class=card><h3>{_esc(title)}</h3>{''.join(items)}</div>"
+
+
+def _ai_model_table(models: list[dict[str, Any]]) -> str:
+    if not models:
+        return "<div class=card><h3>AI 调用（按模型）</h3><p class=muted>暂无调用</p></div>"
+    rows = "".join(
+        f"<tr><td>{_esc(m['model'])}</td><td>{m['calls']}</td><td>{m['ok']}</td>"
+        f"<td>{m['fail']}</td><td>{m['avg_ms']}ms</td><td>{m['cost_cents']}分</td></tr>"
+        for m in models
+    )
+    return (
+        "<div class=card><h3>AI 调用（按模型）</h3>"
+        "<table><tr><th>模型</th><th>调用</th><th>成功</th><th>失败</th>"
+        "<th>平均延迟</th><th>费用</th></tr>" + rows + "</table></div>"
+    )
+
+
+def _stats_body(stats: dict[str, Any]) -> str:
+    t = stats["totals"]
+    ai_fail_rate = (t["ai_failed"] / t["ai_calls"] * 100) if t["ai_calls"] else 0.0
+    agr = stats["agreement"]
+    agree_label = f"{agr['rate'] * 100:.0f}%" if agr["total"] else "—"
+    kpis = _kpis(
+        [
+            ("总处理消息", t["shadow"]),
+            ("违规记录", t["violations"]),
+            ("待审案件", t["pending_cases"]),
+            ("已标注反馈", t["feedback"]),
+            ("AI 调用", t["ai_calls"]),
+            ("AI 失败率", f"{ai_fail_rate:.1f}%"),
+            ("AI/人工一致率", agree_label),
+        ]
+    )
+    return (
+        kpis
+        + _bars("判定分布", stats["verdicts"])
+        + _bars("违规类别分布", stats["categories"])
+        + _bars("最近7天每日处理量", stats["last7"])
+        + _ai_model_table(stats["ai_by_model"])
+        + _bars("人工反馈标注分布", stats["feedback_labels"])
+        + _bars("候选规则状态", stats["candidate_status"])
+    )
 
 
 async def _require_login(request: Request) -> str | None:
@@ -187,6 +258,18 @@ async def dashboard(request: Request) -> Response:
         f"<h2>最近案件</h2><table><tr><th>批次号</th><th>成员</th><th>状态</th><th>创建</th><th></th></tr>{rows}</table>"
     )
     return _page("案件列表", body)
+
+
+# ---------- 统计大盘 ----------
+
+
+@router.get("/stats", response_class=HTMLResponse)
+async def stats_dashboard(request: Request) -> Response:
+    if not await _require_login(request):
+        return _login_redirect()
+    async with SessionLocal() as session:
+        stats = await build_stats(session)
+    return _page("统计大盘", _stats_body(stats))
 
 
 # ---------- 案件详情 ----------

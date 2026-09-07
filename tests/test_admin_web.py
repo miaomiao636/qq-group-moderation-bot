@@ -120,6 +120,20 @@ def test_admin_rules_requires_login(client: TestClient) -> None:
     assert "管理后台登录" in resp.text
 
 
+def test_admin_stats_requires_login(client: TestClient) -> None:
+    resp = client.get("/admin/stats", follow_redirects=True)
+    assert resp.status_code == 200
+    assert "管理后台登录" in resp.text
+
+
+def test_stats_dashboard_renders(logged_in: TestClient) -> None:
+    resp = logged_in.get("/admin/stats")
+    assert resp.status_code == 200
+    assert "统计大盘" in resp.text
+    assert "判定分布" in resp.text
+    assert "AI 调用（按模型）" in resp.text
+
+
 def test_state_changing_post_requires_csrf(logged_in: TestClient) -> None:
     resp = logged_in.post(
         "/admin/groups/alias",
