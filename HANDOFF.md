@@ -2,11 +2,11 @@
 
 ## 日期
 
-2026-09-07
+2026-09-08
 
 ## 当前任务
 
-**D-019 NapCat主通道架构与后续任务已写入项目文档，本轮没有实现代码**。负责人实际确认个人认证官方机器人无法开启“添加到任意群聊”，数百/数千人目标群不显示该机器人。因此生产大群改用NapCatQQ + OneBot 11为主消息与管理动作通道，官方机器人保留为可选/测试Adapter。下一个只可开始R-104；R-104通过后按 `T-305 → T-306 → T-303 → T-307 → T-404 → T-403` 推进，T-304人工批准踢人是T-307之后的独立可选增强。
+**D-019 NapCat主通道架构文档与R-104质量门禁已推送远程 `main`**。文档提交为 `512daca`，R-104纯格式提交为 `2d8f405`；GitHub Actions运行 `34186194703` 的Ubuntu、Windows和干净运行时任务全部成功。下一个只可开始T-305；通过独立审核后再按 `T-306 → T-303 → T-307 → T-404 → T-403` 推进，T-304人工批准踢人是T-307之后的独立可选增强。
 
 ## 已完成内容
 
@@ -20,10 +20,16 @@
 - 当前 `main`/`origin/main` 均为 `88ac433`，修改前工作区干净。GitHub Actions运行 `34083954491` 实际失败：Ubuntu/Windows的 `ruff format --check` 均未通过，后续mypy与pytest被跳过；干净运行时任务成功。本地独立复现唯一未格式化文件为 `app/reports/stats.py`。
 - 本轮仅文档更新，未运行全量pytest/mypy；文档完成后已执行链接、状态与关键矛盾检查，结果见本轮最终交接。
 
-### 下一位Agent注意事项（2026-09-07更新）
+### R-104关闭与远程同步（2026-09-08，主审Agent）
 
-- 只先认领R-104：格式化 `app/reports/stats.py`，运行pytest、mypy、ruff check/format，推送后取得Ubuntu、Windows和干净运行时任务全部成功的新CI证据。
-- R-104未通过前不开始T-305；T-305未通过前不得将OneBot事件直接塞入官方专用 `StandardMessage`或复用 `ACTION_MODE=OFFICIAL`。
+- `app/reports/stats.py` 仅由ruff格式化，没有行为修改；提交 `2d8f405`。
+- 本地验证：pytest 203 passed / 1 skipped；mypy 49个源文件成功；ruff check与format check成功。
+- 远程验证：GitHub Actions运行 `34186194703` 中Ubuntu、Windows和干净运行时依赖三个任务全部成功。
+- CI有非阻塞Node.js 20运行时弃用警告，后续维护时升级对应Action，不影响当前T-305进入条件。
+
+### 下一位Agent注意事项（2026-09-08更新）
+
+- 只先认领T-305；T-305未通过前不得将OneBot事件直接塞入官方专用 `StandardMessage`或复用 `ACTION_MODE=OFFICIAL`。
 - NapCat真实验收只在Windows 10专用机、专用QQ和隔离群完成；凭据只留本机，不得写入文档或Git。
 - 官方机器人实测只证明可接入小群的技术能力，不得再声称目标大群的官方上线前提已满足。
 

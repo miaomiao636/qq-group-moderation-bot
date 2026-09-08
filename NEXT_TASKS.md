@@ -2,8 +2,8 @@
 
 ## 当前状态
 
-- 当前阶段（2026-09-07）：本轮架构调整基于代码基线 `88ac433`，该基线已包含R-103、T-105、T-204、T-205、T-106和后台统计大盘。个人认证官方机器人无法开启“添加到任意群聊”，目标大群中不显示；D-019已将生产大群主通道改为NapCat/OneBot。现有代码仍是官方通道实现，真实NapCat、MiMo和Windows 24×7尚未验收。
-- 当前最高目标：先完成R-104恢复 `main` 质量门禁，再依次完成T-305传输中立契约、T-306 NapCat入站与影子运行、T-303 Windows隔离群链路验证、T-307 NapCat撤回/禁言/警告动作；之后再进入T-404无人值守和T-403分阶段上线。
+- 当前阶段（2026-09-08）：代码基线 `2d8f405` 已完成R-104并通过GitHub Actions运行 `34186194703` 的Ubuntu、Windows和干净运行时任务。个人认证官方机器人无法开启“添加到任意群聊”，目标大群中不显示；D-019已将生产大群主通道改为NapCat/OneBot。现有代码仍是官方通道实现，真实NapCat、MiMo和Windows 24×7尚未验收。
+- 当前最高目标：只先完成T-305传输中立契约；通过独立审核后，再依次完成T-306 NapCat入站与影子运行、T-303 Windows隔离群链路验证、T-307 NapCat撤回/禁言/警告动作，之后进入T-404无人值守和T-403分阶段上线。
 - 任务执行原则：每个Agent一次只认领一个边界清晰的任务；完成后更新 `PROGRESS.md` 和 `HANDOFF.md`，架构变化同步更新 `DECISIONS.md` 和 `PROJECT_CONTEXT.md`。
 - 禁止事项：不得把OneBot数据伪装成 `group_openid/member_openid`、不得跳过T-305直接接管官方动作编排、不得在影子链路和保护测试通过前对真实群执行动作；任何模型结果都不能直接创建踢人动作。
 
@@ -11,13 +11,13 @@
 
 ### R-104 恢复当前 `main` 质量门禁
 
-> **状态（2026-09-07）**：阻塞所有新功能开发合并。
+> **状态（2026-09-08）**：已完成。
 
-- [ ] 只格式化 `app/reports/stats.py` 的已有差异，不混入NapCat功能。
-- [ ] 重跑pytest、mypy、ruff check和ruff format check。
-- [ ] 推送后取得Ubuntu、Windows与干净运行时依赖三个任务的真实成功证据。
+- [x] 只格式化 `app/reports/stats.py` 的已有差异，不混入NapCat功能。（提交 `2d8f405`）
+- [x] 重跑pytest、mypy、ruff check和ruff format check。（203 passed / 1 skipped；mypy 49个源文件通过；ruff两项通过）
+- [x] 推送后取得Ubuntu、Windows与干净运行时依赖三个任务的真实成功证据。（GitHub Actions运行 `34186194703`）
 
-完成标准：`main` 新提交的全部CI任务成功；当前失败基线为运行 `34083954491` @ `88ac433`，Ubuntu/Windows均停在 `ruff format --check`，本地可复现唯一未格式化文件为 `app/reports/stats.py`。
+完成证据：失败基线运行 `34083954491` @ `88ac433` 已由成功运行 `34186194703` @ `2d8f405` 替代，三个远程任务全部成功。部分第三方Action仍报告Node.js 20运行时弃用警告，该警告不阻塞T-305，但需作为CI维护项处理。
 
 ### T-001 QQ官方机器人能力验证
 
@@ -371,6 +371,16 @@
 
 完成标准：Windows重启后无需人工打开终端即可恢复审核服务并自动检查QQ/NapCat就绪状态；结果未知的处罚不会重复；NapCat失败会明确告警“目标群自动监督中断”并转人工；所有演练有时间、结果和日志证据。
 
+### T-405 GitHub Actions运行时维护
+
+> **状态（2026-09-08）**：非阻塞维护项，不影响T-305开始。
+
+- [ ] 根据GitHub与对应Action的官方发布说明，升级仍依赖Node.js 20运行时的Action版本。
+- [ ] 保持Ubuntu、Windows与干净运行时依赖三个任务的步骤和验收语义不变。
+- [ ] 推送后确认弃用警告消失，且三个任务继续全部成功。
+
+完成标准：CI不再出现Node.js 20运行时弃用警告，没有放宽或删除任何质量门禁。
+
 ## Windows正式测试时间点
 
 - **现在可以准备电脑，但不能开始整套验收**：完成Windows更新，选择并记录系统版本和CPU架构，准备专用目录、测试网络、隔离QQ账号和隔离群；不要写入生产密钥。
@@ -383,13 +393,13 @@
 
 ## 建议的任务分工
 
-- Agent A：R-104，先恢复当前 `main` 质量门禁并取得Ubuntu/Windows新CI证据。
-- Agent B：T-305，负责传输中立契约、Adapter seam和数据库增量迁移。
-- Agent C：T-306，负责NapCat/OneBot入站Adapter、媒体与影子运行器。
-- Agent D：T-303，负责Windows隔离群NapCat主通道实机取证。
-- Agent E：T-307，负责NapCat撤回/禁言/警告Adapter和安全编排。
-- Agent F：T-304，仅在负责人明确启用后负责人工批准踢人。
-- Agent G：T-404、T-403，负责Windows无人值守恢复与分阶段上线。
+- Agent A：T-305，负责传输中立契约、Adapter seam和数据库增量迁移；当前只允许认领这一项。
+- Agent B：T-306，待T-305独立审核通过后，负责NapCat/OneBot入站Adapter、媒体与影子运行器。
+- Agent C：T-303，负责Windows隔离群NapCat主通道实机取证。
+- Agent D：T-307，负责NapCat撤回/禁言/警告Adapter和安全编排。
+- Agent E：T-304，仅在负责人明确启用后负责人工批准踢人。
+- Agent F：T-404、T-403，负责Windows无人值守恢复与分阶段上线。
+- Agent G：T-405，负责CI Action运行时维护；可独立安排，但不得占用T-305主线验收。
 - 原T-001/T-102官方通道代码保留维护，当前不是目标大群上线前置。
 - 最终整体审核：由项目负责人指定的主审Agent按照验收指标完成，不由单个实现Agent自行宣布项目完成。
 
