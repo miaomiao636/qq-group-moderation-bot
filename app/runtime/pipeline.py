@@ -20,9 +20,9 @@ from app.actions.orchestrator import (
     orchestrate_actions,
     summarize_intents,
 )
-from app.adapters.qq_official.contract import StandardMessage
 from app.adapters.qq_official.dedup import begin_processing, mark_failed, mark_processed
 from app.adapters.qq_official.parser import EventParseError, parse_group_message
+from app.core.contracts import MessageSource, StandardMessage
 from app.moderation.ai import AIReviewService, build_default_ai_review_service
 from app.moderation.decision import ModerationDecision
 from app.moderation.dynamic_rules import load_cached_active_snapshot
@@ -34,6 +34,35 @@ from app.runtime.models import ShadowDecision
 
 MEDIA_DIR = Path(__file__).resolve().parent.parent.parent / "data" / "media"
 logger = logging.getLogger(__name__)
+
+
+def _best_effort_identity(payload: dict[str, Any]) -> tuple[str, str, str]:
+    """解析失败时的兜底身份提取（兼容官方与 OneBot 常见键名）。
+
+    仅用于 record_only 人工记录，绝不用于处罚决策。
+    """
+    author = payload.get("author") or {}
+    if not isinstance(author, dict):
+        author = {}
+    sender = payload.get("sender") or {}
+    if not isinstance(sender, dict):
+        sender = {}
+    group = str(
+        payload.get("group_openid")
+        or payload.get("external_group_id")
+        or payload.get("group_id")
+        or ""
+    )
+    user = str(
+        author.get("member_openid")
+        or author.get("user_id")
+        or sender.get("member_openid")
+        or sender.get("user_id")
+        or payload.get("user_id")
+        or ""
+    )
+    name = str(author.get("username") or sender.get("nickname") or sender.get("card") or "")
+    return group, user, name
 
 
 def _is_image(content_type: str) -> bool:
@@ -64,13 +93,17 @@ async def run_pipeline(
     image_engine: ImageModerationEngine | None = None,
     ai_service: AIReviewService | None = None,
     official_action_client: OfficialActionClient | None = None,
+    message_source: MessageSource | None = None,
 ) -> ShadowDecision | None:
-    """处理一条 GROUP_MESSAGE_CREATE 载荷。
+    """处理一条群消息事件载荷。
+
+    T-305：``message_source`` 为传输中立入站 seam；缺省使用QQ官方解析器
+    （行为与历史版本一致）。审核/落库/动作链路对 source 一视同仁。
 
     返回 ShadowDecision：成功处理（含解析失败/媒体缺失的 record_only 记录）；
     返回 None：事件已被去重跳过。
     """
-    message_id = str(payload.get("id") or "")
+    message_id = str(payload.get("id") or payload.get("message_id") or "")
     if not message_id:
         return None
     claim = await begin_processing(session, message_id)
@@ -79,17 +112,25 @@ async def run_pipeline(
 
     image_engine = image_engine or ImageModerationEngine()
     gate = ReviewGate()
+    provider = str(getattr(message_source, "provider", "") or "qq_official")
 
     try:
-        msg: StandardMessage = parse_group_message(payload)
+        if message_source is not None:
+            msg: StandardMessage = message_source.parse_group_message(payload)
+        else:
+            msg = parse_group_message(payload)
     except EventParseError as exc:
         # 永久契约解析失败只落一条 record_only，重复投递不再自动重试。
+        fallback_group, fallback_user, fallback_name = _best_effort_identity(payload)
         record = await upsert_shadow_decision(
             session,
             message_id=message_id,
-            group_openid=str(payload.get("group_openid") or ""),
-            member_openid=str((payload.get("author") or {}).get("member_openid") or ""),
-            sender_name=str((payload.get("author") or {}).get("username") or "")[:64],
+            group_openid=fallback_group,
+            member_openid=fallback_user,
+            sender_name=fallback_name[:64],
+            provider=provider,
+            external_group_id=fallback_group,
+            external_user_id=fallback_user,
             kind="unknown",
             verdict="record_only",
             reason=f"事件解析失败，转人工：{exc}"[:500],
@@ -219,6 +260,9 @@ async def run_pipeline(
             message_id=msg.message_id,
             group_openid=msg.group_openid,
             member_openid=msg.sender.member_openid,
+            provider=msg.provider,
+            external_group_id=msg.external_group_id,
+            external_user_id=msg.external_user_id,
             sender_name=msg.sender.username[:64],
             kind=msg.kind,
             verdict=decision.verdict,

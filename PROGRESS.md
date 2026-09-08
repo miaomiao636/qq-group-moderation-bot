@@ -2,7 +2,9 @@
 
 ## 当前阶段
 
-**主通道架构调整为NapCat/OneBot（2026-09-08，决策D-019）**：项目负责人已实际确认，个人认证官方机器人无法开启“添加到任意群聊”，在数百/数千人目标群的邀请列表中不显示。因此QQ官方机器人降为可选/测试通道，NapCatQQ + OneBot 11改为生产大群主通道。代码基线 `2d8f405` 包含官方通道契约、审核、AI、动态规则、案件、报告、官方动作编排和R-104修复，**尚无NapCat入站与撤回/禁言/警告Adapter**。当前下一项只可开始T-305。
+**T-305传输中立契约已实现，待主审审核（2026-09-08，决策D-020）**：分支 `feature/t305-neutral-contracts` 完成 `app/core/contracts.py` 中立契约（provider + external_*_id）、`MessageSource`/`ModerationActionClient` seam、按群provider路由（`group_provider_routes`）、expand阶段数据库加列/双写/回填（迁移 `b8e2f6a4c1d9`，可回滚）与OneBot中立fixture测试。核心模块（moderation/cases/actions/reports/core）顶层零供应商Adapter导入；同一审核/案件链路可被官方与OneBot fixture共同驱动。本地门禁：pytest 227 passed、mypy 54源文件、ruff check/format通过、Alembic `upgrade→downgrade base→upgrade` 完整周期通过、干净运行时依赖可导入且无pytest。**未验收**；另修复测试封闭性缺陷（conftest强制 `AI_ENABLED=false`，此前开发机 `.env` 的真实AI会使测试外呼MiMo且判定非确定）。
+
+**主通道架构调整为NapCat/OneBot（2026-09-08，决策D-019）**：项目负责人已实际确认，个人认证官方机器人无法开启“添加到任意群聊”，在数百/数千人目标群的邀请列表中不显示。因此QQ官方机器人降为可选/测试通道，NapCatQQ + OneBot 11改为生产大群主通道。代码基线 `2d8f405` 包含官方通道契约、审核、AI、动态规则、案件、报告、官方动作编排和R-104修复。T-305通过审核后，下一项为T-306。
 
 **R-104质量阻塞已关闭（2026-09-08）**：`app/reports/stats.py` 仅做格式化，提交 `2d8f405` 已推送；本地pytest为203 passed / 1 skipped，mypy 49个源文件通过，ruff check与format check通过。GitHub Actions运行 `34186194703` 的Ubuntu、Windows和干净运行时依赖三个任务全部成功。
 
@@ -11,6 +13,15 @@
 **R-103、T-105、T-204、T-205、T-106实现与远程CI已通过（2026-09-06，分支 `feature/r103-ai-rule-learning`）**：已修复R-103正确性问题，并实现后台版本化动态规则、远程AI软证据、管理员反馈候选规则学习和官方撤回/禁言/警告动作编排。本地全量门禁通过：pytest 203 passed / 1 skipped、mypy 48个源文件通过、ruff check/format通过；Alembic临时库完成 `upgrade head → current → downgrade base → upgrade head`；干净运行时依赖环境可导入应用和AI适配器，且不包含pytest。功能分支已推送，Pull Request #1 上分支 tip（`27fcf6d`）的最新 CI 运行 `34028677558` 与较早的 `34028509570`（@`d00960d`）均在 Ubuntu、Windows 与干净运行时依赖三个任务全部成功（详见 `HANDOFF.md`）；PR #1 已于 2026-09-06 合并（合并提交 `761fdba`），`main` 现含 R-103+T-105+T-204+T-205+T-106 全套实现。默认仍为 `ACTION_MODE=SHADOW`，真实QQ群自动处罚、真实MiMo调用、Windows 24×7和NapCat尚未实机验收。
 
 ## 已完成
+
+- **T-305 传输中立消息、身份和动作契约（2026-09-08，实现完成待主审审核）**：
+  1. `app/core/contracts.py`：中立契约 `Provider`（qq_official|onebot）、`StandardMessage`（含 `provider/external_group_id/external_user_id/external_message_id`，与旧字段构造时双向同步）、`ActionResult`、`MessageSource`/`ModerationActionClient` 位置限定参数协议（均 runtime-checkable）；`app/adapters/qq_official/contract.py`、`actions.py` 兼容再导出，12份官方fixture回归零改动通过。
+  2. 核心模块（`app/core`、`app/moderation`、`app/cases`、`app/actions/orchestrator`、`app/reports`）顶层零供应商Adapter导入；官方客户端仅在组合根 `app/actions/official_wiring.py` 惰性构建（缺少凭据返回None→SKIPPED意图）。
+  3. 数据库expand：迁移 `b8e2f6a4c1d9` 为 `processed_events/shadow_decisions/violation_records/cases/action_intents/action_logs/feedback_records/ai_usage_logs` 增加中立列并回填（provider='qq_official'，幂等只补空），新增 `group_provider_routes` 表；可完整 downgrade。ORM同步加列，写入路径（案件/编排/流水线/反馈/AI用量）双写。
+  4. 按群路由：`resolve_action_provider` 未配置回退qq_official（既有官方测试零改动通过）；路由onebot的群无onebot客户端时只记SKIPPED意图，绝不借用官方客户端；注入onebot客户端后动作以数字ID字符串原样执行（不伪装OpenID）。
+  5. 流水线支持 `message_source` seam：官方解析器为默认值，测试用最小OneBot映射（非T-306 Adapter）驱动影子全链路；解析失败兜底身份兼容官方与OneBot键名。
+  6. 测试封闭性修复：conftest强制 `AI_ENABLED=false`（开发机 `.env` 真实AI曾使测试外呼MiMo且判定非确定；符合“AI测试只用固定假响应”规则）。
+  7. 新增23项测试：契约同步/协议满足性、OneBot fixture影子链路（判定落库/媒体缺失降级/去重/影子零外呼）、路由（回退/拒绝非法provider/跨通道隔离/onebot客户端执行/官方行为回归）、迁移（回填幂等/混合行兼容读取/双写）。
 
 - **R-103正确性整改 + T-105/T-204/T-205/T-106实现（2026-09-06，本分支）**：
   1. `ProcessedEvent` 改为带 `lease_token`、`lease_expires_at`、`attempts`、`next_retry_at`、`error_kind` 的租约领取模型；同一事件未过期 `PROCESSING` 不能被重复领取，永久契约失败只幂等记录一次并终止重试。
@@ -136,6 +147,16 @@
 
 ## 最近更新
 
+日期：2026-09-08（T-305）
+
+修改内容：**T-305传输中立契约实现完成（分支 `feature/t305-neutral-contracts`，待主审审核）**。新增 `app/core/`（contracts/routing/identity_backfill）与 `app/actions/official_wiring.py`；契约与ActionResult上移中立核心，官方adapter兼容再导出；迁移 `b8e2f6a4c1d9` 加列+回填+路由表，可完整回滚；案件/动作编排/流水线/反馈/AI用量双写中立身份并按群provider路由；新增OneBot中立fixture与23项测试；conftest强制测试环境 `AI_ENABLED=false` 修复测试外呼真实MiMo的非确定缺陷。
+
+验证：pytest 227 passed（基线203+新增23，此前1项ffmpeg运行时skip本轮执行成功）；mypy 54个源文件通过；ruff check/format通过；临时库Alembic `upgrade head→downgrade base→re-upgrade head` 通过且路由表重建正确；独立运行时环境（仅运行时依赖）可导入全部新增模块且pytest不可导入；核心模块静态扫描零 `from app.adapters` 导入；diff与新增文件敏感信息扫描无真实凭据。
+
+影响：T-306/T-307可直接在 `MessageSource`/`ModerationActionClient` seam上实现；contract阶段（删除旧镜像列）留待独立任务评审。影子模式与“不执行任何真实QQ动作”边界未变。
+
+### 历史更新
+
 日期：2026-09-08
 
 修改内容：**完成R-104并推送NapCat主通道文档**。文档提交 `512daca` 与纯格式提交 `2d8f405` 已推送到远程 `main`。
@@ -143,8 +164,6 @@
 验证：本地pytest 203 passed / 1 skipped，mypy 49个源文件通过，ruff check与format check通过；GitHub Actions运行 `34186194703` 的Ubuntu、Windows和干净运行时依赖任务全部成功。运行同时提示部分Action仍依赖已弃用的Node.js 20运行时，作为非阻塞维护项跟踪。
 
 影响：R-104关闭，下一位Agent只可认领T-305；不得跳过传输中立契约直接接入NapCat动作。
-
-### 历史更新
 
 日期：2026-09-07
 

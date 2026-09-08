@@ -1,0 +1,26 @@
+{
+  "transport": "onebot",
+  "sample_note": "T-305 脱敏 OneBot 11 群图片消息fixture：全部ID为虚构数字，URL为不可达占位域名",
+  "event": {
+    "time": 1789000100,
+    "self_id": 10000001,
+    "post_type": "message",
+    "message_type": "group",
+    "sub_type": "normal",
+    "message_id": 910000002,
+    "user_id": 200000002,
+    "group_id": 300000001,
+    "anonymous": null,
+    "message": [
+      { "type": "image", "data": { "file": "onebot_image.fixture.jpg", "url": "https://invalid.example/onebot_image.fixture.jpg" } }
+    ],
+    "raw_message": "[CQ:image,file=onebot_image.fixture.jpg]",
+    "font": 0,
+    "sender": {
+      "user_id": 200000002,
+      "nickname": "SANITIZED_NICKNAME_2",
+      "card": "",
+      "role": "member"
+    }
+  }
+}

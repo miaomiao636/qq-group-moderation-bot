@@ -12,12 +12,14 @@
 from __future__ import annotations
 
 import re
+from collections.abc import Mapping
 from datetime import datetime
 from typing import Any
 
 from app.adapters.qq_official.contract import (
     Attachment,
     MessageKind,
+    Provider,
     Sender,
     SenderRole,
     ShareCardInfo,
@@ -182,3 +184,18 @@ def parse_group_message(payload: dict[str, Any]) -> StandardMessage:
         attachments=attachments,
         share_card=_parse_share_card(payload, content),
     )
+
+
+class QQOfficialMessageSource:
+    """官方 Adapter 的 ``MessageSource`` 实现（T-305 seam）。
+
+    供审核链路以 ``MessageSource`` 协议注入；provider 固定为 ``qq_official``，
+    解析行为与 ``parse_group_message`` 完全一致。
+    """
+
+    provider: Provider = "qq_official"
+
+    def parse_group_message(self, payload: Mapping[str, Any], /) -> StandardMessage:
+        if not isinstance(payload, dict):
+            raise EventParseError("事件载荷必须是对象")
+        return parse_group_message(payload)

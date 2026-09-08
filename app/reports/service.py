@@ -114,6 +114,10 @@ async def pending_manual_review(session: AsyncSession) -> list[dict[str, Any]]:
             "case_no": c.case_no,
             "group_openid": c.group_openid,
             "member_openid": c.member_openid,
+            # T-305 中立身份（与旧镜像并存，contract 阶段旧键移除）
+            "provider": c.provider or "qq_official",
+            "external_group_id": c.external_group_id or c.group_openid,
+            "external_user_id": c.external_user_id or c.member_openid,
             "created_at": c.created_at.isoformat(),
         }
         for c in result.scalars()

@@ -90,6 +90,8 @@ class AIModerationRequest(BaseModel):
 
     message_id: str
     group_openid: str
+    # T-305：消息来源通道的群中立标识；为空时用量记录回退到 group_openid。
+    external_group_id: str = ""
     content_kind: AIContentKind
     text: str = ""
     media_bytes: bytes | None = Field(default=None, repr=False, exclude=True)
@@ -179,7 +181,9 @@ class AIUsageLog(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     provider: Mapped[str] = mapped_column(String(64), default="")
     model_id: Mapped[str] = mapped_column(String(128), default="")
-    group_openid: Mapped[str] = mapped_column(String(128), index=True)
+    group_openid: Mapped[str] = mapped_column(String(128), index=True)  # 旧镜像
+    # T-305：消息来源通道的群中立标识（provider 列此处含义是AI供应商，故不复用）
+    external_group_id: Mapped[str] = mapped_column(String(128), default="", server_default="")
     message_id: Mapped[str] = mapped_column(String(128), index=True)
     source: Mapped[str] = mapped_column(String(16), default="")
     cache_key: Mapped[str] = mapped_column(String(64), default="", index=True)
@@ -355,6 +359,7 @@ async def record_ai_usage(
             provider=result.provider,
             model_id=result.model_id,
             group_openid=request.group_openid,
+            external_group_id=request.external_group_id or request.group_openid,
             message_id=request.message_id,
             source=result.source,
             cache_key=cache_key,

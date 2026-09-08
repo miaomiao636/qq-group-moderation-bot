@@ -530,3 +530,35 @@
 - NapCat变为核心运行依赖后，掉线、QQ安全验证、版本不兼容或账号限制会同时中断自动监督和处罚。系统必须立即告警、停止自动动作并转人工监管，不得将“进程存活”误报为“群消息正常接收”。
 - 项目不承诺NapCat不会触发QQ风控，不实现设备指纹伪装、代理轮换、随机模拟真人或自动解决安全验证。
 - 实施任务调整为 R-104、T-305、T-306、T-307、T-304、T-404 和T-403，详见 `NEXT_TASKS.md`。
+
+---
+
+## 决策 D-020：传输中立契约与 expand/migrate/contract 数据迁移（T-305）
+
+### 决策日期
+
+2026-09-08
+
+### 决策内容
+
+T-305 已在分支 `feature/t305-neutral-contracts` 实现（**待主审独立审核，未验收**）：
+
+- **中立身份键**：`provider + external_group_id + external_user_id + external_message_id`。`Provider` 字面量集合为 `qq_official | onebot`；审核核心只识别该集合，不感知任何一方原始事件结构。
+- **契约上移**：`StandardMessage`/`Sender`/`Attachment`/`ShareCardInfo`/`ActionResult` 及 `MessageSource`/`ModerationActionClient` 两个 seam 协议定义在 `app/core/contracts.py`；`app/adapters/qq_official/contract.py` 与 `actions.py` 变为兼容再导出（既有导入方与全部官方 fixture 回归测试不受影响）。审核、案件、动作意图、报告模块顶层**零**供应商 Adapter 导入；官方客户端仅由组合根 `app/actions/official_wiring.py` 惰性构建。
+- **expand 阶段兼容**：`group_openid`/`member_openid` 等旧字段在领域模型与数据库中**全部保留**，与中立字段构造时双向同步、写入时双写；Alembic 迁移 `b8e2f6a4c1d9` 以 `batch_alter_table` 加列（SQLite 安全）并回填历史数据（provider='qq_official'，幂等只补空），可完整 downgrade 回滚。旧列的删除（contract 阶段）由独立任务另行评估，本任务不做。
+- **镜像不等于跨通道等价**：`provider="onebot"` 的消息其镜像字段虽填充数字ID字符串，仅为过渡期读取兼容；**不得把 OneBot 数字 ID 伪装成 OpenID**，不得调用官方 API。
+- **按群路由**：新增 `group_provider_routes` 表（每群一行，主键即 external_group_id），消息入口与动作出口各一个 provider；未配置路由的群安全回退 `qq_official`。动作编排解析 provider 后只使用对应客户端，**跨通道不借用客户端**：路由为 onebot 的群在无 onebot 客户端时只记录 SKIPPED 意图，绝不回退官方通道。
+- **测试封闭性**：`tests/conftest.py` 强制 `AI_ENABLED=false`——修复了开发机 `.env` 配置真实 AI 时测试会真实外呼 MiMo、导致判定非确定（限流/超时使 `record_only`/`allow` 漂移）的问题。项目规则本就要求 AI 测试只用固定假响应。
+- **未来 NapCat Adapter 的接入面**：入站实现 `MessageSource`（T-306），出站实现 `ModerationActionClient`（T-307，不含踢人）；去重键的 provider 化（`provider + message_id`）留待 T-306 按其验收标准处理。
+
+### 原因
+
+- D-019 确定目标大群主通道为 NapCat/OneBot，但现有数据库与领域模型全部是官方 OpenID 命名；原地改名或删列会破坏历史数据与在线升级路径。
+- 官方 fixture 与既有回归测试是资产，必须零改动继续通过；expand/双写是同时满足"新链路中立"与"旧链路不破坏"的最小路径。
+
+### 影响
+
+- 核心模块（moderation/cases/actions/reports/core）不导入任何 Adapter，可被官方与 OneBot fixture 共同驱动（已有自动化测试证明）。
+- 数据库新旧行混合期间读取口径以中立列为准，并兼容仅有旧镜像列的行（有自动化测试证明）。
+- T-306/T-307 直接在本 seam 上实现，不需要再动核心契约；contract 阶段（删旧列）另立任务并需再次评审。
+- 测试套件不再依赖真实远程AI，跨平台 CI 结果不受开发机 `.env` 影响。

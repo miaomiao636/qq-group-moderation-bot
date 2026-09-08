@@ -2,13 +2,59 @@
 
 ## 日期
 
-2026-09-08
+2026-09-08（T-305实现轮）
 
 ## 当前任务
 
-**D-019 NapCat主通道架构文档与R-104质量门禁已推送远程 `main`**。文档提交为 `512daca`，R-104纯格式提交为 `2d8f405`；GitHub Actions运行 `34186194703` 的Ubuntu、Windows和干净运行时任务全部成功。下一个只可开始T-305；通过独立审核后再按 `T-306 → T-303 → T-307 → T-404 → T-403` 推进，T-304人工批准踢人是T-307之后的独立可选增强。
+**T-305 传输中立消息、身份和动作契约：已在分支 `feature/t305-neutral-contracts` 完成实现与本地全量门禁，待主审独立审核（未验收）。** 设计决策记录为 D-020。通过审核后下一项为 T-306 NapCat入站Adapter与影子运行器；随后 `T-303 → T-307 → T-404 → T-403`，T-304人工批准踢人是T-307之后的独立可选增强。
 
 ## 已完成内容
+
+### T-305 实现（2026-09-08，实现Agent）
+
+**任务边界遵守情况**：
+- 未实现T-306（无OneBot WebSocket入站、无NapCat运行器、无真实媒体下载）；`tests/test_onebot_fixture.py` 中的 `OneBotFixtureSource` 是**测试内最小映射**，仅为证明核心链路可被OneBot fixture驱动。
+- 未实现真实撤回/禁言/踢人：影子模式边界未变；`ModerationActionClient` 协议只有 recall/mute/warn，无kick；新动作路径默认SHADOW下调用数为0并有测试断言。
+- 未修改任何真实凭据：diff与新增文件扫描无真实AppID/AppSecret/API Key/个人信息；fixture全部使用虚构数字ID。
+- 未执行任何真实QQ群动作。
+
+**实现清单**：
+1. 新增 `app/core/contracts.py`：`Provider`（qq_official|onebot）、中立 `StandardMessage`（provider/external_group_id/external_user_id/external_message_id，与旧字段构造时双向同步的镜像视图）、`Sender/Attachment/ShareCardInfo/ActionResult` 上移、`MessageSource`/`ModerationActionClient` 位置限定参数协议（runtime-checkable）。
+2. 新增 `app/core/routing.py`：`GroupProviderRoute` 表（每群单一消息入口+动作出口）+ `resolve_action_provider`（未配置回退qq_official）+ `upsert_group_route`（拒绝非法provider）。
+3. 新增 `app/core/identity_backfill.py`：回填SQL单一事实来源（幂等只补空，迁移与测试共用）。
+4. 新增 `app/actions/official_wiring.py`：官方动作客户端组合根（凭据缺失→未配置→SKIPPED意图，不异常）。
+5. 契约上移与兼容再导出：`app/adapters/qq_official/contract.py`、`actions.py` 保留原导入路径；`QQOfficialMessageSource` 实现seam。核心模块（moderation/cases/actions/reports/core）顶层零 `from app.adapters` 导入（静态扫描验证）。
+6. 动作编排 `orchestrator.py`：按群解析provider路由；`action_client` 参数供非官方provider注入；跨通道不借用客户端（路由onebot+无onebot客户端→SKIPPED意图）；`ActionIntent`/`ActionLog` 双写中立身份；审计改为编排器内中立写入（原官方 `audit.log_action` 保留未删）。
+7. 案件服务：违规/案件双写中立身份；窗口计数与案件幂等查询以中立列为准，兼容仅旧镜像列的混合行（`or_` 回退条件）。
+8. 流水线：新增 `message_source` seam参数（缺省官方解析器，行为不变）；解析失败兜底身份兼容官方/OneBot键名；影子判定双写。
+9. 反馈/AI用量：`FeedbackRecord`、`AIUsageLog`（external_group_id；其provider列语义为AI供应商故不复用）、`AIModerationRequest` 双写/透传中立群标识。
+10. Alembic迁移 `b8e2f6a4c1d9`（down_revision `a0b4d72e5f31`）：8张表batch加列（provider/external_*，含server_default）+回填+`group_provider_routes`表；downgrade完整逆操作。已验证 `upgrade head → downgrade base → re-upgrade head` 周期。
+11. ORM同步加列：`app/runtime/models.py`、`app/cases/models.py`、`app/models.py`、`app/moderation/feedback.py`、`app/moderation/ai.py`；`ModerationDecision` 增加中立字段（双向同步validator）。
+12. **测试封闭性修复**：`tests/conftest.py` 强制 `AI_ENABLED=false`。缺陷背景：开发机 `.env` 配置 `AI_ENABLED=true` 时，pytest审核链路会真实外呼MiMo（T-204 factory按settings构建），限流/超时导致 `allow/record_only` 判定漂移、测试非确定失败。项目规则本要求AI测试只用固定假响应；该修复使测试封闭，CI结果不再受开发机 `.env` 影响。
+13. 新增测试23项与fixture：`test_core_contracts.py`（9）、`test_onebot_fixture.py`（5，含脱敏OneBot fixture 2份）、`test_provider_routing.py`（5）、`test_migration_t305.py`（4）。
+
+**本地验证结果**：
+- `uv run pytest`：**227 passed**（基线203 + 新增23；此前"1 skipped"为ffmpeg视频生成运行时skip，本轮执行成功无skip）。
+- `uv run mypy app`：**54个源文件**通过（strict模式）。
+- `uv run ruff check app tests alembic` / `uv run ruff format --check app tests alembic`：通过。
+- Alembic完整周期：临时库 `upgrade head（b8e2f6a4c1d9）→ 写入哨兵行 → downgrade base → re-upgrade head`，路由表重建、alembic_version正确。
+- 干净运行时依赖：独立venv `uv sync --locked --no-dev` 后导入 `app.main/app.core.*/官方兼容再导出/编排/流水线` 全部成功，`StandardMessage`/`ActionResult` 与再导出为同一对象，pytest不可导入。
+- 核心模块静态扫描：contracts/routing/identity_backfill/orchestrator/cases.service/decision 六文件零 `from app.adapters` 顶层导入。
+- 敏感信息扫描：diff与新增文件无真实AppID/AppSecret/API Key/个人QQ号；`SECRET`等命中均为既有测试占位符。
+
+**已知风险与未完成事项**：
+- **未验收**：本实现等待主审按T-305完成标准独立复核，不自行宣布验收通过。
+- 旧镜像列（group_openid/member_openid等）仍保留于数据库与领域模型（expand阶段设计使然）；删除属contract阶段，需独立任务与评审。
+- `app/adapters/qq_official/audit.py` 的 `log_action` 已不在编排器调用路径上，暂保留（兼容未删）；contract阶段一并清理。
+- OneBot事件去重键仍是裸 `message_id`（`processed_events.provider` 列已加但未参与主键）；provider化去重键（`provider+self_id+message_id`）按T-306验收标准实现。
+- `processed_events` 的provider列目前由写入方（未来T-306）填充，官方路径默认值qq_official；本任务未改dedup逻辑（保持官方行为零改动）。
+- 报告构建器（`reports/service.py`）仅 `pending_manual_review` 增加中立字段输出；日报/周报计数仍读旧镜像列（双写保证一致），contract阶段切换。
+- 远程CI（Ubuntu/Windows/干净运行时）在分支推送后运行，结果见下方CI小节；CI通过不等于T-305验收。
+- 真实NapCat、真实MiMo评测、Windows 24×7仍全部未验收（与基线一致，未因本任务变化）。
+
+### 历史交接
+
+### D-019 NapCat主通道架构文档与R-104质量门禁（2026-09-08，主审Agent）
 
 ### D-019架构与任务重排（2026-09-07，主审Agent）
 
