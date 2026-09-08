@@ -569,7 +569,7 @@ T-305 已在分支 `feature/t305-neutral-contracts` 实现并完成主审整改�
 
 ## 决策 D-021：NapCat/OneBot 反向WebSocket入站与就绪状态语义（T-306）
 
-> 状态：已在分支 `feature/t306-onebot-shadow` 完成独立主审整改和本地门禁，等待整改提交的远程跨平台CI。
+> 状态：已验收。主审修复提交 `444b368` 的远程CI运行 `34219858155` 在Ubuntu、Windows和干净运行时三项全绿。
 
 ### 决策日期
 
