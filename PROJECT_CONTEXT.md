@@ -4,7 +4,7 @@
 
 - 项目名称：QQ 群多模态智能管理机器人
 - 文档初始化日期：2026-09-03
-- 当前阶段（2026-09-08）：代码基线 `2d8f405` 已完成R-104并通过GitHub Actions运行 `34186194703` 的Ubuntu、Windows和干净运行时任务。项目负责人实际确认：个人认证官方机器人无法开启“添加到任意群聊”，在数百/数千人目标群的邀请列表中不显示。决策D-019已将生产大群主通道改为NapCat/OneBot，官方机器人降为可选/测试通道。**T-305传输中立契约已在分支 `feature/t305-neutral-contracts` 完成实现并通过本地全量门禁，待主审独立审核（决策D-020）；通过后下一项为T-306。** 完成T-305至T-307后才能进入NapCat真实管理动作测试。
+- 当前阶段（2026-09-08）：生产大群主通道为NapCat/OneBot，官方机器人为可选/测试通道。**T-305主审发现的路由回退、跨通道身份串扰、核心反向依赖与消息段缺失均已整改；本地全量门禁通过，等待新跨平台CI证据后关闭T-305。** 下一项为T-306；T-307前OneBot真实管理动作始终禁用。
 - 首批规模：1–10 个 QQ 群，日总消息量预计不超过 10,000 条
 - 时区：`Asia/Shanghai`
 - 项目负责人职责：确定需求、规则和最终验收；具体搭建任务可以由其他 Agent 按 `NEXT_TASKS.md` 分工执行
@@ -121,7 +121,7 @@ QQ官方机器人 → 官方Adapter → 同一中立契约
 
 - 统一契约的目标形式是 `provider + external_group_id + external_user_id + external_message_id`；对NapCat即OneBot数字 `group_id`/`user_id`，对官方Adapter则是 `group_openid`/`member_openid`。
 - 当前数据库与领域类仍使用 `group_openid`/`member_openid`，T-305必须采用expand/migrate/contract迁移：先增加中立字段与兼容读写，再回填和切换读取，最后才在独立任务评估是否删除旧列。
-- **T-305 expand 阶段已实现（D-020，分支 `feature/t305-neutral-contracts`，待主审审核）**：中立契约位于 `app/core/contracts.py`；既有表已加中立列并回填（迁移 `b8e2f6a4c1d9`，可回滚）；写入路径双写、读取以中立列为准并兼容仅旧镜像列的混合行；`MessageSource`/`ModerationActionClient` seam 与按群 provider 路由（`group_provider_routes` 表）已就位；旧列删除（contract 阶段）留待独立任务。
+- **T-305 expand 阶段已实现并完成主审整改（D-020）**：中立契约位于 `app/core/contracts.py`，包含通用消息段；中立列、双写、回填与混合版本读取已就位；路由以 `message_provider + external_group_id` 联合定位，未配置OneBot默认拒绝；违规累计和动作幂等按provider隔离。迁移 `b8e2f6a4c1d9` 与纠正迁移 `d4f7a9c2e601` 可完整升降级。旧列删除留待contract阶段独立评审。
 - NapCat主通道群直接使用数字ID，不需要OpenID映射才能撤回、禁言或踢人。
 - 只有同一群配置两种Adapter时才需要跨通道映射；不得仅凭昵称、头像、群名片或模糊时间建立可执行映射。
 

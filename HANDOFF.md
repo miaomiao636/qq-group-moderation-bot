@@ -2,11 +2,29 @@
 
 ## 日期
 
-2026-09-08（T-305实现轮）
+2026-09-08（T-305主审整改轮）
 
 ## 当前任务
 
-**T-305 传输中立消息、身份和动作契约：已在分支 `feature/t305-neutral-contracts` 完成实现与本地全量门禁，待主审独立审核（未验收）。** 设计决策记录为 D-020。通过审核后下一项为 T-306 NapCat入站Adapter与影子运行器；随后 `T-303 → T-307 → T-404 → T-403`，T-304人工批准踢人是T-307之后的独立可选增强。
+**T-305初版未通过主审；发现的4类规格/安全问题已在分支 `feature/t305-neutral-contracts` 直接整改，本地全量门禁通过，待整改后新远程CI。** 下一项为T-306，随后 `T-303 → T-307 → T-404 → T-403`；T-304人工批准踢人为T-307之后的可选增强。
+
+## T-305主审整改摘要
+
+- 修复P0：路由改为`message_provider + external_group_id`联合键；未配置OneBot、交叉provider或非法路由默认拒绝，不再回退官方API。
+- 修复P1：违规累计、案件复用和动作幂等纳入provider+中立身份，不会因两通道ID文本相同而串案。
+- 修复P1：通用去重上移`app/core/dedup.py`，审核核心、案件、编排与流水线无供应商Adapter反向导入，并新增AST回归测试。
+- 修复P2：新增通用`MessageSegment`，官方和OneBot fixture都转换为中立段，不透出原始CQ/官方结构。
+- 动作边界：`ACTION_MODE=OFFICIAL`只能调官方Adapter；OneBot只记SKIPPED，必须等T-307的独立配置。
+- 数据库：新增纠正迁移`d4f7a9c2e601`，完整`upgrade head → downgrade base → upgrade head`通过。
+- 本地证据：234项收集，233 passed / 1 skipped；mypy 57源文件、ruff check/format、`git diff --check`通过。远程CI待推送本轮整改后刷新。
+
+## Windows专机待执行事项
+
+- **现在不需要真机动作测试**：T-305是契约与迁移任务，GitHub Windows CI通过即可关闭跨平台代码兼容门禁。若在Windows本机拉取该分支，先执行`uv run alembic upgrade head`，当前head应为`d4f7a9c2e601`。
+- **T-306后执行W1/W2**：安装并固定QQ/NapCat版本，在隔离群验证全消息类型、媒体下载、重放去重、断线重连、QQ登录态和连续24小时影子运行；外部管理动作调用数必须为0。
+- **T-307后执行W3**：只在隔离群分别测试撤回、禁言3600/86400秒、首次警告、保护角色、急停、重复事件和`UNKNOWN`人工复核。
+- **T-404后执行W4**：验证锁屏/熄屏、禁止睡眠、Windows Service自启、强制终止恢复、断网、系统更新重启、备份恢复和外部心跳。
+- **W1至W4均通过后才做W5**：目标大群先影子、再逐群开撤回/禁言/警告；踢人首版可始终由人工QQ客户端执行。详细进入/退出标准见`docs/windows-operations.md`。
 
 ## 已完成内容
 

@@ -2,7 +2,7 @@
 
 24×7 识别 QQ 群中的垃圾广告、诈骗及自定义违规内容，支持文字、图片、GIF、表情、视频、语音、文件和卡片；自动执行高置信消息的撤回和分级禁言，整理两次违规证据并交由人工决定是否踢人。
 
-> 当前阶段（2026-09-08）：个人认证官方机器人无法开启“添加到任意群聊”，目标大群不显示该机器人。决策D-019已将生产大群主通道改为NapCat/OneBot，官方机器人降为可选/测试通道。R-104已完成并通过真实Ubuntu、Windows和干净运行时CI；当前代码尚未实现NapCat入站及撤回/禁言/警告Adapter，下一项只可开始T-305，不得用于目标大群真实处罚。
+> 当前阶段（2026-09-08）：生产大群主通道已确定为NapCat/OneBot，QQ官方机器人只用于实际可进入的小群/测试群。T-305中立契约已完成主审整改和本地全量验证，当前分支等待新的跨平台CI证据；下一开发项是T-306 OneBot入站与影子运行器。在T-307前，任何OneBot撤回/禁言/警告都会被拒绝。
 
 ## 架构概览
 
@@ -85,7 +85,7 @@ uv run mypy app
 
 CI（`.github/workflows/ci.yml`）会在每次 push/PR 时，在 Linux 与 Windows 上自动运行以上全部检查。
 
-> 当前基线提醒（2026-09-08）：R-104已完成，提交 `2d8f405` 的CI运行 `34186194703` 在Ubuntu、Windows与干净运行时任务全部成功。下一项只可开始 `NEXT_TASKS.md` 的T-305。CI仍有部分Action使用已弃用Node.js 20运行时的非阻塞警告，后续应安排维护升级。
+> 当前基线提醒（2026-09-08）：R-104的跨平台CI已经通过；T-305主审整改的新CI证据待本分支推送后取得。下一项是 `NEXT_TASKS.md` 的T-306。CI仍有部分Action使用已弃用Node.js 20运行时的非阻塞警告。
 
 ## 目录结构
 
@@ -108,7 +108,8 @@ docs/           # 运行手册、隐私告知、架构决策记录
 ### 已有业务目录与待补能力
 
 ```text
-app/adapters/     # 已有QQ官方适配与OpenAI-compatible远程AI适配；NapCat主通道适配待T-305/T-306/T-307补齐
+app/adapters/     # 已有QQ官方与OpenAI-compatible AI适配；NapCat入站/动作待T-306/T-307
+app/core/         # 传输中立消息、动作、路由和去重契约
 app/moderation/   # 已有文字、图片/GIF、视频/语音/文件、动态规则、AI软证据与反馈学习
 app/cases/        # 已有违规历史、案件和审批状态机
 app/reports/      # 已有日报、周报和数据清理构建器
@@ -120,7 +121,7 @@ tests/fixtures/   # 脱敏QQ事件和媒体/模型固定样本
 ## 关键配置开关
 
 - `ACTION_MODE=SHADOW`：默认，只记录；`OFFICIAL` 才会调用QQ官方撤回/禁言/警告，且必须满足生产校验。
-- 上述 `OFFICIAL` 是已有官方Adapter的专用模式，不代表NapCat已支持真实动作；NapCat的provider路由和按群影子/实时开关尚待T-305/T-307实现。
+- 上述 `OFFICIAL` 只能启用QQ官方Adapter。OneBot路由已会安全拒绝跨通道调用；NapCat按群影子/真实动作开关待T-307实现。
 - `EMERGENCY_STOP=false`：急停开关；为 `true` 时禁止进入 `OFFICIAL`。
 - `AI_ENABLED=false`：远程AI默认关闭。
 - `AI_ENABLED_GROUPS=`：远程AI必须按群显式启用，例如填 `GROUP_OPENID_A,GROUP_OPENID_B`，或在测试环境用 `*`。

@@ -16,7 +16,7 @@ import time
 from collections import defaultdict, deque
 from typing import TYPE_CHECKING, Any
 
-from app.adapters.qq_official.contract import StandardMessage
+from app.core.contracts import StandardMessage
 from app.moderation.decision import ModerationDecision, RuleHit
 from app.moderation.extract import extract_signals
 from app.moderation.normalization import apply_variants, has_variant_trick
@@ -395,7 +395,7 @@ class TextRuleEngine:
         hits, confidence, category = _evaluate_text_rules(msg.text, self._blacklist)
         protected = msg.sender.role in ("owner", "admin")
 
-        flood = self.frequency.check(msg.group_openid, msg.sender.member_openid, msg, now=now)
+        flood = self.frequency.check(msg.external_group_id, msg.external_user_id, msg, now=now)
         if flood:
             hits.append(
                 RuleHit(
@@ -471,8 +471,9 @@ class TextRuleEngine:
 
         decision = ModerationDecision(
             message_id=msg.message_id,
-            group_openid=msg.group_openid,
-            sender_member_openid=msg.sender.member_openid,
+            provider=msg.provider,
+            external_group_id=msg.external_group_id,
+            external_user_id=msg.external_user_id,
             sender_role=msg.sender.role,
             verdict=verdict,
             category=category,

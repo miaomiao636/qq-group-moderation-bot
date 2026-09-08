@@ -80,10 +80,17 @@ def _high_decision(msg: StandardMessage) -> ModerationDecision:
 
 
 @pytest.mark.asyncio
-async def test_default_route_falls_back_to_official() -> None:
+async def test_default_official_route_keeps_legacy_official_behavior() -> None:
     group = f"G_ROUTE_DEFAULT_{uuid.uuid4().hex[:6]}"
     async with SessionLocal() as session:
-        assert await resolve_action_provider(session, group) == "qq_official"
+        assert await resolve_action_provider(session, "qq_official", group) == "qq_official"
+
+
+@pytest.mark.asyncio
+async def test_unconfigured_onebot_route_fails_closed() -> None:
+    group = f"3009{uuid.uuid4().hex[:8]}"
+    async with SessionLocal() as session:
+        assert await resolve_action_provider(session, "onebot", group) is None
 
 
 @pytest.mark.asyncio
@@ -96,14 +103,28 @@ async def test_route_rejects_unknown_provider() -> None:
 
 
 @pytest.mark.asyncio
+async def test_route_rejects_cross_provider_without_verified_identity_mapping() -> None:
+    async with SessionLocal() as session:
+        with pytest.raises(ValueError, match="跨通道身份映射"):
+            await upsert_group_route(
+                session,
+                f"G_ROUTE_CROSS_{uuid.uuid4().hex[:6]}",
+                message_provider="onebot",
+                action_provider="qq_official",
+            )
+
+
+@pytest.mark.asyncio
 async def test_routed_onebot_group_never_borrows_official_client() -> None:
     """路由为 onebot 的群：官方客户端调用数必须为0，只记录SKIPPED意图。"""
     group = f"3000{uuid.uuid4().hex[:8]}"
     official = RecordingClient("official")
     msg = _msg(group, "200000001")
     async with SessionLocal() as session:
-        await upsert_group_route(session, group, action_provider="onebot")
-        assert await resolve_action_provider(session, group) == "onebot"
+        await upsert_group_route(
+            session, group, message_provider="onebot", action_provider="onebot"
+        )
+        assert await resolve_action_provider(session, "onebot", group) == "onebot"
         intents = await orchestrate_actions(
             session,
             msg,
@@ -117,24 +138,25 @@ async def test_routed_onebot_group_never_borrows_official_client() -> None:
     assert intents[0].status == "SKIPPED"
     assert intents[0].provider == "onebot"
     assert intents[0].external_group_id == group
-    assert "未配置客户端" in intents[0].reason
+    assert "T-307" in intents[0].reason
 
 
 @pytest.mark.asyncio
-async def test_routed_onebot_group_uses_injected_onebot_client() -> None:
-    """路由为 onebot 的群：动作经注入的 onebot 客户端执行，官方调用为0。"""
+async def test_official_mode_never_enables_injected_onebot_client() -> None:
+    """T-305 不得复用 OFFICIAL 开关执行 OneBot 动作。"""
     group = f"3001{uuid.uuid4().hex[:8]}"
     official = RecordingClient("official")
     onebot = RecordingClient("onebot")
     msg = _msg(group, "200000002")
     async with SessionLocal() as session:
-        await upsert_group_route(session, group, action_provider="onebot")
+        await upsert_group_route(
+            session, group, message_provider="onebot", action_provider="onebot"
+        )
         intents = await orchestrate_actions(
             session,
             msg,
             _high_decision(msg),
             official_client=official,  # type: ignore[arg-type]
-            action_client=onebot,  # type: ignore[arg-type]
             settings=_official_settings(),
         )
         route_rows = (
@@ -148,14 +170,25 @@ async def test_routed_onebot_group_uses_injected_onebot_client() -> None:
         )
 
     assert official.calls == []
-    # 首次违规阶梯：recall + 禁言1小时 + 警告（无 kick）
-    assert [call[0] for call in onebot.calls] == ["recall", "mute", "warn"]
-    # 数字ID以字符串原样传给 onebot 出口，未被伪装成 OpenID
-    assert onebot.calls[0][1] == (group, msg.message_id)
-    assert onebot.calls[1][1] == (group, "200000002", 3600)
-    assert [i.status for i in intents] == ["SUCCEEDED", "SUCCEEDED", "SUCCEEDED"]
+    assert onebot.calls == []
+    assert [i.status for i in intents] == ["SKIPPED"]
     assert all(i.provider == "onebot" for i in route_rows)
     assert all(i.external_group_id == group for i in route_rows)
+    assert "T-307" in intents[0].reason
+
+
+@pytest.mark.asyncio
+async def test_same_external_group_id_can_have_independent_provider_routes() -> None:
+    group = f"SAME_{uuid.uuid4().hex[:8]}"
+    async with SessionLocal() as session:
+        await upsert_group_route(
+            session, group, message_provider="qq_official", action_provider="qq_official"
+        )
+        await upsert_group_route(
+            session, group, message_provider="onebot", action_provider="onebot"
+        )
+        assert await resolve_action_provider(session, "qq_official", group) == "qq_official"
+        assert await resolve_action_provider(session, "onebot", group) == "onebot"
 
 
 @pytest.mark.asyncio

@@ -2,7 +2,7 @@
 
 ## 当前状态
 
-- 当前阶段（2026-09-08）：代码基线 `2d8f405` 已完成R-104并通过GitHub Actions运行 `34186194703` 的Ubuntu、Windows和干净运行时任务。个人认证官方机器人无法开启“添加到任意群聊”，目标大群中不显示；D-019已将生产大群主通道改为NapCat/OneBot。**T-305传输中立契约已在分支 `feature/t305-neutral-contracts` 完成实现（D-020），本地全量门禁通过，待主审独立审核。** 真实NapCat、MiMo和Windows 24×7尚未验收。
+- 当前阶段（2026-09-08）：生产大群主通道为NapCat/OneBot。**T-305主审整改与本地全量门禁已通过，待整改后新跨平台CI证据；下一项为T-306。** 真实NapCat、MiMo和Windows 24×7尚未验收。
 - 当前最高目标：主审复核T-305；通过后依次完成T-306 NapCat入站与影子运行、T-303 Windows隔离群链路验证、T-307 NapCat撤回/禁言/警告动作，之后进入T-404无人值守和T-403分阶段上线。
 - 任务执行原则：每个Agent一次只认领一个边界清晰的任务；完成后更新 `PROGRESS.md` 和 `HANDOFF.md`，架构变化同步更新 `DECISIONS.md` 和 `PROJECT_CONTEXT.md`。
 - 禁止事项：不得把OneBot数据伪装成 `group_openid/member_openid`、不得跳过T-305直接接管官方动作编排、不得在影子链路和保护测试通过前对真实群执行动作；任何模型结果都不能直接创建踢人动作。
@@ -266,16 +266,16 @@
 
 依赖：R-104、T-102、T-104、T-106。
 
-> **状态（2026-09-08）**：已在分支 `feature/t305-neutral-contracts` 完成实现与本地全量门禁（pytest 227 passed、mypy 54文件、ruff通过、Alembic完整升降级、干净运行时导入验证），**待主审独立审核，未验收**。设计记录见决策D-020。
+> **状态（2026-09-08）**：主审已独立复现并修复4类问题：OneBot错误回退官方动作通道、跨provider违规/动作串扰、核心模块反向导入Adapter、通用消息段缺失。本地234项测试中233通过/1跳过，mypy 57源文件、ruff和Alembic完整升降级通过；**待整改后新的Ubuntu/Windows/干净运行时CI证据后关闭**。
 
 - [x] 定义中立消息契约，至少包含 `provider`、`external_group_id`、`external_user_id`、`external_message_id`、角色、消息段、附件和时间，不暴露OneBot或QQ官方原始结构。（`app/core/contracts.py`；旧字段为双向同步的镜像视图，contract阶段另行移除）
 - [x] 定义小而稳定的 `MessageSource` 与 `ModerationActionClient` 接口，官方和NapCat Adapter都从该seam接入。（协议均为runtime-checkable、位置限定参数；官方 `QQOfficialMessageSource` 与 `OfficialActionAdapter` 已验证结构性满足）
 - [x] 将现有 `StandardMessage`、审核、案件、动作意图和报告从官方专用命名迁移到中立ID；旧的 `group_openid/member_openid` 使用expand/migrate/contract步骤兼容，不原地改名或删列。（核心模块顶层零Adapter导入；`shadow_decisions/violation_records/cases/action_intents/action_logs/processed_events/feedback_records/ai_usage_logs` 均已加中立列并双写回填）
-- [x] 动作路由改为按群显式选择provider，每群仅允许一个激活入口和一个自动动作出口。（`group_provider_routes` 表；未配置路由回退qq_official；路由onebot且无onebot客户端时只记SKIPPED，跨通道不借用客户端）
+- [x] 动作路由以 `message_provider + external_group_id` 联合定位，每群只有一个出口。未配置官方群保留历史默认，未配置OneBot或交叉provider路由一律fail-closed；`ACTION_MODE=OFFICIAL` 永不启用OneBot动作。
 - [x] 保留QQ官方Adapter现有契约样本和功能，通过兼容Adapter保证旧回归测试继续通过。（`contract.py`/`actions.py` 兼容再导出；12份官方fixture回归全过）
 - [x] 为数据迁移编写可回滚Alembic脚本、回填校验和混合版本兼容测试。（迁移 `b8e2f6a4c1d9` 可完整降级；回填SQL单一事实来源在 `app/core/identity_backfill.py`；`tests/test_migration_t305.py` 覆盖回填幂等/混合行兼容/双写；`tests/fixtures/onebot/` + `test_onebot_fixture.py` 证明同链路可被OneBot fixture驱动）
 
-完成标准：同一审核/案件链路可使用官方fixture和OneBot fixture驱动；核心模块不导入任一供应商Adapter；旧数据可读、新数据可回滚，不破坏已有官方通道测试。→ 本地已达成，等待主审按标准独立复核。
+完成标准：同一审核/案件链路可使用官方fixture和OneBot fixture驱动；核心模块不导入任一供应商Adapter；旧数据可读、新数据可回滚，不破坏已有官方通道测试。→ 本地已达成，仅待整改后远程CI。
 
 ### T-306 NapCat/OneBot入站Adapter与影子运行器
 

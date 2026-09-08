@@ -15,9 +15,17 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-from app.adapters.qq_official.contract import Attachment, Provider, Sender, StandardMessage
 from app.cases.models import ViolationRecord
-from app.core.contracts import ActionResult, MessageSource
+from app.core.contracts import (
+    ActionResult,
+    Attachment,
+    MessageParseError,
+    MessageSegment,
+    MessageSource,
+    Provider,
+    Sender,
+    StandardMessage,
+)
 from app.db import SessionLocal
 from app.runtime.pipeline import run_pipeline
 from sqlalchemy import func, select
@@ -42,28 +50,32 @@ class OneBotFixtureSource:
 
     def parse_group_message(self, payload: Mapping[str, Any], /) -> StandardMessage:
         if not isinstance(payload, dict):
-            raise ValueError("事件载荷必须是对象")
+            raise MessageParseError("事件载荷必须是对象")
         message_id = str(payload.get("message_id") or "")
         group_id = str(payload.get("group_id") or "")
         user_id = str(payload.get("user_id") or "")
         if not message_id:
-            raise ValueError("事件缺少 message_id")
+            raise MessageParseError("事件缺少 message_id")
         if not group_id:
-            raise ValueError("事件缺少 group_id")
+            raise MessageParseError("事件缺少 group_id")
         sender_raw = payload.get("sender") or {}
         segments = payload.get("message")
         if not isinstance(segments, list):
             segments = []
         texts: list[str] = []
         attachments: list[Attachment] = []
+        neutral_segments: list[MessageSegment] = []
         for seg in segments:
             if not isinstance(seg, dict):
                 continue
             seg_type = str(seg.get("type") or "")
             data = seg.get("data") or {}
             if seg_type == "text":
-                texts.append(str(data.get("text") or ""))
+                text = str(data.get("text") or "")
+                texts.append(text)
+                neutral_segments.append(MessageSegment(kind="text", text=text))
             elif seg_type == "image":
+                attachment_index = len(attachments)
                 attachments.append(
                     Attachment(
                         content_type="image/jpeg",
@@ -71,9 +83,14 @@ class OneBotFixtureSource:
                         url=str(data.get("url") or ""),
                     )
                 )
+                neutral_segments.append(
+                    MessageSegment(kind="image", attachment_index=attachment_index)
+                )
             else:
                 # 未知消息段保留文本占位并降级人工（与T-306语义一致的最小表现）
-                texts.append(f"[未知消息段:{seg_type}]")
+                placeholder = f"[未知消息段:{seg_type}]"
+                texts.append(placeholder)
+                neutral_segments.append(MessageSegment(kind="unknown", text=placeholder))
         kind = "unknown"
         if attachments:
             kind = "image"
@@ -97,6 +114,7 @@ class OneBotFixtureSource:
             sent_at=sent_at,
             kind=kind,  # type: ignore[arg-type]
             text="".join(texts),
+            segments=neutral_segments,
             attachments=attachments,
         )
 

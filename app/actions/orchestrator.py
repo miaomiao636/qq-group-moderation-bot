@@ -19,7 +19,7 @@ from datetime import UTC, datetime
 from hashlib import sha256
 from typing import Any, Literal
 
-from sqlalchemy import DateTime, Integer, String, Text, select
+from sqlalchemy import DateTime, Integer, String, Text, and_, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -77,20 +77,18 @@ async def orchestrate_actions(
     decision: ModerationDecision,
     *,
     official_client: ModerationActionClient | None = None,
-    action_client: ModerationActionClient | None = None,
     settings: Settings | None = None,
     actor: str = "system",
 ) -> list[ActionIntent]:
     """Persist and execute recall/mute/warn in guarded OFFICIAL mode.
 
-    T-305：先按群解析动作出口 provider；``qq_official`` 使用 ``official_client``
-    （缺省时经 wiring 惰性构建官方 Adapter），其他 provider 必须显式传入
-    ``action_client``，否则只记录 SKIPPED 意图——绝不跨通道借用官方客户端。
+    T-305：先按消息来源+群解析动作出口。``ACTION_MODE=OFFICIAL``
+    只允许QQ官方 Adapter；OneBot 真实动作必须等T-307引入独立开关后才能执行。
     """
     settings = settings or get_settings()
     if settings.action_mode != "OFFICIAL":
         return []
-    existing = await _existing_message_intents(session, msg.message_id)
+    existing = await _existing_message_intents(session, msg)
     if existing:
         return existing
     if settings.emergency_stop:
@@ -102,24 +100,30 @@ async def orchestrate_actions(
     if not decision.recommended_actions:
         return []
 
-    provider = await resolve_action_provider(session, msg.external_group_id)
-    if provider == "qq_official":
-        client = (
-            official_client if official_client is not None else _default_official_client(settings)
-        )
-    else:
-        client = action_client
-    if client is None:
+    provider = await resolve_action_provider(session, msg.provider, msg.external_group_id)
+    if provider is None:
         return [
             await _record_skipped(
                 session,
                 msg,
                 "recall",
                 actor,
-                f"群 {msg.external_group_id} 动作出口 provider={provider} 未配置客户端",
-                provider=provider,
+                f"群 {msg.external_group_id} 未配置与消息来源 {msg.provider} 匹配的动作路由",
             )
         ]
+    if provider != "qq_official":
+        return [
+            await _record_skipped(
+                session,
+                msg,
+                "recall",
+                actor,
+                "OneBot真实动作尚未启用；必须完成T-307并使用独立开关",
+            )
+        ]
+    client = official_client if official_client is not None else _default_official_client(settings)
+    if client is None:
+        return [await _record_skipped(session, msg, "recall", actor, "QQ官方动作出口未配置客户端")]
 
     outcome = await record_violation(session, msg, decision)
     intents: list[ActionIntent] = []
@@ -146,6 +150,7 @@ def summarize_intents(intents: list[ActionIntent]) -> list[dict[str, Any]]:
             "status": intent.status,
             "provider": intent.provider,
             "message_id": intent.message_id,
+            "external_message_id": intent.external_message_id,
             "external_group_id": intent.external_group_id,
             "external_user_id": intent.external_user_id,
             "target_member_openid": intent.target_member_openid,
@@ -155,13 +160,27 @@ def summarize_intents(intents: list[ActionIntent]) -> list[dict[str, Any]]:
     ]
 
 
-async def _existing_message_intents(session: AsyncSession, message_id: str) -> list[ActionIntent]:
+async def _existing_message_intents(
+    session: AsyncSession, msg: StandardMessage
+) -> list[ActionIntent]:
+    neutral_identity = and_(
+        ActionIntent.provider == msg.provider,
+        ActionIntent.external_group_id == msg.external_group_id,
+        ActionIntent.external_message_id == msg.external_message_id,
+    )
+    # expand/migrate 兼容：T-305前的官方意图只有旧 message_id。
+    identity_filter = neutral_identity
+    if msg.provider == "qq_official":
+        legacy_official = and_(
+            ActionIntent.external_group_id == "",
+            ActionIntent.external_message_id == "",
+            ActionIntent.message_id == msg.message_id,
+        )
+        identity_filter = or_(neutral_identity, legacy_official)
     return list(
         (
             await session.execute(
-                select(ActionIntent)
-                .where(ActionIntent.message_id == message_id)
-                .order_by(ActionIntent.id.asc())
+                select(ActionIntent).where(identity_filter).order_by(ActionIntent.id.asc())
             )
         )
         .scalars()
@@ -175,10 +194,8 @@ async def _record_skipped(
     action: str,
     actor: str,
     reason: str,
-    *,
-    provider: str = "qq_official",
 ) -> ActionIntent:
-    key = _intent_key(msg.message_id, action, {"reason": reason})
+    key = _intent_key(msg, action, {"reason": reason})
     existing = await session.scalar(select(ActionIntent).where(ActionIntent.idempotency_key == key))
     if existing is not None:
         return existing
@@ -186,13 +203,13 @@ async def _record_skipped(
         idempotency_key=key,
         action=action,
         status="SKIPPED",
-        group_openid=msg.group_openid,
-        target_member_openid=msg.sender.member_openid,
+        group_openid=msg.external_group_id,
+        target_member_openid=msg.external_user_id,
         message_id=msg.message_id,
-        provider=provider,
+        provider=msg.provider,
         external_group_id=msg.external_group_id,
         external_user_id=msg.external_user_id,
-        external_message_id=msg.message_id,
+        external_message_id=msg.external_message_id,
         params_json=json.dumps({"reason": reason}, ensure_ascii=False),
         reason=reason,
         actor=actor,
@@ -212,8 +229,8 @@ async def _create_intent(
     provider: str = "qq_official",
 ) -> ActionIntent:
     if action not in ("recall", "mute", "warn"):
-        raise ValueError(f"非法官方动作: {action}")
-    key = _intent_key(msg.message_id, action, params)
+        raise ValueError(f"非法动作: {action}")
+    key = _intent_key(msg, action, params)
     existing = await session.scalar(select(ActionIntent).where(ActionIntent.idempotency_key == key))
     if existing is not None:
         return existing
@@ -221,13 +238,13 @@ async def _create_intent(
         idempotency_key=key,
         action=action,
         status="PENDING",
-        group_openid=msg.group_openid,
-        target_member_openid=str(params.get("member_openid") or ""),
+        group_openid=msg.external_group_id,
+        target_member_openid=str(params.get("external_user_id") or ""),
         message_id=msg.message_id,
         provider=provider,
         external_group_id=msg.external_group_id,
-        external_user_id=str(params.get("member_openid") or msg.external_user_id),
-        external_message_id=msg.message_id,
+        external_user_id=str(params.get("external_user_id") or msg.external_user_id),
+        external_message_id=msg.external_message_id,
         params_json=json.dumps(params, ensure_ascii=False, sort_keys=True),
         actor=actor,
     )
@@ -262,7 +279,11 @@ async def _execute_intent(
         elif intent.action == "warn":
             result = await client.warn(
                 intent.external_group_id or intent.group_openid,
-                str(params.get("reply_to_message_id") or intent.message_id),
+                str(
+                    params.get("reply_to_external_message_id")
+                    or intent.external_message_id
+                    or intent.message_id
+                ),
                 str(params.get("text") or ""),
                 actor=intent.actor,
             )
@@ -315,9 +336,15 @@ async def _log_action_result(
     await session.commit()
 
 
-def _intent_key(message_id: str, action: str, params: dict[str, Any]) -> str:
+def _intent_key(msg: StandardMessage, action: str, params: dict[str, Any]) -> str:
     raw = json.dumps(
-        {"message_id": message_id, "action": action, "params": params},
+        {
+            "provider": msg.provider,
+            "external_group_id": msg.external_group_id,
+            "external_message_id": msg.external_message_id,
+            "action": action,
+            "params": params,
+        },
         ensure_ascii=False,
         sort_keys=True,
     )

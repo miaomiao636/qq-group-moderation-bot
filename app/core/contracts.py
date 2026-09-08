@@ -55,7 +55,7 @@ ActionName = Literal["recall", "mute", "unmute", "warn"]
 class Sender(BaseModel):
     """消息发送者。``member_openid`` 为旧官方命名镜像，见模块 docstring。"""
 
-    member_openid: str
+    member_openid: str = ""
     union_openid: str = ""
     username: str = ""
     role: SenderRole = "member"
@@ -86,6 +86,18 @@ class ShareCardInfo(BaseModel):
     source_logo_url: str = ""
 
 
+class MessageSegment(BaseModel):
+    """供审核核心使用的通用消息段。
+
+    ``kind`` 只使用中立类型；附件通过当前消息
+    ``attachments`` 的下标引用，不保留 OneBot CQ 段或 QQ 官方原始字段。
+    """
+
+    kind: MessageKind
+    text: str = ""
+    attachment_index: int | None = Field(default=None, ge=0)
+
+
 class StandardMessage(BaseModel):
     """传输中立的统一消息契约。
 
@@ -100,9 +112,9 @@ class StandardMessage(BaseModel):
     测试无需改动即可继续工作。镜像字段不得被解释为跨通道身份等价。
     """
 
-    message_id: str = Field(min_length=1)
+    message_id: str = ""
     event_type: str = "GROUP_MESSAGE_CREATE"
-    group_openid: str = Field(min_length=1)  # 已弃用镜像：= external_group_id
+    group_openid: str = ""  # 已弃用镜像：= external_group_id
     group_id: str = ""  # 官方事件的不透明群串（D-012），非数字群号
     provider: Provider = "qq_official"
     external_group_id: str = ""
@@ -115,6 +127,7 @@ class StandardMessage(BaseModel):
     text: str = ""
     mentions: list[str] = Field(default_factory=list)
     face_count: int = 0
+    segments: list[MessageSegment] = Field(default_factory=list)
     attachments: list[Attachment] = Field(default_factory=list)
     share_card: ShareCardInfo | None = None
 
@@ -138,9 +151,15 @@ class StandardMessage(BaseModel):
 
     @model_validator(mode="after")
     def _fill_user_id_from_sender(self) -> StandardMessage:
-        """sender 以模型实例传入时，从其镜像字段补齐中立用户 ID。"""
+        """补齐兼容字段并拒绝缺失的权威中立身份。"""
         if not self.external_user_id:
             self.external_user_id = self.sender.member_openid
+        if not self.message_id or not self.external_message_id:
+            raise ValueError("message_id / external_message_id 不得为空")
+        if not self.external_group_id:
+            raise ValueError("external_group_id 不得为空")
+        if not self.external_user_id:
+            raise ValueError("external_user_id 不得为空")
         return self
 
     @property
@@ -174,6 +193,10 @@ class ActionResult(BaseModel):
         return self.err_code in (40062003, 40103004)
 
 
+class MessageParseError(ValueError):
+    """任何入站 Adapter 在原始事件无法转换为中立契约时抛出。"""
+
+
 @runtime_checkable
 class MessageSource(Protocol):
     """入站 Adapter seam：把传输层原始事件转换为中立消息。
@@ -185,7 +208,7 @@ class MessageSource(Protocol):
     provider: Provider
 
     def parse_group_message(self, payload: Mapping[str, Any], /) -> StandardMessage:
-        """把原始事件载荷解析为 ``StandardMessage``；契约错误必须抛出异常。"""
+        """把原始事件载荷解析为中立消息；契约错误抛``MessageParseError``。"""
 
 
 @runtime_checkable

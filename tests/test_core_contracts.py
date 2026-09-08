@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import ast
+from pathlib import Path
+
 from app.adapters.qq_official.actions import ActionResult as ActionResultFromAdapter
 from app.adapters.qq_official.actions import OfficialActionAdapter
 from app.adapters.qq_official.auth import TokenManager
@@ -9,6 +12,7 @@ from app.adapters.qq_official.contract import Sender, StandardMessage
 from app.adapters.qq_official.parser import QQOfficialMessageSource
 from app.core.contracts import (
     ActionResult,
+    MessageSegment,
     MessageSource,
     ModerationActionClient,
 )
@@ -113,3 +117,42 @@ def test_neutral_action_protocol_has_no_kick() -> None:
     """动作 seam 永不包含踢人。"""
     protocol_methods = {name for name in ModerationActionClient.__protocol_attrs__}
     assert protocol_methods == {"recall", "mute", "warn"}
+
+
+def test_neutral_message_has_transport_agnostic_segments() -> None:
+    msg = NeutralStandardMessage(
+        external_message_id="M_SEG",
+        provider="onebot",
+        external_group_id="300000001",
+        external_user_id="200000001",
+        sender=Sender(),
+        segments=[
+            MessageSegment(kind="text", text="hello"),
+            MessageSegment(kind="image", attachment_index=0),
+        ],
+    )
+    assert msg.message_id == "M_SEG"
+    assert [segment.kind for segment in msg.segments] == ["text", "image"]
+
+
+def test_core_business_modules_do_not_import_provider_adapters() -> None:
+    root = Path(__file__).resolve().parents[1]
+    files = [
+        *sorted((root / "app" / "core").glob("*.py")),
+        *sorted((root / "app" / "moderation").glob("*.py")),
+        root / "app" / "cases" / "service.py",
+        root / "app" / "actions" / "orchestrator.py",
+        root / "app" / "runtime" / "pipeline.py",
+    ]
+    violations: list[str] = []
+    for path in files:
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        for node in ast.walk(tree):
+            module = ""
+            if isinstance(node, ast.ImportFrom):
+                module = node.module or ""
+            elif isinstance(node, ast.Import):
+                module = ",".join(alias.name for alias in node.names)
+            if "app.adapters." in module:
+                violations.append(f"{path.relative_to(root)}:{node.lineno}")
+    assert violations == []

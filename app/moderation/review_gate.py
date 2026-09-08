@@ -13,7 +13,7 @@ from __future__ import annotations
 import time
 from dataclasses import dataclass
 
-from app.adapters.qq_official.contract import StandardMessage
+from app.core.contracts import StandardMessage
 from app.moderation.decision import ModerationDecision
 
 AUTO_PUNISH_THRESHOLD = 0.90

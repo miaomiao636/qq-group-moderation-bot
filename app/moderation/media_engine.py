@@ -13,7 +13,7 @@ from __future__ import annotations
 import subprocess
 from pathlib import Path
 
-from app.adapters.qq_official.contract import Attachment
+from app.core.contracts import Attachment
 from app.moderation.decision import ModerationDecision, RuleHit
 from app.moderation.image_engine import ImageModerationEngine
 from app.moderation.rules import TextRuleEngine

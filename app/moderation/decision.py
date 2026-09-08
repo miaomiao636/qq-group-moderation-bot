@@ -35,8 +35,8 @@ class ModerationDecision(BaseModel):
     """
 
     message_id: str
-    group_openid: str
-    sender_member_openid: str
+    group_openid: str = ""
+    sender_member_openid: str = ""
     provider: str = "qq_official"
     external_group_id: str = ""
     external_user_id: str = ""

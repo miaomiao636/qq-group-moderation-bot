@@ -143,6 +143,40 @@ async def test_revoked_violation_excluded_from_window() -> None:
 
 
 @pytest.mark.asyncio
+async def test_strikes_are_isolated_by_transport_provider() -> None:
+    """相同的外部群/成员字符串在不同通道中不是同一身份。"""
+    from app.db import SessionLocal
+
+    group, member = _ids()
+    official = make_message("SAME_MSG", group, member)
+    onebot = StandardMessage(
+        message_id="SAME_MSG",
+        provider="onebot",
+        external_group_id=group,
+        external_user_id=member,
+        sender=Sender(member_openid=member),
+        text="测试违规内容",
+    )
+    onebot_decision = ModerationDecision(
+        message_id=onebot.message_id,
+        provider="onebot",
+        external_group_id=group,
+        external_user_id=member,
+        verdict="violation_high",
+        category="ad",
+        confidence=0.95,
+    )
+    async with SessionLocal() as session:
+        first_official = await record_violation(
+            session, official, high_decision("SAME_MSG", group, member)
+        )
+        first_onebot = await record_violation(session, onebot, onebot_decision)
+
+    assert first_official.strike_no == 1
+    assert first_onebot.strike_no == 1
+
+
+@pytest.mark.asyncio
 async def test_revoke_all_case_violations_closes_case() -> None:
     from app.cases.models import Case
     from app.db import SessionLocal
