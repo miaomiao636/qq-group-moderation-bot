@@ -36,15 +36,11 @@ async def _group_counts(
 async def build_stats(session: AsyncSession) -> dict[str, Any]:
     """聚合后台大盘所需的全部指标。"""
     total_shadow = await _count(session, select(func.count()).select_from(ShadowDecision))
-    total_violations = await _count(
-        session, select(func.count()).select_from(ViolationRecord)
-    )
+    total_violations = await _count(session, select(func.count()).select_from(ViolationRecord))
     pending_cases = await _count(
         session, select(func.count()).select_from(Case).where(Case.status == "PENDING_REVIEW")
     )
-    total_feedback = await _count(
-        session, select(func.count()).select_from(FeedbackRecord)
-    )
+    total_feedback = await _count(session, select(func.count()).select_from(FeedbackRecord))
     total_ai = await _count(session, select(func.count()).select_from(AIUsageLog))
     ai_failed = await _count(
         session, select(func.count()).select_from(AIUsageLog).where(AIUsageLog.ok.is_(False))
@@ -129,9 +125,7 @@ def RuleCandidate_status() -> Any:
 
 async def _agreement(session: AsyncSession) -> dict[str, Any]:
     """以人工反馈为临时真值，计算影子判定与其一致率（仅统计能匹配到影子记录的消息）。"""
-    feedbacks = (
-        (await session.execute(select(FeedbackRecord))).scalars().all()
-    )
+    feedbacks = (await session.execute(select(FeedbackRecord))).scalars().all()
     if not feedbacks:
         return {"total": 0, "agree": 0, "rate": 0.0}
     message_ids = {f.message_id for f in feedbacks}
