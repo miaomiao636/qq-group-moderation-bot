@@ -20,7 +20,9 @@ class ShadowDecision(Base):
     __tablename__ = "shadow_decisions"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    # 内部事件键：官方通道等于外部消息ID；OneBot为 onebot:self_id:message_id。
     message_id: Mapped[str] = mapped_column(String(128), unique=True)
+    external_message_id: Mapped[str] = mapped_column(String(128), default="", server_default="")
     group_openid: Mapped[str] = mapped_column(String(64), index=True)  # 旧镜像，T-305后评估移除
     member_openid: Mapped[str] = mapped_column(String(64), index=True)  # 旧镜像
     # T-305 传输中立身份（与镜像字段双写，权威读取口径）

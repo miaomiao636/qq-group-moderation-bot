@@ -24,7 +24,7 @@ from collections.abc import Mapping
 from datetime import UTC, datetime
 from typing import Any
 
-from app.adapters.qq_official.contract import (
+from app.core.contracts import (
     Attachment,
     MessageKind,
     MessageParseError,
@@ -139,16 +139,28 @@ class OneBotMessageSource:
         if not isinstance(segments_raw, list):
             raise MessageParseError("message 字段必须是段数组或字符串")
 
-        # 下载器（运行时组合根）按附件产生顺序注入的本地安全文件名列表；
-        # 直接调用解析器（fixture/测试）时不存在该键，使用段内原始文件名。
-        downloaded: list[Any] = payload.get("_downloaded") or []
+        # 下载器（运行时组合根）按附件产生顺序注入的本地安全文件名列表。
+        # 该键一旦存在，空值就明确表示下载失败，不得回退到不可信原始路径。
+        downloaded_raw = payload.get("_downloaded")
+        if isinstance(downloaded_raw, list):
+            has_download_results = True
+            downloaded: list[Any] = downloaded_raw
+        else:
+            has_download_results = False
+            downloaded = []
         att_seq = 0
 
         def _local_name(data: Mapping[str, Any]) -> str:
-            """优先使用下载器回填的本地安全文件名，否则用段内原始文件名。"""
-            if att_seq < len(downloaded) and downloaded[att_seq]:
-                return str(downloaded[att_seq])
-            return str(data.get("file") or data.get("name") or "")[:200]
+            """只保留单层文件名；下载失败绝不回退到供应商原始路径。"""
+            if has_download_results:
+                candidate = str(downloaded[att_seq]) if att_seq < len(downloaded) else ""
+            else:
+                candidate = str(data.get("file") or data.get("name") or "")[:200]
+            if not candidate or candidate in (".", ".."):
+                return ""
+            if "/" in candidate or "\\" in candidate:
+                return ""
+            return candidate[:200]
 
         texts: list[str] = []
         attachments: list[Attachment] = []
@@ -200,9 +212,12 @@ class OneBotMessageSource:
                 neutral_segments.append(MessageSegment(kind=kind, attachment_index=idx))
             elif seg_type == "mface":
                 # 表情商城/GIF表情：走图片附件通道（通常为 GIF）
+                local_name = _local_name(data)
+                if not local_name and not has_download_results:
+                    local_name = str(data.get("emoji_id") or "mface")[:200]
                 att = Attachment(
                     content_type="image/gif",
-                    filename=_local_name(data) or str(data.get("emoji_id") or "mface")[:200],
+                    filename=local_name,
                     url=str(data.get("url") or "")[:800],
                 )
                 att_seq += 1

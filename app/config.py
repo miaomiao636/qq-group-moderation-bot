@@ -16,6 +16,13 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent
 # 合法日志级别
 _VALID_LOG_LEVELS = {"DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"}
 
+_TRUSTED_BIND_NETWORKS = (
+    ipaddress.ip_network("10.0.0.0/8"),
+    ipaddress.ip_network("172.16.0.0/12"),
+    ipaddress.ip_network("192.168.0.0/16"),
+    ipaddress.ip_network("fc00::/7"),
+)
+
 
 def _normalize_sqlite_url(url: str) -> str:
     """把相对 SQLite 路径规范化为基于项目根目录的绝对路径。
@@ -197,14 +204,22 @@ class Settings(BaseSettings):
 
 
 def _is_loopback_or_private(host: str) -> bool:
-    """判断监听地址是否为本机回环或私有网段（localhost 视为本机）。"""
+    """判断监听地址是否为回环或明确允许的私有网段。
+
+    ``ipaddress.is_private`` 也会把 ``0.0.0.0`` / ``::`` 等不可路由地址
+    归为 private；这些通配监听地址会暴露所有网卡，不能作为安全边界。
+    """
     if host.lower() == "localhost":
         return True
     try:
         addr = ipaddress.ip_address(host)
     except ValueError:
         return False
-    return addr.is_loopback or addr.is_private
+    if addr.is_unspecified or addr.is_multicast:
+        return False
+    return addr.is_loopback or any(
+        addr.version == network.version and addr in network for network in _TRUSTED_BIND_NETWORKS
+    )
 
 
 @lru_cache

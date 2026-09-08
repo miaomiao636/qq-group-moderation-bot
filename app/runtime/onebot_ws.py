@@ -2,7 +2,7 @@
 
 安全边界：
 - 端点随管理后台同进程监听 ``WEB_HOST``（配置校验强制本机回环或可信内网）；
-- 连接必须携带访问令牌（``?access_token=`` 或 ``Authorization: Bearer``），
+- 连接必须在 ``Authorization: Bearer`` 请求头携带访问令牌，
   常量时间比较，失败一律拒绝（fail-closed）；
 - 影子模式硬约束：本模块**不实现也绝不调用**任何 OneBot 管理动作
   （撤回/禁言/警告/踢人属 T-307，默认影子关闭）；所有判定只落库。
@@ -23,7 +23,7 @@ from datetime import UTC, datetime
 from typing import Any
 
 import httpx
-from fastapi import APIRouter, WebSocket, WebSocketDisconnect
+from fastapi import APIRouter, HTTPException, Request, WebSocket, WebSocketDisconnect
 
 from app.config import get_settings
 from app.db import SessionLocal
@@ -98,9 +98,14 @@ class OneBotRuntimeStatus:
         if self_id:
             self.self_id = self_id
 
-    def mark_heartbeat(self) -> None:
+    def mark_heartbeat(self, status: Any = None) -> None:
         self.last_heartbeat_at = _utcnow_iso()
         self._last_heartbeat_mono = time.monotonic()
+        if isinstance(status, dict):
+            if status.get("online") is False or status.get("good") is False:
+                self.login_state = "offline"
+            elif status.get("online") is True:
+                self.login_state = "online"
 
     def see_self_id(self, self_id: str) -> None:
         if self_id and not self.self_id:
@@ -156,15 +161,14 @@ class OneBotRuntimeStatus:
             return "degraded"
         return "ready"
 
-    def snapshot(self) -> dict[str, object]:
+    def snapshot(self, *, include_sensitive: bool = True) -> dict[str, object]:
         heartbeat_age: float | None = None
         if self._last_heartbeat_mono is not None:
             heartbeat_age = round(time.monotonic() - self._last_heartbeat_mono, 1)
-        return {
+        snapshot: dict[str, object] = {
             "state": self.state(),
             "connected": self.connected,
             "login_state": self.login_state,
-            "self_id": self.self_id,
             "connect_count": self.connect_count,
             "disconnect_count": self.disconnect_count,
             "last_connect_at": self.last_connect_at,
@@ -173,7 +177,6 @@ class OneBotRuntimeStatus:
             "heartbeat_age_seconds": heartbeat_age,
             "heartbeat_timeout_seconds": self._heartbeat_timeout,
             "last_event_at": self.last_event_at,
-            "group_last_event": dict(self.group_last_event),
             "queue_backlog": self.backlog(),
             "queue_max": self._queue_max,
             "processed_total": self.processed_total,
@@ -181,8 +184,16 @@ class OneBotRuntimeStatus:
             "failed_total": self.failed_total,
             "invalid_total": self.invalid_total,
             "ignored_total": self.ignored_total,
-            "last_error": self.last_error,
         }
+        if include_sensitive:
+            snapshot.update(
+                {
+                    "self_id": self.self_id,
+                    "group_last_event": dict(self.group_last_event),
+                    "last_error": self.last_error,
+                }
+            )
+        return snapshot
 
 
 # 进程级单例：/healthz 与 /onebot/status 共享同一事实来源
@@ -191,6 +202,13 @@ onebot_status = OneBotRuntimeStatus()
 
 def _bearer_token(websocket: WebSocket) -> str:
     auth = websocket.headers.get("authorization") or ""
+    if auth.lower().startswith("bearer "):
+        return auth[7:].strip()
+    return ""
+
+
+def _request_bearer_token(request: Request) -> str:
+    auth = request.headers.get("authorization") or ""
     if auth.lower().startswith("bearer "):
         return auth[7:].strip()
     return ""
@@ -278,14 +296,22 @@ def build_onebot_router(ws_path: str) -> APIRouter:
     router = APIRouter()
 
     @router.get("/onebot/status")
-    async def onebot_status_endpoint() -> dict[str, object]:
+    async def onebot_status_endpoint(request: Request) -> dict[str, object]:
         """NapCat 就绪状态证据（连接/登录/心跳/积压/每群最后事件）。"""
+        supplied = _request_bearer_token(request)
+        expected = settings.onebot_access_token
+        if not supplied or not expected or not secrets.compare_digest(supplied, expected):
+            raise HTTPException(
+                status_code=401,
+                detail="OneBot status authentication required",
+                headers={"WWW-Authenticate": "Bearer"},
+            )
         return onebot_status.snapshot()
 
     @router.websocket(ws_path)
     async def onebot_ws(websocket: WebSocket) -> None:
         settings = get_settings()
-        supplied = websocket.query_params.get("access_token") or _bearer_token(websocket)
+        supplied = _bearer_token(websocket)
         expected = settings.onebot_access_token
         if (
             not settings.onebot_ws_enabled
@@ -326,12 +352,13 @@ def build_onebot_router(ws_path: str) -> APIRouter:
                     if meta_type == "lifecycle" and event.get("sub_type") == "connect":
                         onebot_status.mark_online(str(event.get("self_id") or ""))
                     elif meta_type == "heartbeat":
-                        onebot_status.mark_heartbeat()
+                        onebot_status.mark_heartbeat(event.get("status"))
                     continue
                 if post == "message" and event.get("message_type") == "group":
-                    # 结构校验：三要素齐全才能去重与判定；缺失直接拒绝并计数
+                    # 结构校验：账号、消息、群、成员四要素齐全才能去重与判定
                     if not all(
-                        str(event.get(k) or "") for k in ("message_id", "group_id", "user_id")
+                        str(event.get(k) or "")
+                        for k in ("self_id", "message_id", "group_id", "user_id")
                     ):
                         onebot_status.count_invalid()
                         continue

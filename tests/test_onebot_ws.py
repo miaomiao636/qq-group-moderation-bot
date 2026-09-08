@@ -40,6 +40,16 @@ def _run(coro: Any) -> Any:
     return asyncio.run(coro)
 
 
+def _auth_headers() -> dict[str, str]:
+    return {"Authorization": f"Bearer {TOKEN}"}
+
+
+def _status(client: TestClient) -> dict[str, Any]:
+    response = client.get("/onebot/status", headers=_auth_headers())
+    assert response.status_code == 200
+    return response.json()
+
+
 def _lifecycle(self_id: int = 10000001) -> str:
     return json.dumps(
         {
@@ -52,14 +62,14 @@ def _lifecycle(self_id: int = 10000001) -> str:
     )
 
 
-def _heartbeat(self_id: int = 10000001) -> str:
+def _heartbeat(self_id: int = 10000001, *, online: bool = True) -> str:
     return json.dumps(
         {
             "time": 1789000001,
             "self_id": self_id,
             "post_type": "meta_event",
             "meta_event_type": "heartbeat",
-            "status": {"online": True},
+            "status": {"online": online},
         }
     )
 
@@ -89,16 +99,32 @@ def test_wrong_token_rejected() -> None:
         pass
 
 
+def test_query_parameter_token_is_rejected_to_avoid_url_secret_leaks() -> None:
+    with (
+        TestClient(app) as client,
+        _expect_disconnect(),
+        client.websocket_connect(f"{WS_PATH}?access_token={TOKEN}"),
+    ):
+        pass
+
+
+def test_status_endpoint_requires_bearer_token() -> None:
+    with TestClient(app) as client:
+        assert client.get("/onebot/status").status_code == 401
+        response = client.get("/onebot/status", headers=_auth_headers())
+        assert response.status_code == 200
+
+
 # ---------- 就绪状态与健康检查 ----------
 
 
 def test_status_ready_when_connected_and_heartbeat_fresh() -> None:
     with TestClient(app) as client:
         assert client.get("/healthz").json()["status"] == "ok"
-        with client.websocket_connect(f"{WS_PATH}?access_token={TOKEN}") as ws:
+        with client.websocket_connect(WS_PATH, headers=_auth_headers()) as ws:
             ws.send_text(_lifecycle())
             ws.send_text(_heartbeat())
-            snap = client.get("/onebot/status").json()
+            snap = _status(client)
             assert snap["connected"] is True
             assert snap["login_state"] == "online"
             assert snap["self_id"] == "10000001"
@@ -108,13 +134,40 @@ def test_status_ready_when_connected_and_heartbeat_fresh() -> None:
             assert health["onebot"]["state"] == "ready"
 
 
+def test_healthz_does_not_expose_qq_or_group_identifiers() -> None:
+    with (
+        TestClient(app) as client,
+        client.websocket_connect(WS_PATH, headers=_auth_headers()) as ws,
+    ):
+        ws.send_text(_lifecycle())
+        ws.send_text(_heartbeat())
+        event = _load_event("group_message_text.json")
+        ws.send_text(json.dumps(event))
+        assert _wait_for(lambda: client.get("/healthz").json()["onebot"]["last_event_at"])
+        onebot = client.get("/healthz").json()["onebot"]
+        assert "self_id" not in onebot
+        assert "group_last_event" not in onebot
+        assert "last_error" not in onebot
+
+
+def test_offline_heartbeat_forces_degraded_state() -> None:
+    with (
+        TestClient(app) as client,
+        client.websocket_connect(WS_PATH, headers=_auth_headers()) as ws,
+    ):
+        ws.send_text(_lifecycle())
+        ws.send_text(_heartbeat(online=False))
+        assert _wait_for(lambda: _status(client)["login_state"] == "offline")
+        assert _status(client)["state"] == "degraded"
+
+
 def test_status_degraded_after_disconnect() -> None:
     with TestClient(app) as client:
-        with client.websocket_connect(f"{WS_PATH}?access_token={TOKEN}") as ws:
+        with client.websocket_connect(WS_PATH, headers=_auth_headers()) as ws:
             ws.send_text(_lifecycle())
             ws.send_text(_heartbeat())
-        assert _wait_for(lambda: client.get("/onebot/status").json()["connected"] is False)
-        snap = client.get("/onebot/status").json()
+        assert _wait_for(lambda: _status(client)["connected"] is False)
+        snap = _status(client)
         assert snap["state"] == "degraded"
         assert snap["login_state"] == "offline"
         assert snap["disconnect_count"] >= 1
@@ -138,9 +191,10 @@ def test_text_message_shadow_processed_with_dedup_and_zero_actions() -> None:
         async with SessionLocal() as session:
             decision = (
                 await session.execute(
-                    select(ShadowDecision).where(ShadowDecision.message_id == message_id)
+                    select(ShadowDecision).where(ShadowDecision.message_id == dedup_key)
                 )
             ).scalar_one()
+            assert decision.external_message_id == message_id
             assert decision.provider == "onebot"
             assert decision.external_group_id == "300000001"
             assert decision.external_user_id == "200000001"
@@ -163,7 +217,7 @@ def test_text_message_shadow_processed_with_dedup_and_zero_actions() -> None:
             assert intents == 0, "影子模式：OneBot事件不得产生任何动作意图"
 
     with TestClient(app) as client:
-        with client.websocket_connect(f"{WS_PATH}?access_token={TOKEN}") as ws:
+        with client.websocket_connect(WS_PATH, headers=_auth_headers()) as ws:
             ws.send_text(_lifecycle(self_id))
             ws.send_text(_heartbeat(self_id))
             event = _load_event("group_message_text.json")
@@ -178,7 +232,7 @@ def test_text_message_shadow_processed_with_dedup_and_zero_actions() -> None:
                             await session.execute(
                                 select(func.count())
                                 .select_from(ShadowDecision)
-                                .where(ShadowDecision.message_id == message_id)
+                                .where(ShadowDecision.external_message_id == message_id)
                             )
                         ).scalar_one()
                     )
@@ -210,7 +264,7 @@ def test_duplicate_and_reconnect_not_reprocessed() -> None:
                         await session.execute(
                             select(func.count())
                             .select_from(ShadowDecision)
-                            .where(ShadowDecision.message_id == message_id)
+                            .where(ShadowDecision.external_message_id == message_id)
                         )
                     ).scalar_one()
                 )
@@ -218,7 +272,7 @@ def test_duplicate_and_reconnect_not_reprocessed() -> None:
         return _run(_count())
 
     with TestClient(app) as client:
-        with client.websocket_connect(f"{WS_PATH}?access_token={TOKEN}") as ws:
+        with client.websocket_connect(WS_PATH, headers=_auth_headers()) as ws:
             ws.send_text(_lifecycle(self_id))
             ws.send_text(_heartbeat(self_id))
             ws.send_text(frame)
@@ -226,7 +280,7 @@ def test_duplicate_and_reconnect_not_reprocessed() -> None:
         assert _wait_for(lambda: _decision_count() == 1)
         # 模拟进程重启（内存去重缓存清空）后断线重连重放
         reset_memory_cache()
-        with client.websocket_connect(f"{WS_PATH}?access_token={TOKEN}") as ws:
+        with client.websocket_connect(WS_PATH, headers=_auth_headers()) as ws:
             ws.send_text(_lifecycle(self_id))
             ws.send_text(_heartbeat(self_id))
             ws.send_text(frame)
@@ -237,13 +291,13 @@ def test_duplicate_and_reconnect_not_reprocessed() -> None:
 def test_invalid_json_keeps_connection_alive() -> None:
     with (
         TestClient(app) as client,
-        client.websocket_connect(f"{WS_PATH}?access_token={TOKEN}") as ws,
+        client.websocket_connect(WS_PATH, headers=_auth_headers()) as ws,
     ):
-        before = client.get("/onebot/status").json()["invalid_total"]
+        before = _status(client)["invalid_total"]
         ws.send_text("not-a-json-frame")
         ws.send_text(_heartbeat())
-        assert _wait_for(lambda: client.get("/onebot/status").json()["invalid_total"] >= before + 1)
-        snap = client.get("/onebot/status").json()
+        assert _wait_for(lambda: _status(client)["invalid_total"] >= before + 1)
+        snap = _status(client)
         assert snap["connected"] is True, "单条非法帧不应断开连接"
 
 
@@ -254,13 +308,13 @@ def test_invalid_structure_counted_not_processed() -> None:
 
     event = _load_event("event_invalid_missing_group.json")
     with TestClient(app) as client:
-        before = client.get("/onebot/status").json()["invalid_total"]
-        with client.websocket_connect(f"{WS_PATH}?access_token={TOKEN}") as ws:
+        before = _status(client)["invalid_total"]
+        with client.websocket_connect(WS_PATH, headers=_auth_headers()) as ws:
             ws.send_text(_lifecycle())
             ws.send_text(_heartbeat())
             ws.send_text(json.dumps(event))
             time.sleep(0.5)
-        assert client.get("/onebot/status").json()["invalid_total"] >= before + 1
+        assert _status(client)["invalid_total"] >= before + 1
 
     async def _count() -> int:
         async with SessionLocal() as session:
@@ -269,12 +323,24 @@ def test_invalid_structure_counted_not_processed() -> None:
                     await session.execute(
                         select(func.count())
                         .select_from(ShadowDecision)
-                        .where(ShadowDecision.message_id == "910000011")
+                        .where(ShadowDecision.external_message_id == "910000011")
                     )
                 ).scalar_one()
             )
 
     assert _run(_count()) == 0, "结构非法事件不得产生判定记录"
+
+
+def test_group_message_without_self_id_is_invalid() -> None:
+    event = _load_event("group_message_text.json")
+    event.pop("self_id", None)
+    with TestClient(app) as client:
+        before = _status(client)["invalid_total"]
+        with client.websocket_connect(WS_PATH, headers=_auth_headers()) as ws:
+            ws.send_text(_lifecycle())
+            ws.send_text(_heartbeat())
+            ws.send_text(json.dumps(event))
+            assert _wait_for(lambda: _status(client)["invalid_total"] >= before + 1)
 
 
 # ---------- 媒体下载失败与未知内容降级 ----------
@@ -292,7 +358,7 @@ def test_media_download_failure_degrades_to_record_only() -> None:
     event["message"][0]["data"]["url"] = "http://127.0.0.1:9/unreachable.jpg"
 
     with TestClient(app) as client:
-        with client.websocket_connect(f"{WS_PATH}?access_token={TOKEN}") as ws:
+        with client.websocket_connect(WS_PATH, headers=_auth_headers()) as ws:
             ws.send_text(_lifecycle())
             ws.send_text(_heartbeat())
             ws.send_text(json.dumps(event))
@@ -304,7 +370,7 @@ def test_media_download_failure_degrades_to_record_only() -> None:
                         (
                             await session.execute(
                                 select(ShadowDecision).where(
-                                    ShadowDecision.message_id == message_id
+                                    ShadowDecision.external_message_id == message_id
                                 )
                             )
                         )
@@ -332,7 +398,7 @@ def test_file_without_url_and_unknown_segment_degrade() -> None:
         ("group_message_forward.json", "910000008"),
     ]
     with TestClient(app) as client:
-        with client.websocket_connect(f"{WS_PATH}?access_token={TOKEN}") as ws:
+        with client.websocket_connect(WS_PATH, headers=_auth_headers()) as ws:
             ws.send_text(_lifecycle())
             ws.send_text(_heartbeat())
             for name, mid in cases:
@@ -346,7 +412,9 @@ def test_file_without_url_and_unknown_segment_degrade() -> None:
                     return (
                         (
                             await session.execute(
-                                select(ShadowDecision).where(ShadowDecision.message_id == mid)
+                                select(ShadowDecision).where(
+                                    ShadowDecision.external_message_id == mid
+                                )
                             )
                         )
                         .scalars()
@@ -398,6 +466,19 @@ def test_enabled_with_public_host_rejected() -> None:
             onebot_ws_enabled=True,
             onebot_access_token="tok",
             web_host="8.8.8.8",
+            _env_file=None,
+        )
+
+
+@pytest.mark.parametrize("wildcard", ["0.0.0.0", "::"])
+def test_enabled_with_wildcard_host_rejected(wildcard: str) -> None:
+    from app.config import Settings
+
+    with pytest.raises(ValueError, match="本机回环或可信内网"):
+        Settings(
+            onebot_ws_enabled=True,
+            onebot_access_token="tok",
+            web_host=wildcard,
             _env_file=None,
         )
 

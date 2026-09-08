@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import logging
+from collections.abc import Awaitable, Callable
 from pathlib import Path
 from typing import Any
 
@@ -33,6 +34,8 @@ from app.runtime.models import ShadowDecision
 
 MEDIA_DIR = Path(__file__).resolve().parent.parent.parent / "data" / "media"
 logger = logging.getLogger(__name__)
+
+PayloadPreprocessor = Callable[[dict[str, Any]], Awaitable[None]]
 
 
 def _best_effort_identity(payload: dict[str, Any]) -> tuple[str, str, str]:
@@ -84,6 +87,17 @@ def _is_file(content_type: str) -> bool:
     )
 
 
+def _safe_media_path(filename: str) -> Path | None:
+    """把附件名约束在 ``MEDIA_DIR`` 顶层，拒绝绝对路径、穿越和逃逸符号链接。"""
+    if not filename or filename in (".", "..") or "/" in filename or "\\" in filename:
+        return None
+    root = MEDIA_DIR.resolve()
+    candidate = (root / filename).resolve()
+    if candidate.parent != root:
+        return None
+    return candidate
+
+
 async def run_pipeline(
     payload: dict[str, Any],
     session: AsyncSession,
@@ -94,6 +108,7 @@ async def run_pipeline(
     official_action_client: OfficialActionClient | None = None,
     message_source: MessageSource | None = None,
     dedup_key: str | None = None,
+    prepare_payload: PayloadPreprocessor | None = None,
 ) -> ShadowDecision | None:
     """处理一条群消息事件载荷。
 
@@ -123,13 +138,18 @@ async def run_pipeline(
     provider = str(message_source.provider)
 
     try:
+        # 下载等有副作用的准备工作必须在持久化去重认领之后执行，避免重放
+        # 事件重复下载同一媒体。
+        if prepare_payload is not None:
+            await prepare_payload(payload)
         msg: StandardMessage = message_source.parse_group_message(payload)
     except MessageParseError as exc:
         # 永久契约解析失败只落一条 record_only，重复投递不再自动重试。
         fallback_group, fallback_user, fallback_name = _best_effort_identity(payload)
         record = await upsert_shadow_decision(
             session,
-            message_id=message_id,
+            message_id=claim_key,
+            external_message_id=message_id,
             group_openid=fallback_group,
             member_openid=fallback_user,
             sender_name=fallback_name[:64],
@@ -149,6 +169,11 @@ async def run_pipeline(
             error_kind="permanent",
         )
         return record
+    except Exception as exc:  # noqa: BLE001 - 准备阶段失败必须可重试
+        logger.exception("pipeline preparation failed for %s", message_id)
+        await session.rollback()
+        await mark_failed(session, claim_key, claim.token, f"{type(exc).__name__}: {exc}")
+        return None
 
     try:
         rule_version_ids: tuple[int, ...] = ()
@@ -178,7 +203,7 @@ async def run_pipeline(
             media_decisions: list[ModerationDecision] = []
             media_missing = False
             for att in msg.attachments:
-                local = MEDIA_DIR / att.filename if att.filename else None
+                local = _safe_media_path(att.filename)
                 if not local or not local.exists():
                     media_missing = True
                     continue
@@ -271,6 +296,7 @@ async def run_pipeline(
             rule_version_ids=rule_version_ids,
         )
         detail = {
+            "external_message_id": msg.external_message_id,
             "rule_hits": [h.model_dump() for h in decision.rule_hits],
             "recommended_actions": list(decision.recommended_actions),
             "is_protected_sender": decision.is_protected_sender,
@@ -287,7 +313,8 @@ async def run_pipeline(
             ]
         record = await upsert_shadow_decision(
             session,
-            message_id=msg.message_id,
+            message_id=claim_key,
+            external_message_id=msg.external_message_id,
             group_openid=msg.external_group_id,
             member_openid=msg.external_user_id,
             provider=msg.provider,
@@ -361,7 +388,7 @@ def _media_decision_from(
 
 
 async def upsert_shadow_decision(session: AsyncSession, **values: Any) -> ShadowDecision:
-    """按 message_id 幂等写入影子判定记录。"""
+    """按内部事件键 ``message_id`` 幂等写入影子判定记录。"""
     record = await session.scalar(
         select(ShadowDecision).where(ShadowDecision.message_id == values["message_id"])
     )

@@ -48,7 +48,7 @@ def create_app() -> FastAPI:
         if settings.onebot_ws_enabled:
             from app.runtime.onebot_ws import onebot_status
 
-            payload["onebot"] = onebot_status.snapshot()
+            payload["onebot"] = onebot_status.snapshot(include_sensitive=False)
         return payload
 
     # 管理后台（T-301/T-302）：服务端页面，强制登录；仅绑定本机/可信内网

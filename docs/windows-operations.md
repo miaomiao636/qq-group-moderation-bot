@@ -38,6 +38,8 @@
 
 在Windows隔离测试群使用专用QQ和NapCat/OneBot，验证文字及各类媒体事件、数字群/成员/消息ID、角色、外部事件校验、去重、媒体下载、断线重连和就绪状态。此阶段强制影子模式，所有OneBot管理动作调用数必须为0。
 
+NapCat反向WS地址只填写 `ws://<WEB_HOST>:<WEB_PORT>/onebot/ws`，令牌通过NapCat的Token配置发送为 `Authorization: Bearer` 请求头，不得拼入URL。首次连接必须验证NapCat当前版本确实发送该请求头；若不支持则记录为版本兼容阻塞，不得退回查询参数泄露令牌。详细状态取证请求 `/onebot/status` 时同样携带Bearer；`/healthz`只用于脱敏聚合监控。
+
 退出标准：至少连续影子运行24小时；主要消息类型可稳定转换；重复事件不重复处理；NapCat、QQ会话或OneBot失效能被检测并告警。
 
 ### W2 核心影子端到端

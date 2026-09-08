@@ -131,9 +131,30 @@ def test_string_cq_form_degrades_to_human_review() -> None:
 
 def test_downloaded_files_survive_empty_list() -> None:
     payload = _load_event("group_message_image.json")
-    payload["_downloaded"] = [""]  # 下载失败：保持原始文件名，filename 由流水线判空
+    payload["_downloaded"] = [""]  # 下载失败：不得回退到不可信的原始文件名
     msg = OneBotMessageSource().parse_group_message(payload)
-    assert msg.attachments[0].filename == "onebot_image.fixture.jpg"
+    assert msg.attachments[0].filename == ""
+
+
+@pytest.mark.parametrize(
+    "unsafe_name", ["/etc/hosts", "../../outside.jpg", r"C:\\Windows\\win.ini"]
+)
+def test_downloaded_filename_rejects_paths_outside_media_dir(unsafe_name: str) -> None:
+    payload = _load_event("group_message_image.json")
+    payload["_downloaded"] = [unsafe_name]
+    msg = OneBotMessageSource().parse_group_message(payload)
+    assert msg.attachments[0].filename == ""
+
+
+def test_failed_mface_download_does_not_reuse_emoji_id_as_local_file() -> None:
+    payload = _load_event("group_message_image.json")
+    payload["message"][0] = {
+        "type": "mface",
+        "data": {"emoji_id": "existing-managed-file.gif", "url": ""},
+    }
+    payload["_downloaded"] = [""]
+    msg = OneBotMessageSource().parse_group_message(payload)
+    assert msg.attachments[0].filename == ""
 
 
 @pytest.mark.parametrize(

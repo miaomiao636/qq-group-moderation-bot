@@ -21,7 +21,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.adapters.onebot.parser import OneBotMessageSource
 from app.adapters.qq_official.media import download_attachment
-from app.core.contracts import MessageParseError, MessageSource
+from app.core.contracts import MessageParseError, MessageSource, StandardMessage
 from app.moderation.image_engine import ImageModerationEngine
 from app.moderation.rules import TextRuleEngine
 from app.runtime.models import ShadowDecision
@@ -38,21 +38,25 @@ def build_onebot_message_source() -> MessageSource:
 def dedup_key_for(payload: dict[str, Any], message_id: str) -> str:
     """``provider + self_id + message_id`` 持久化去重键。
 
-    ``self_id`` 缺失时使用占位符——事件仍会被处理；正式部署中 NapCat
-    连接后首先推送 lifecycle connect 事件，`self_id` 由此可得。
+    缺失 ``self_id`` 或消息ID时拒绝处理，避免不同账号落入同一个
+    ``unknown`` 命名空间并互相覆盖。
     """
-    self_id = str(payload.get("self_id") or "unknown")
+    self_id = str(payload.get("self_id") or "")
+    if not self_id:
+        raise MessageParseError("事件缺少 self_id，无法建立跨账号去重键")
+    if not message_id:
+        raise MessageParseError("事件缺少 message_id，无法建立去重键")
     return f"onebot:{self_id}:{message_id}"
 
 
-def parse_onebot_event(payload: dict[str, Any]) -> Any:
+def parse_onebot_event(payload: dict[str, Any]) -> StandardMessage:
     """解析事件为中立消息；失败抛 ``MessageParseError``。"""
     return OneBotMessageSource().parse_group_message(payload)
 
 
 async def download_onebot_media(
     payload: dict[str, Any],
-    msg: Any,
+    msg: StandardMessage,
     dedup_key: str,
     client: httpx.AsyncClient,
 ) -> None:
@@ -91,21 +95,13 @@ async def process_onebot_event(
     image_engine: ImageModerationEngine,
     dl_client: httpx.AsyncClient,
 ) -> ShadowDecision | None:
-    """处理一条 OneBot 群消息事件：解析 → 下载媒体 → 影子流水线（绝不处罚）。"""
+    """处理一条 OneBot 群消息事件：去重认领 → 下载媒体 → 影子流水线。"""
     key = dedup_key_for(payload, str(payload.get("message_id") or ""))
-    try:
-        msg = parse_onebot_event(payload)
-    except MessageParseError:
-        # 契约失败走流水线兜底：record_only 人工记录，永不重试、绝不处罚
-        return await run_pipeline(
-            payload,
-            session,
-            message_source=OneBotMessageSource(),
-            dedup_key=key,
-            text_engine=text_engine,
-            image_engine=image_engine,
-        )
-    await download_onebot_media(payload, msg, key, dl_client)
+
+    async def _prepare(current_payload: dict[str, Any]) -> None:
+        msg = parse_onebot_event(current_payload)
+        await download_onebot_media(current_payload, msg, key, dl_client)
+
     return await run_pipeline(
         payload,
         session,
@@ -113,4 +109,5 @@ async def process_onebot_event(
         dedup_key=key,
         text_engine=text_engine,
         image_engine=image_engine,
+        prepare_payload=_prepare,
     )
