@@ -1,0 +1,22 @@
+{
+  "transport": "onebot",
+  "sample_note": "T-306 脱敏fixture：GIF表情图片（虚构ID，URL为占位）",
+  "event": {
+    "time": 1789000200,
+    "self_id": 10000001,
+    "post_type": "message",
+    "message_type": "group",
+    "sub_type": "normal",
+    "message_id": 910000003,
+    "user_id": 200000003,
+    "group_id": 300000001,
+    "anonymous": null,
+    "message": [
+      { "type": "face", "data": { "id": "21" } },
+      { "type": "mface", "data": { "emoji_id": "EMOJI_ID_SANITIZED", "url": "https://invalid.example/mface.gif" } }
+    ],
+    "raw_message": "[CQ:face,id=21][CQ:mface]",
+    "font": 0,
+    "sender": { "user_id": 200000003, "nickname": "SANITIZED_NICK", "card": "", "role": "member" }
+  }
+}

@@ -1,0 +1,21 @@
+{
+  "transport": "onebot",
+  "sample_note": "T-306 脱敏fixture：合并转发消息（内容不在事件内，必须降级人工复核）",
+  "event": {
+    "time": 1789000700,
+    "self_id": 10000001,
+    "post_type": "message",
+    "message_type": "group",
+    "sub_type": "normal",
+    "message_id": 910000008,
+    "user_id": 200000009,
+    "group_id": 300000002,
+    "anonymous": null,
+    "message": [
+      { "type": "forward", "data": { "id": "FORWARD_ID_SANITIZED" } }
+    ],
+    "raw_message": "[CQ:forward,id=FORWARD_ID_SANITIZED]",
+    "font": 0,
+    "sender": { "user_id": 200000009, "nickname": "SANITIZED_NICK", "card": "", "role": "member" }
+  }
+}

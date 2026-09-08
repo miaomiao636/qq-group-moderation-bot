@@ -1,0 +1,21 @@
+{
+  "transport": "onebot",
+  "sample_note": "T-306 脱敏fixture：文件消息（PDF占位，无URL——文件常需API二次获取，必须降级人工）",
+  "event": {
+    "time": 1789000500,
+    "self_id": 10000001,
+    "post_type": "message",
+    "message_type": "group",
+    "sub_type": "normal",
+    "message_id": 910000006,
+    "user_id": 200000006,
+    "group_id": 300000001,
+    "anonymous": null,
+    "message": [
+      { "type": "file", "data": { "name": "document_fixture.pdf", "size": 10240 } }
+    ],
+    "raw_message": "[CQ:file]",
+    "font": 0,
+    "sender": { "user_id": 200000006, "nickname": "SANITIZED_NICK", "card": "", "role": "member" }
+  }
+}

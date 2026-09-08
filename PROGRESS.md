@@ -2,6 +2,8 @@
 
 ## 当前阶段
 
+**T-306 NapCat/OneBot入站Adapter与影子运行器已实现，待主审审核（2026-09-08，决策D-021）**：分支 `feature/t306-onebot-shadow` 完成 OneBot 11 反向WebSocket入站（令牌校验+本机/内网绑定强制）、10类消息段→中立契约解析（未知段保留元数据并降级人工）、统一媒体安全下载复用、`provider+self_id+message_id` 持久化去重、影子强制（Adapter内无任何管理动作实现）、`ready/degraded` 就绪语义（`/onebot/status` 与 `/healthz`）。本地门禁：pytest 276 passed、mypy 61源文件、ruff通过、`uv lock --check`通过、干净运行时验证通过。**未验收**。
+
 **T-305主审整改已验收（2026-09-08，决策D-020）**：独立复验发现并修复了OneBot错误回退官方动作通道、跨provider违规/动作串扰、核心反向导入Adapter与通用消息段缺失。本地234项测试中233通过/1跳过，mypy 57源文件、ruff、Alembic完整升降级通过；提交 `b3a107b` 的CI运行 `34200777456` 中Ubuntu、Windows和干净运行时三项全绿。
 
 **主通道架构调整为NapCat/OneBot（2026-09-08，决策D-019）**：项目负责人已实际确认，个人认证官方机器人无法开启“添加到任意群聊”，在数百/数千人目标群的邀请列表中不显示。因此QQ官方机器人降为可选/测试通道，NapCatQQ + OneBot 11改为生产大群主通道。代码基线 `2d8f405` 包含官方通道契约、审核、AI、动态规则、案件、报告、官方动作编排和R-104修复。T-305通过审核后，下一项为T-306。
@@ -13,6 +15,15 @@
 **R-103、T-105、T-204、T-205、T-106实现与远程CI已通过（2026-09-06，分支 `feature/r103-ai-rule-learning`）**：已修复R-103正确性问题，并实现后台版本化动态规则、远程AI软证据、管理员反馈候选规则学习和官方撤回/禁言/警告动作编排。本地全量门禁通过：pytest 203 passed / 1 skipped、mypy 48个源文件通过、ruff check/format通过；Alembic临时库完成 `upgrade head → current → downgrade base → upgrade head`；干净运行时依赖环境可导入应用和AI适配器，且不包含pytest。功能分支已推送，Pull Request #1 上分支 tip（`27fcf6d`）的最新 CI 运行 `34028677558` 与较早的 `34028509570`（@`d00960d`）均在 Ubuntu、Windows 与干净运行时依赖三个任务全部成功（详见 `HANDOFF.md`）；PR #1 已于 2026-09-06 合并（合并提交 `761fdba`），`main` 现含 R-103+T-105+T-204+T-205+T-106 全套实现。默认仍为 `ACTION_MODE=SHADOW`，真实QQ群自动处罚、真实MiMo调用、Windows 24×7和NapCat尚未实机验收。
 
 ## 已完成
+
+- **T-306 NapCat/OneBot入站Adapter与影子运行器（2026-09-08，实现完成待主审审核）**：
+  1. `app/adapters/onebot/parser.py`：OneBot 11事件→T-305中立契约纯转换。覆盖文字/at/@提及/face表情/image图片（含.gif判GIF）/mface表情商城/record语音/video视频/file文件/reply引用/forward合并转发/json卡片/share链接分享；未知段保留类型名+数据键名元数据转`kind="unknown"`；CQ码字符串形态降级；匿名消息标记。OneBot数字ID以字符串进入`external_*`，绝不伪装OpenID。
+  2. `app/runtime/onebot_ws.py`：反向WebSocket端点+连接状态注册表。令牌常量时间比较（query或Bearer头），失败拒绝（1008）；群消息入口校验三要素；JSON非法帧计数容忍（连续50帧断开）；lifecycle connect→QQ登录态online、heartbeat→心跳时间戳。就绪语义：`ready`=已连接+登录online+心跳新鲜+积压未满，任一不满足`degraded`；`/onebot/status`与`/healthz`均暴露。
+  3. `app/runtime/onebot_wiring.py`：组合根。去重键`onebot:{self_id}:{message_id}`；复用R-102-4 `download_attachment`（大小/类型嗅探/配额/超时/安全文件名），仅接受http(s) URL，本地路径视为不可信→下载失败→record_only；下载结果经`_downloaded`按附件序号回填二次解析。
+  4. `app/runtime/pipeline.py`：新增`dedup_key`参数（processed_events键与provider记录）；新增通道中立守卫——`kind`或任一段为`unknown/forward_record`强制`record_only`转人工（既不判正常也不作为处罚依据）；detail附中立段摘要。
+  5. `app/core/dedup.py`：`begin_processing`支持`provider`记录。
+  6. `app/config.py`：`ONEBOT_WS_ENABLED/ONEBOT_ACCESS_TOKEN/ONEBOT_WS_PATH/ONEBOT_QUEUE_MAX/ONEBOT_HEARTBEAT_TIMEOUT_SECONDS`；启用fail-closed校验（令牌非空+WEB_HOST回环/私网+路径以/开头），违者拒绝启动。默认关闭。
+  7. 测试：9份新fixture（gif/voice/video/file/reply/forward/card/未知段/非法结构）+23项新测试——解析契约（10类fixture+降级/注入/角色/匿名/字符串形态/拒绝）、WS（鉴权拒绝/ready-degraded/全流程影子处理+去重键落库+动作意图0/重复推送+重连+重启缓存清空不重复处理/非法JSON连接存活/非法结构不落库/媒体下载失败降级/文件无URL与未知段与合并转发降级）、AST守护（OneBot包内无管理动作实现、无kick）、配置fail-closed校验4项。
 
 - **T-405 GitHub Actions运行时维护（2026-09-08，已完成）**：`actions/checkout`升级到v7.0.1，`astral-sh/setup-uv`升级到v10.0.1，均固定官方提交哈希；没有删除或放宽质量步骤。提交 `3377279` 的CI运行 `34203205684` 中Ubuntu、Windows和干净运行时三项全绿，Node.js 20弃用警告已消除。
 
@@ -148,6 +159,16 @@
 - QQ官方适配、审核、案件、后台、报告和传输中立契约已有代码；NapCat入站、管理动作、无人值守和整体验收均未完成。
 
 ## 最近更新
+
+日期：2026-09-08（T-306）
+
+修改内容：**T-306 NapCat/OneBot入站Adapter与影子运行器实现完成（分支 `feature/t306-onebot-shadow`，待主审审核）**。新增 `app/adapters/onebot/`（10类消息段→中立契约纯解析）与 `app/runtime/onebot_ws.py`（反向WS+令牌鉴权+就绪状态）、`app/runtime/onebot_wiring.py`（去重键+媒体下载组合根）；流水线支持 `dedup_key` 与不可解析内容人工守卫；配置新增 `ONEBOT_*` 并fail-closed校验；新增9份fixture与23项测试。设计决策 D-021。
+
+验证：`uv lock --check` 通过；开发库 `alembic upgrade head` 至 `d4f7a9c2e601`；pytest **276 passed**（基线234+新增42项中的收集数）；mypy **61源文件**通过；ruff check/format通过；干净运行时环境可导入 `app.main`/onebot各模块且pytest不可导入；diff与新增文件敏感信息扫描无真实凭据。远程CI结果见 `HANDOFF.md`。
+
+影响：T-303/W1 可直接在 Windows 专机以 `/onebot/status` 取证；T-307 只需实现 `ModerationActionClient` 并按群显式开启。已知风险：事件队列为进程内存队列，进程崩溃窗口内未处理事件会丢失，须在 T-303 实测量化消息缺口。
+
+### 历史更新
 
 日期：2026-09-08（T-305）
 

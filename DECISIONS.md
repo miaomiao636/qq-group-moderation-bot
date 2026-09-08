@@ -564,3 +564,37 @@ T-305 已在分支 `feature/t305-neutral-contracts` 实现并完成主审整改�
 - 数据库新旧行混合期间读取口径以中立列为准，并兼容仅有旧镜像列的行（有自动化测试证明）。
 - T-306/T-307 直接在本 seam 上实现，不需要再动核心契约；contract 阶段（删旧列）另立任务并需再次评审。
 - 测试套件不再依赖真实远程AI，跨平台 CI 结果不受开发机 `.env` 影响。
+
+---
+
+## 决策 D-021：NapCat/OneBot 反向WebSocket入站与就绪状态语义（T-306）
+
+> 状态：已实现于分支 `feature/t306-onebot-shadow`，**待主审独立审核，未验收**。
+
+### 决策日期
+
+2026-09-08
+
+### 决策内容
+
+- **传输形态**：OneBot 11 反向 WebSocket（NapCat 主动连入）。入站端点随管理后台同进程（FastAPI）挂载，路径 `ONEBOT_WS_PATH`（默认 `/onebot/ws`），**默认关闭**（`ONEBOT_WS_ENABLED=false`）。
+- **接入安全（fail-closed）**：启用必须同时满足——非空 `ONEBOT_ACCESS_TOKEN`（常量时间比较，支持 `?access_token=` 或 `Authorization: Bearer`，真实值只在 Windows 本机环境变量/凭据存储）；`WEB_HOST` 必须是本机回环或私有网段（拒绝公网地址启动）。无令牌/令牌错误一律拒绝连接。
+- **事件结构校验在入口完成**：群消息必须具备 `message_id + group_id + user_id` 三要素，缺失即拒绝并计入 `invalid_total`，不入队、不落库；JSON 非法帧计数并容忍（连续50帧非法才断开）；notice/请求/私聊仅计数不处理。
+- **解析边界**：`app/adapters/onebot/parser.py` 为纯转换（无 I/O）。文字/图片/GIF/表情/语音/视频/文件/回复引用/合并转发/JSON卡片/链接分享映射到 T-305 中立契约；**未知段保留"段类型名+数据键名"元数据**转为 `kind="unknown"` 中立段；CQ码字符串形态因媒体结构不可靠还原同样标记降级；合并转发内容不在事件内，转人工。
+- **不可解析内容守卫（核心级，通道中立）**：流水线对 `kind` 或任意段为 `unknown/forward_record` 的消息强制 `record_only` 转人工——既不判正常，也不作为处罚依据；影子记录 detail 附带中立段摘要。
+- **媒体下载**：复用 R-102-4 统一媒体安全实现（大小上限/类型嗅探/磁盘配额/超时/安全文件名/`.part` 语义）。仅接受 `http(s)://` URL 即时下载；本地路径与其他 scheme 一律视为下载失败 → record_only；绝不执行群成员发送的文件。下载结果按附件序号经 `_downloaded` 注入，二次解析时回填本地安全文件名。
+- **去重键升级**：持久化键从裸 `message_id` 升级为 ``provider + self_id + message_id``（形如 `onebot:{self_id}:{message_id}`），`processed_events` 同步记录 provider；官方路径行为不变。内存缓存清空（模拟重启）后数据库键仍拦截重放。
+- **影子强制**：OneBot Adapter 包内不存在任何管理动作实现（撤回/禁言/警告/踢人），有 AST 测试守护；OneBot 事件不产生任何动作意图；真实 NapCat 动作留待 T-307 独立开关。
+- **就绪语义**：`/healthz` 与 `/onebot/status` 暴露 `ready/degraded`——已连接 + QQ登录态 online（lifecycle connect）+ 心跳新鲜（`ONEBOT_HEARTBEAT_TIMEOUT_SECONDS`）+ 队列积压未满，任一不满足即 degraded；启动未连接即为 degraded，进程存活不代表就绪。每群最后事件时间有界保留（200群）。
+- **背压不丢事件**：WS 接收循环将事件放入有界队列（`ONEBOT_QUEUE_MAX`），队满时阻塞接收形成 TCP 背压，不静默丢弃；进程崩溃时未处理事件会丢失，由 T-303 实机验证消息缺口与 NapCat 侧重推能力。
+
+### 原因
+
+- 反向WS使 NapCat 主动连入本机，避免暴露出站服务端口；同进程挂载复用现有绑定/健康检查设施。
+- 入口结构校验 + 解析器纯函数化，使全部契约测试无需 NapCat 真机即可运行（CI 友好）。
+
+### 影响
+
+- T-303（Windows隔离群）可直接按 `docs/windows-operations.md` W1 标准 using `/onebot/status` 取证。
+- T-307 的 OneBot 动作 Adapter 只需实现 `ModerationActionClient` 并经 `group_provider_routes` 按群显式开启；本任务的影子路径不动。
+- 队列进程内、非持久化：重启窗口的消息缺口属已知风险，须在 T-303/W1 实测量化。

@@ -1,0 +1,23 @@
+{
+  "transport": "onebot",
+  "sample_note": "T-306 脱敏fixture：回复/引用消息（被引用内容不在事件内，保留引用目标元数据）",
+  "event": {
+    "time": 1789000600,
+    "self_id": 10000001,
+    "post_type": "message",
+    "message_type": "group",
+    "sub_type": "normal",
+    "message_id": 910000007,
+    "user_id": 200000007,
+    "group_id": 300000002,
+    "anonymous": null,
+    "message": [
+      { "type": "reply", "data": { "id": "909000999" } },
+      { "type": "at", "data": { "qq": "200000008" } },
+      { "type": "text", "data": { "text": " 这个说法不对，请看群规" } }
+    ],
+    "raw_message": "[CQ:reply,id=909000999][CQ:at,qq=200000008] 这个说法不对，请看群规",
+    "font": 0,
+    "sender": { "user_id": 200000007, "nickname": "SANITIZED_NICK", "card": "SANITIZED_CARD", "role": "admin" }
+  }
+}

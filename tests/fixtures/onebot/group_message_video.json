@@ -1,0 +1,21 @@
+{
+  "transport": "onebot",
+  "sample_note": "T-306 脱敏fixture：视频消息（URL为占位）",
+  "event": {
+    "time": 1789000400,
+    "self_id": 10000001,
+    "post_type": "message",
+    "message_type": "group",
+    "sub_type": "normal",
+    "message_id": 910000005,
+    "user_id": 200000005,
+    "group_id": 300000001,
+    "anonymous": null,
+    "message": [
+      { "type": "video", "data": { "file": "video_fixture.mp4", "url": "https://invalid.example/video_fixture.mp4" } }
+    ],
+    "raw_message": "[CQ:video,file=video_fixture.mp4]",
+    "font": 0,
+    "sender": { "user_id": 200000005, "nickname": "SANITIZED_NICK", "card": "", "role": "member" }
+  }
+}

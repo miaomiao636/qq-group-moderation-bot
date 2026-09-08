@@ -33,12 +33,32 @@ def create_app() -> FastAPI:
     )
 
     @app.get("/healthz", tags=["system"])
-    async def healthz() -> dict[str, str]:
-        """健康检查端点。"""
-        return {"status": "ok", "env": settings.app_env, "mode": settings.run_mode}
+    async def healthz() -> dict[str, object]:
+        """健康检查端点。
+
+        T-306：启用 OneBot 反向WS时附带 ``onebot`` 就绪状态块
+        （连接/登录态/心跳/队列积压，``ready``/``degraded``）——
+        进程存活不代表系统就绪。
+        """
+        payload: dict[str, object] = {
+            "status": "ok",
+            "env": settings.app_env,
+            "mode": settings.run_mode,
+        }
+        if settings.onebot_ws_enabled:
+            from app.runtime.onebot_ws import onebot_status
+
+            payload["onebot"] = onebot_status.snapshot()
+        return payload
 
     # 管理后台（T-301/T-302）：服务端页面，强制登录；仅绑定本机/可信内网
     app.include_router(admin_router)
+
+    # NapCat OneBot 11 反向WS入站（T-306）：默认关闭；启用需令牌+本机/内网绑定
+    if settings.onebot_ws_enabled:
+        from app.runtime.onebot_ws import build_onebot_router
+
+        app.include_router(build_onebot_router(settings.onebot_ws_path))
 
     return app
 

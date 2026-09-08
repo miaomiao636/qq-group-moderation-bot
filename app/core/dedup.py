@@ -37,8 +37,13 @@ async def begin_processing(
     event_type: str = "GROUP_MESSAGE_CREATE",
     *,
     lease_seconds: int = DEFAULT_LEASE_SECONDS,
+    provider: str | None = None,
 ) -> ProcessingClaim:
-    """尝试开始处理一条事件。"""
+    """尝试开始处理一条事件。
+
+    T-306：``message_id`` 允许传入组合去重键（如 ``onebot:{self_id}:{message_id}``）；
+    ``provider`` 记录事件来源通道（官方路径缺省不变）。
+    """
     if message_id in _MEMORY_SEEN:
         existing = await session.get(ProcessedEvent, message_id)
         if existing is None or existing.status == "PROCESSED":
@@ -61,6 +66,7 @@ async def begin_processing(
                 lease_expires_at=lease_expires_at,
                 attempts=1,
                 processed_at=datetime.now(UTC),
+                provider=provider or "qq_official",
             )
         )
         await session.commit()

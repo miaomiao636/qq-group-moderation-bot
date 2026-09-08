@@ -2,8 +2,8 @@
 
 ## 当前状态
 
-- 当前阶段（2026-09-08）：生产大群主通道为NapCat/OneBot。**T-305主审整改已通过本地门禁与提交 `b3a107b` 的跨平台CI，现已关闭；下一项为T-306。** 真实NapCat、MiMo和Windows 24×7尚未验收。
-- 当前最高目标：T-306 NapCat入站与影子运行；随后依次完成T-303 Windows隔离群链路验证、T-307 NapCat撤回/禁言/警告动作，再进入T-404无人值守和T-403分阶段上线。
+- 当前阶段（2026-09-08）：生产大群主通道为NapCat/OneBot。**T-305已验收关闭（基线 `95f3c21`）；T-306已在分支 `feature/t306-onebot-shadow` 完成实现（D-021），本地全量门禁通过，待主审独立审核。** 真实NapCat、MiMo和Windows 24×7尚未验收。
+- 当前最高目标：主审复核T-306；通过后执行T-303 Windows隔离群影子验证（W1），随后T-307 NapCat撤回/禁言/警告动作，再进入T-404无人值守和T-403分阶段上线。
 - 任务执行原则：每个Agent一次只认领一个边界清晰的任务；完成后更新 `PROGRESS.md` 和 `HANDOFF.md`，架构变化同步更新 `DECISIONS.md` 和 `PROJECT_CONTEXT.md`。
 - 禁止事项：不得把OneBot数据伪装成 `group_openid/member_openid`、不得跳过T-305直接接管官方动作编排、不得在影子链路和保护测试通过前对真实群执行动作；任何模型结果都不能直接创建踢人动作。
 
@@ -281,14 +281,16 @@
 
 依赖：T-305。
 
-- [ ] 支持NapCat OneBot 11的反向WebSocket主入站方式，管理端点仅监听本机或可信内网，强制访问令牌并校验事件结构。
-- [ ] 解析文字、图片、GIF/表情、语音、视频、文件、回复/引用、合并转发和卡片；未知消息段保留元数据并降级人工。
-- [ ] 媒体必须按现有大小、类型、配额、超时和安全规则即时下载，不执行群成员文件。
-- [ ] 使用 `provider + self_id + message_id` 或经契约证明等价的稳定键去重；重连、重复推送和进程重启不得重复处理。
-- [ ] 默认强制影子模式，记录拟执行动作但不调用OneBot管理操作。
-- [ ] 提供NapCat连接、QQ登录态、最后心跳、每群最后事件和队列积压的 `ready/degraded` 证据；不得只以Python进程存活判断就绪。
+> **状态（2026-09-08）**：已在分支 `feature/t306-onebot-shadow` 完成实现与本地全量门禁（pytest 276 passed、mypy 61源文件、ruff通过、`uv lock --check`通过、开发库迁移至head、干净运行时验证通过），**待主审独立审核，未验收**。设计记录见决策D-021。
 
-完成标准：脱敏OneBot fixtures覆盖主要消息类型、非法事件、重放、断线和媒体失败；在无NapCat真机时全部契约测试可运行，外部处罚调用数为0。
+- [x] 支持NapCat OneBot 11的反向WebSocket主入站方式，管理端点仅监听本机或可信内网，强制访问令牌并校验事件结构。（`app/runtime/onebot_ws.py`；配置校验强制令牌非空+WEB_HOST回环/内网否则拒绝启动；群消息入口校验三要素；非法帧计数、连续50帧才断开）
+- [x] 解析文字、图片、GIF/表情、语音、视频、文件、回复/引用、合并转发和卡片；未知消息段保留元数据并降级人工。（`app/adapters/onebot/parser.py` 纯转换；未知段保留类型名+键名元数据、CQ字符串形态与合并转发同样降级；流水线新增通道中立守卫强制record_only转人工）
+- [x] 媒体必须按现有大小、类型、配额、超时和安全规则即时下载，不执行群成员文件。（复用R-102-4 `download_attachment`；仅接受http(s) URL；下载结果按序号经`_downloaded`回填本地安全文件名；失败→record_only）
+- [x] 使用 `provider + self_id + message_id` 或经契约证明等价的稳定键去重；重连、重复推送和进程重启不得重复处理。（`onebot:{self_id}:{message_id}`持久化键；`processed_events`记录provider；内存缓存清空模拟重启的回归测试通过）
+- [x] 默认强制影子模式，记录拟执行动作但不调用OneBot管理操作。（OneBot Adapter包内无任何管理动作实现，AST测试守护；影子外部调用数0有断言）
+- [x] 提供NapCat连接、QQ登录态、最后心跳、每群最后事件和队列积压的 `ready/degraded` 证据；不得只以Python进程存活判断就绪。（`/onebot/status`与`/healthz`暴露`onebot`状态块；未连接/未登录/心跳超时/积压满即degraded；启动未连接即为degraded）
+
+完成标准：脱敏OneBot fixtures覆盖主要消息类型、非法事件、重放、断线和媒体失败；在无NapCat真机时全部契约测试可运行，外部处罚调用数为0。→ 本地已达成（11份fixture、23项新测试），等待主审按标准独立复核。
 
 ### T-303 NapCat主通道Windows隔离验证
 

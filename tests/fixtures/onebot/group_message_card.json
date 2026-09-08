@@ -1,0 +1,21 @@
+{
+  "transport": "onebot",
+  "sample_note": "T-306 脱敏fixture：JSON分享卡片（来源/标题为脱敏占位）",
+  "event": {
+    "time": 1789000800,
+    "self_id": 10000001,
+    "post_type": "message",
+    "message_type": "group",
+    "sub_type": "normal",
+    "message_id": 910000009,
+    "user_id": 200000010,
+    "group_id": 300000002,
+    "anonymous": null,
+    "message": [
+      { "type": "json", "data": { "data": "{\"prompt\":\"[分享]SANITIZED_TITLE\",\"source\":\"SANITIZED_APP\",\"tag\":\"share\",\"preview\":\"https://invalid.example/page\"}" } }
+    ],
+    "raw_message": "[CQ:json,data=...]",
+    "font": 0,
+    "sender": { "user_id": 200000010, "nickname": "SANITIZED_NICK", "card": "", "role": "member" }
+  }
+}
