@@ -29,6 +29,15 @@
 7. `app/main.py`：启用时挂载OneBot路由；`/healthz`附带`onebot`就绪块。
 8. 测试：9份新脱敏fixture + 23项新测试（`test_onebot_parser.py` 20项、`test_onebot_ws.py` 17项：鉴权拒绝/ready-degraded切换/全流程影子处理/去重键落库/重复推送+重连+缓存清空模拟重启/非法JSON存活/非法结构不落库/媒体下载失败降级/文件无URL与未知段与合并转发转人工/动作意图0断言/AST守护无管理动作/配置fail-closed 4项）。
 
+**远程CI证据（PR #3，head提交 `1dd6725`，运行 `34215504894`，结论 success）**：
+- 分支：`feature/t306-onebot-shadow`（已推送并跟踪origin）。
+- Pull Request：https://github.com/miaomiao636/qq-group-moderation-bot/pull/3（目标 `main`，**保持open等待主审审核**，未合并）。
+- 运行总览：https://github.com/miaomiao636/qq-group-moderation-bot/actions/runs/34215504894
+- Ubuntu质量（ruff/mypy/pytest）：`.../job/102026185851` `SUCCESS`
+- Windows质量（ruff/mypy/pytest）：`.../job/102026185971` `SUCCESS`
+- 干净运行时依赖回归：`.../job/102026185841` `SUCCESS`
+- 执行备注：推送与GitHub API经本机既有代理 `127.0.0.1:7890`（git `-c` 单次参数与urllib代理，未改任何git配置）。
+
 **本地验证结果**：
 - `uv lock --check`：通过（52包，无变更）。
 - `uv run alembic upgrade head`：开发库由 `a0b4d72e5f31` 迁移至head `d4f7a9c2e601`（T-305迁移链），无新迁移（T-306无schema变更，复用T-305的provider列）。
