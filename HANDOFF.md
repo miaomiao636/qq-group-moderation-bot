@@ -33,6 +33,15 @@
 12. **测试封闭性修复**：`tests/conftest.py` 强制 `AI_ENABLED=false`。缺陷背景：开发机 `.env` 配置 `AI_ENABLED=true` 时，pytest审核链路会真实外呼MiMo（T-204 factory按settings构建），限流/超时导致 `allow/record_only` 判定漂移、测试非确定失败。项目规则本要求AI测试只用固定假响应；该修复使测试封闭，CI结果不再受开发机 `.env` 影响。
 13. 新增测试23项与fixture：`test_core_contracts.py`（9）、`test_onebot_fixture.py`（5，含脱敏OneBot fixture 2份）、`test_provider_routing.py`（5）、`test_migration_t305.py`（4）。
 
+**远程CI证据（PR #2，head提交 `df910ef`，运行 `34191586792`，结论 success）**：
+- 分支：`feature/t305-neutral-contracts`（已推送并跟踪origin）。
+- Pull Request：https://github.com/miaomiao636/qq-group-moderation-bot/pull/2（目标 `main`，**保持open等待主审审核**，未合并）。
+- 运行总览：https://github.com/miaomiao636/qq-group-moderation-bot/actions/runs/34191586792
+- Ubuntu质量（ruff/mypy/pytest）：https://github.com/miaomiao636/qq-group-moderation-bot/actions/runs/34191586792/job/101950589365 `SUCCESS`
+- Windows质量（ruff/mypy/pytest）：https://github.com/miaomiao636/qq-group-moderation-bot/actions/runs/34191586792/job/101950589286 `SUCCESS`
+- 干净运行时依赖回归：https://github.com/miaomiao636/qq-group-moderation-bot/actions/runs/34191586792/job/101950589387 `SUCCESS`
+- 执行备注：本机直连GitHub间歇不可达，推送与API查询经本机既有代理 `127.0.0.1:7890` 完成（仅git `-c http.proxy` 单次参数与urllib代理，未修改任何git全局/仓库配置）。
+
 **本地验证结果**：
 - `uv run pytest`：**227 passed**（基线203 + 新增23；此前"1 skipped"为ffmpeg视频生成运行时skip，本轮执行成功无skip）。
 - `uv run mypy app`：**54个源文件**通过（strict模式）。
