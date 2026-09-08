@@ -6,7 +6,7 @@
 
 ## 当前任务
 
-**T-305初版未通过主审；发现的4类规格/安全问题已在分支 `feature/t305-neutral-contracts` 直接整改，本地全量门禁通过，待整改后新远程CI。** 下一项为T-306，随后 `T-303 → T-307 → T-404 → T-403`；T-304人工批准踢人为T-307之后的可选增强。
+**T-305初版未通过主审；发现的4类规格/安全问题已整改，本地门禁与提交 `b3a107b` 的远程Ubuntu/Windows/干净运行时CI全部通过，T-305已验收。** 下一项为T-306，随后 `T-303 → T-307 → T-404 → T-403`；T-304人工批准踢人为T-307之后的可选增强。
 
 ## T-305主审整改摘要
 
@@ -16,7 +16,7 @@
 - 修复P2：新增通用`MessageSegment`，官方和OneBot fixture都转换为中立段，不透出原始CQ/官方结构。
 - 动作边界：`ACTION_MODE=OFFICIAL`只能调官方Adapter；OneBot只记SKIPPED，必须等T-307的独立配置。
 - 数据库：新增纠正迁移`d4f7a9c2e601`，完整`upgrade head → downgrade base → upgrade head`通过。
-- 本地证据：234项收集，233 passed / 1 skipped；mypy 57源文件、ruff check/format、`git diff --check`通过。远程CI待推送本轮整改后刷新。
+- 验收证据：本地234项收集，233 passed / 1 skipped；mypy 57源文件、ruff check/format、`git diff --check`通过。远程CI运行 `34200777456` 三项全绿：Ubuntu job `101978815953`、Windows job `101978815792`、干净运行时 job `101978815991`。
 
 ## Windows专机待执行事项
 
@@ -38,11 +38,11 @@
 
 **实现清单**：
 1. 新增 `app/core/contracts.py`：`Provider`（qq_official|onebot）、中立 `StandardMessage`（provider/external_group_id/external_user_id/external_message_id，与旧字段构造时双向同步的镜像视图）、`Sender/Attachment/ShareCardInfo/ActionResult` 上移、`MessageSource`/`ModerationActionClient` 位置限定参数协议（runtime-checkable）。
-2. 新增 `app/core/routing.py`：`GroupProviderRoute` 表（每群单一消息入口+动作出口）+ `resolve_action_provider`（未配置回退qq_official）+ `upsert_group_route`（拒绝非法provider）。
+2. 新增 `app/core/routing.py`：`GroupProviderRoute` 以 `message_provider + external_group_id` 为联合键；`resolve_action_provider` 对未配置OneBot、非法值和交叉provider一律fail-closed，仅旧官方链路保留兼容默认；`upsert_group_route` 拒绝未经映射的跨provider配置。
 3. 新增 `app/core/identity_backfill.py`：回填SQL单一事实来源（幂等只补空，迁移与测试共用）。
 4. 新增 `app/actions/official_wiring.py`：官方动作客户端组合根（凭据缺失→未配置→SKIPPED意图，不异常）。
 5. 契约上移与兼容再导出：`app/adapters/qq_official/contract.py`、`actions.py` 保留原导入路径；`QQOfficialMessageSource` 实现seam。核心模块（moderation/cases/actions/reports/core）顶层零 `from app.adapters` 导入（静态扫描验证）。
-6. 动作编排 `orchestrator.py`：按群解析provider路由；`action_client` 参数供非官方provider注入；跨通道不借用客户端（路由onebot+无onebot客户端→SKIPPED意图）；`ActionIntent`/`ActionLog` 双写中立身份；审计改为编排器内中立写入（原官方 `audit.log_action` 保留未删）。
+6. 动作编排 `orchestrator.py`：按消息provider与群ID联合解析动作路由；`ACTION_MODE=OFFICIAL`只能构建并调用官方客户端，OneBot路径在T-307前始终生成SKIPPED意图且不能注入客户端绕过；`ActionIntent`/`ActionLog` 双写中立身份；审计改为编排器内中立写入（原官方 `audit.log_action` 保留未删）。
 7. 案件服务：违规/案件双写中立身份；窗口计数与案件幂等查询以中立列为准，兼容仅旧镜像列的混合行（`or_` 回退条件）。
 8. 流水线：新增 `message_source` seam参数（缺省官方解析器，行为不变）；解析失败兜底身份兼容官方/OneBot键名；影子判定双写。
 9. 反馈/AI用量：`FeedbackRecord`、`AIUsageLog`（external_group_id；其provider列语义为AI供应商故不复用）、`AIModerationRequest` 双写/透传中立群标识。

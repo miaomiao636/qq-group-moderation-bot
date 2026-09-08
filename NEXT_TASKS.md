@@ -2,7 +2,7 @@
 
 ## 当前状态
 
-- 当前阶段（2026-09-08）：生产大群主通道为NapCat/OneBot。**T-305主审整改与本地全量门禁已通过，待整改后新跨平台CI证据；下一项为T-306。** 真实NapCat、MiMo和Windows 24×7尚未验收。
+- 当前阶段（2026-09-08）：生产大群主通道为NapCat/OneBot。**T-305主审整改已通过本地门禁与提交 `b3a107b` 的跨平台CI，现已关闭；下一项为T-306。** 真实NapCat、MiMo和Windows 24×7尚未验收。
 - 当前最高目标：主审复核T-305；通过后依次完成T-306 NapCat入站与影子运行、T-303 Windows隔离群链路验证、T-307 NapCat撤回/禁言/警告动作，之后进入T-404无人值守和T-403分阶段上线。
 - 任务执行原则：每个Agent一次只认领一个边界清晰的任务；完成后更新 `PROGRESS.md` 和 `HANDOFF.md`，架构变化同步更新 `DECISIONS.md` 和 `PROJECT_CONTEXT.md`。
 - 禁止事项：不得把OneBot数据伪装成 `group_openid/member_openid`、不得跳过T-305直接接管官方动作编排、不得在影子链路和保护测试通过前对真实群执行动作；任何模型结果都不能直接创建踢人动作。
@@ -266,7 +266,7 @@
 
 依赖：R-104、T-102、T-104、T-106。
 
-> **状态（2026-09-08）**：主审已独立复现并修复4类问题：OneBot错误回退官方动作通道、跨provider违规/动作串扰、核心模块反向导入Adapter、通用消息段缺失。本地234项测试中233通过/1跳过，mypy 57源文件、ruff和Alembic完整升降级通过；**待整改后新的Ubuntu/Windows/干净运行时CI证据后关闭**。
+> **状态（2026-09-08）：已验收关闭。** 主审独立复现并修复4类问题：OneBot错误回退官方动作通道、跨provider违规/动作串扰、核心模块反向导入Adapter、通用消息段缺失。本地234项测试中233通过/1跳过，mypy 57源文件、ruff和Alembic完整升降级通过；提交 `b3a107b` 的CI运行 `34200777456` 中Ubuntu、Windows和干净运行时三项全绿。
 
 - [x] 定义中立消息契约，至少包含 `provider`、`external_group_id`、`external_user_id`、`external_message_id`、角色、消息段、附件和时间，不暴露OneBot或QQ官方原始结构。（`app/core/contracts.py`；旧字段为双向同步的镜像视图，contract阶段另行移除）
 - [x] 定义小而稳定的 `MessageSource` 与 `ModerationActionClient` 接口，官方和NapCat Adapter都从该seam接入。（协议均为runtime-checkable、位置限定参数；官方 `QQOfficialMessageSource` 与 `OfficialActionAdapter` 已验证结构性满足）
@@ -275,7 +275,7 @@
 - [x] 保留QQ官方Adapter现有契约样本和功能，通过兼容Adapter保证旧回归测试继续通过。（`contract.py`/`actions.py` 兼容再导出；12份官方fixture回归全过）
 - [x] 为数据迁移编写可回滚Alembic脚本、回填校验和混合版本兼容测试。（迁移 `b8e2f6a4c1d9` 可完整降级；回填SQL单一事实来源在 `app/core/identity_backfill.py`；`tests/test_migration_t305.py` 覆盖回填幂等/混合行兼容/双写；`tests/fixtures/onebot/` + `test_onebot_fixture.py` 证明同链路可被OneBot fixture驱动）
 
-完成标准：同一审核/案件链路可使用官方fixture和OneBot fixture驱动；核心模块不导入任一供应商Adapter；旧数据可读、新数据可回滚，不破坏已有官方通道测试。→ 本地已达成，仅待整改后远程CI。
+完成标准：同一审核/案件链路可使用官方fixture和OneBot fixture驱动；核心模块不导入任一供应商Adapter；旧数据可读、新数据可回滚，不破坏已有官方通道测试。→ 已达成并有跨平台CI证据。
 
 ### T-306 NapCat/OneBot入站Adapter与影子运行器
 

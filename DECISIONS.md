@@ -541,7 +541,7 @@
 
 ### 决策内容
 
-T-305 已在分支 `feature/t305-neutral-contracts` 实现并完成主审整改（待整改后新远程CI）：
+T-305 已在分支 `feature/t305-neutral-contracts` 实现并完成主审整改；提交 `b3a107b` 的CI运行 `34200777456` 三项全绿，已验收：
 
 - **中立身份键**：`provider + external_group_id + external_user_id + external_message_id`。`Provider` 字面量集合为 `qq_official | onebot`；审核核心只识别该集合，不感知任何一方原始事件结构。
 - **契约上移**：`StandardMessage`/`Sender`/`Attachment`/`ShareCardInfo`/`ActionResult` 及 `MessageSource`/`ModerationActionClient` 两个 seam 协议定义在 `app/core/contracts.py`；`app/adapters/qq_official/contract.py` 与 `actions.py` 变为兼容再导出（既有导入方与全部官方 fixture 回归测试不受影响）。审核、案件、动作意图、报告模块顶层**零**供应商 Adapter 导入；官方客户端仅由组合根 `app/actions/official_wiring.py` 惰性构建。
