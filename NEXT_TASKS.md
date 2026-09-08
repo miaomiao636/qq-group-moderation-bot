@@ -395,13 +395,13 @@
 
 ## 建议的任务分工
 
-- Agent A：T-305，负责传输中立契约、Adapter seam和数据库增量迁移；当前只允许认领这一项。
-- Agent B：T-306，待T-305独立审核通过后，负责NapCat/OneBot入站Adapter、媒体与影子运行器。
+- Agent A：T-305已完成并验收，不再认领。
+- Agent B：当前只认领T-306，负责NapCat/OneBot入站Adapter、媒体与影子运行器；完成独立代码门禁后，再在Windows专机进入T-303/W1实机验证。
 - Agent C：T-303，负责Windows隔离群NapCat主通道实机取证。
 - Agent D：T-307，负责NapCat撤回/禁言/警告Adapter和安全编排。
 - Agent E：T-304，仅在负责人明确启用后负责人工批准踢人。
 - Agent F：T-404、T-403，负责Windows无人值守恢复与分阶段上线。
-- Agent G：T-405，负责CI Action运行时维护；可独立安排，但不得占用T-305主线验收。
+- Agent G：T-405已完成并验收，不再认领。
 - 原T-001/T-102官方通道代码保留维护，当前不是目标大群上线前置。
 - 最终整体审核：由项目负责人指定的主审Agent按照验收指标完成，不由单个实现Agent自行宣布项目完成。
 
