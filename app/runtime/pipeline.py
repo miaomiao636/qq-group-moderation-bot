@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import logging
+from collections.abc import Awaitable, Callable
 from pathlib import Path
 from typing import Any
 
@@ -33,6 +34,8 @@ from app.runtime.models import ShadowDecision
 
 MEDIA_DIR = Path(__file__).resolve().parent.parent.parent / "data" / "media"
 logger = logging.getLogger(__name__)
+
+PayloadPreprocessor = Callable[[dict[str, Any]], Awaitable[None]]
 
 
 def _best_effort_identity(payload: dict[str, Any]) -> tuple[str, str, str]:
@@ -84,6 +87,17 @@ def _is_file(content_type: str) -> bool:
     )
 
 
+def _safe_media_path(filename: str) -> Path | None:
+    """把附件名约束在 ``MEDIA_DIR`` 顶层，拒绝绝对路径、穿越和逃逸符号链接。"""
+    if not filename or filename in (".", "..") or "/" in filename or "\\" in filename:
+        return None
+    root = MEDIA_DIR.resolve()
+    candidate = (root / filename).resolve()
+    if candidate.parent != root:
+        return None
+    return candidate
+
+
 async def run_pipeline(
     payload: dict[str, Any],
     session: AsyncSession,
@@ -93,11 +107,15 @@ async def run_pipeline(
     ai_service: AIReviewService | None = None,
     official_action_client: OfficialActionClient | None = None,
     message_source: MessageSource | None = None,
+    dedup_key: str | None = None,
+    prepare_payload: PayloadPreprocessor | None = None,
 ) -> ShadowDecision | None:
     """处理一条群消息事件载荷。
 
     T-305：``message_source`` 为传输中立入站 seam；缺省使用QQ官方解析器
     （行为与历史版本一致）。审核/落库/动作链路对 source 一视同仁。
+    T-306：``dedup_key`` 允许入站Adapter使用 ``provider + self_id +
+    message_id`` 等更完整的持久化去重键（缺省仍为消息ID）。
 
     返回 ShadowDecision：成功处理（含解析失败/媒体缺失的 record_only 记录）；
     返回 None：事件已被去重跳过。
@@ -105,7 +123,9 @@ async def run_pipeline(
     message_id = str(payload.get("id") or payload.get("message_id") or "")
     if not message_id:
         return None
-    claim = await begin_processing(session, message_id)
+    claim_key = dedup_key or message_id
+    provider_name = str(message_source.provider) if message_source is not None else None
+    claim = await begin_processing(session, claim_key, provider=provider_name)
     if not claim.accepted:
         return None
 
@@ -118,13 +138,18 @@ async def run_pipeline(
     provider = str(message_source.provider)
 
     try:
+        # 下载等有副作用的准备工作必须在持久化去重认领之后执行，避免重放
+        # 事件重复下载同一媒体。
+        if prepare_payload is not None:
+            await prepare_payload(payload)
         msg: StandardMessage = message_source.parse_group_message(payload)
     except MessageParseError as exc:
         # 永久契约解析失败只落一条 record_only，重复投递不再自动重试。
         fallback_group, fallback_user, fallback_name = _best_effort_identity(payload)
         record = await upsert_shadow_decision(
             session,
-            message_id=message_id,
+            message_id=claim_key,
+            external_message_id=message_id,
             group_openid=fallback_group,
             member_openid=fallback_user,
             sender_name=fallback_name[:64],
@@ -138,12 +163,17 @@ async def run_pipeline(
         )
         await mark_failed(
             session,
-            message_id,
+            claim_key,
             claim.token,
             f"MessageParseError: {exc}",
             error_kind="permanent",
         )
         return record
+    except Exception as exc:  # noqa: BLE001 - 准备阶段失败必须可重试
+        logger.exception("pipeline preparation failed for %s", message_id)
+        await session.rollback()
+        await mark_failed(session, claim_key, claim.token, f"{type(exc).__name__}: {exc}")
+        return None
 
     try:
         rule_version_ids: tuple[int, ...] = ()
@@ -157,12 +187,23 @@ async def run_pipeline(
         decision: ModerationDecision = text_engine.evaluate(msg)
         decision = gate.review(msg, decision)
 
+        # T-306：无法解析的内容（未知消息段/合并转发骨架）绝不判正常，
+        # 也绝不作为处罚依据——强制降级人工复核。
+        if _contains_unreviewable_content(msg):
+            decision = decision.model_copy(
+                update={
+                    "verdict": "record_only",
+                    "reason": (decision.reason + "；" if decision.reason else "")
+                    + "包含无法解析的内容（未知消息段/合并转发），转人工",
+                }
+            )
+
         # R-102-1 按媒体类型分发对应引擎；R-102-3 媒体缺失/下载失败 → record_only
         if msg.attachments:
             media_decisions: list[ModerationDecision] = []
             media_missing = False
             for att in msg.attachments:
-                local = MEDIA_DIR / att.filename if att.filename else None
+                local = _safe_media_path(att.filename)
                 if not local or not local.exists():
                     media_missing = True
                     continue
@@ -255,6 +296,7 @@ async def run_pipeline(
             rule_version_ids=rule_version_ids,
         )
         detail = {
+            "external_message_id": msg.external_message_id,
             "rule_hits": [h.model_dump() for h in decision.rule_hits],
             "recommended_actions": list(decision.recommended_actions),
             "is_protected_sender": decision.is_protected_sender,
@@ -263,9 +305,16 @@ async def run_pipeline(
             "rule_version_ids": list(rule_version_ids),
             "ai_results": [r.model_dump() for r in ai_results],
         }
+        if msg.segments:
+            # T-306：中立段摘要（含未知段元数据），供人工复核追溯
+            detail["segments"] = [
+                {"kind": s.kind, "text": s.text[:80], "attachment_index": s.attachment_index}
+                for s in msg.segments
+            ]
         record = await upsert_shadow_decision(
             session,
-            message_id=msg.message_id,
+            message_id=claim_key,
+            external_message_id=msg.external_message_id,
             group_openid=msg.external_group_id,
             member_openid=msg.external_user_id,
             provider=msg.provider,
@@ -286,13 +335,20 @@ async def run_pipeline(
             detail["action_intents"] = summarize_intents(action_intents)
             record.detail_json = json.dumps(detail, ensure_ascii=False)
             await session.commit()
-        await mark_processed(session, message_id, claim.token)
+        await mark_processed(session, claim_key, claim.token)
         return record
     except Exception as exc:  # noqa: BLE001 - 任何处理异常必须可重试
         logger.exception("pipeline processing failed for %s", message_id)
         await session.rollback()
-        await mark_failed(session, message_id, claim.token, f"{type(exc).__name__}: {exc}")
+        await mark_failed(session, claim_key, claim.token, f"{type(exc).__name__}: {exc}")
         return None
+
+
+def _contains_unreviewable_content(msg: StandardMessage) -> bool:
+    """消息是否包含无法自动判定的内容（T-306：未知段/合并转发）。"""
+    if msg.kind in ("unknown", "forward_record"):
+        return True
+    return any(s.kind in ("unknown", "forward_record") for s in msg.segments)
 
 
 def _media_decision_from(
@@ -332,7 +388,7 @@ def _media_decision_from(
 
 
 async def upsert_shadow_decision(session: AsyncSession, **values: Any) -> ShadowDecision:
-    """按 message_id 幂等写入影子判定记录。"""
+    """按内部事件键 ``message_id`` 幂等写入影子判定记录。"""
     record = await session.scalar(
         select(ShadowDecision).where(ShadowDecision.message_id == values["message_id"])
     )

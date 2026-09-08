@@ -2,11 +2,11 @@
 
 24×7 识别 QQ 群中的垃圾广告、诈骗及自定义违规内容，支持文字、图片、GIF、表情、视频、语音、文件和卡片；自动执行高置信消息的撤回和分级禁言，整理两次违规证据并交由人工决定是否踢人。
 
-> 当前阶段（2026-09-08）：生产大群主通道已确定为NapCat/OneBot，QQ官方机器人只用于实际可进入的小群/测试群。T-305中立契约已完成主审整改，提交 `b3a107b` 的Ubuntu、Windows和干净运行时CI全部通过；下一开发项是T-306 OneBot入站与影子运行器。在T-307前，任何OneBot撤回/禁言/警告都会被拒绝。
+> 当前阶段（2026-09-08）：生产大群主通道已确定为NapCat/OneBot，QQ官方机器人只用于实际可进入的小群/测试群。T-306 OneBot入站与影子运行器已完成独立主审整改；修复提交 `444b368` 的远程Ubuntu、Windows与干净运行时CI全部通过。下一步是Windows隔离群T-303/W1影子验证。在T-307前，任何OneBot撤回/禁言/警告都会被拒绝。
 
 ## 架构概览
 
-- **NapCatQQ + OneBot 11**：目标大群的计划主消息和撤回/禁言/警告通道；当前尚未实现。
+- **NapCatQQ + OneBot 11**：目标大群的主通道；反向WebSocket影子入站已实现，真实撤回/禁言/警告仍待T-307。
 - **QQ 官方机器人**：已实现的可选/测试Adapter，只能用于它实际可进入的群。
 - **审核服务**：规则、行为、多模态识别、独立复核、违规累计、案件、证据、审批和报告。
 - **人工 QQ 客户端 / NapCat**：互斥的踢人执行出口，踢人必须人工批准；首版可仅使用人工QQ客户端踢人。
@@ -47,7 +47,9 @@ uv run python -m app
 uv run python -m app.runtime
 ```
 
-该入口需要本地配置QQ官方凭据。默认 `ACTION_MODE=SHADOW`，只记录审核建议和模拟动作，不执行撤回、禁言或警告。它不是目标大群的NapCat运行命令；NapCat运行入口、配置名和安装步骤将由T-306/T-404实现后写入本文件，在那之前不得虚构命令。
+该入口需要本地配置QQ官方凭据。默认 `ACTION_MODE=SHADOW`，只记录审核建议和模拟动作，不执行撤回、禁言或警告。
+
+NapCat反向WebSocket由上面的Web服务接收：在 `.env` 显式设置 `ONEBOT_WS_ENABLED=true` 与强令牌，把NapCat反向WS地址配置为 `ws://<WEB_HOST>:<WEB_PORT>/onebot/ws`，并让NapCat使用同一令牌发送 `Authorization: Bearer` 请求头。令牌不允许放在URL查询参数中。`/onebot/status` 同样需要Bearer令牌；公开的 `/healthz` 只返回不含QQ号、群号和内部错误的聚合就绪状态。Windows正式安装、版本固定和自启动仍按T-303/T-404完成。
 
 开发时如需热重载，可显式指定端口：
 ```bash
@@ -85,7 +87,7 @@ uv run mypy app
 
 CI（`.github/workflows/ci.yml`）会在每次 push/PR 时，在 Linux 与 Windows 上自动运行以上全部检查。
 
-> 当前基线提醒（2026-09-08）：T-305整改已通过；CI维护提交 `3377279` 的运行 `34203205684` 在Ubuntu、Windows和干净运行时三项全绿，Node.js 20弃用警告已消除。下一项是 `NEXT_TASKS.md` 的T-306。
+> 当前基线提醒（2026-09-08）：T-306主审整改的本地门禁为291项收集、290通过/1个本机真实样本跳过，mypy检查61个源文件，ruff检查106个文件；迁移head为 `f6a2c7e91b40`。提交 `444b368` 的CI运行 `34219858155` 在Ubuntu、Windows和干净运行时三项全绿。
 
 ## 目录结构
 
@@ -108,7 +110,7 @@ docs/           # 运行手册、隐私告知、架构决策记录
 ### 已有业务目录与待补能力
 
 ```text
-app/adapters/     # 已有QQ官方与OpenAI-compatible AI适配；NapCat入站/动作待T-306/T-307
+app/adapters/     # 已有QQ官方、OneBot入站与OpenAI-compatible AI适配；NapCat动作待T-307
 app/core/         # 传输中立消息、动作、路由和去重契约
 app/moderation/   # 已有文字、图片/GIF、视频/语音/文件、动态规则、AI软证据与反馈学习
 app/cases/        # 已有违规历史、案件和审批状态机
@@ -126,6 +128,8 @@ tests/fixtures/   # 脱敏QQ事件和媒体/模型固定样本
 - `AI_ENABLED=false`：远程AI默认关闭。
 - `AI_ENABLED_GROUPS=`：远程AI必须按群显式启用，例如填 `GROUP_OPENID_A,GROUP_OPENID_B`，或在测试环境用 `*`。
 - `AI_BASE_URL` / `AI_API_KEY` / `AI_TEXT_MODEL` / `AI_VISION_MODEL`：OpenAI-compatible/MiMo类接口配置；真实密钥只写本地 `.env` 或系统凭据。
+- `ONEBOT_WS_ENABLED=false`：OneBot反向WS默认关闭；启用时必须设置 `ONEBOT_ACCESS_TOKEN`，并只绑定回环或明确的私有网段地址（通配地址 `0.0.0.0`/`::` 会被拒绝）。
+- `ONEBOT_WS_PATH=/onebot/ws`：NapCat连接使用Bearer请求头；URL查询参数令牌被拒绝，避免令牌进入访问日志。
 
 ## 安全与隐私
 

@@ -1,0 +1,22 @@
+{
+  "transport": "onebot",
+  "sample_note": "T-306 脱敏fixture：含本解析器未知的消息段类型（必须保留元数据并降级人工）",
+  "event": {
+    "time": 1789000900,
+    "self_id": 10000001,
+    "post_type": "message",
+    "message_type": "group",
+    "sub_type": "normal",
+    "message_id": 910000010,
+    "user_id": 200000011,
+    "group_id": 300000002,
+    "anonymous": null,
+    "message": [
+      { "type": "text", "data": { "text": "看这个" } },
+      { "type": "weather", "data": { "city": "SANITIZED_CITY", "code": "1" } }
+    ],
+    "raw_message": "[CQ:weather,...]",
+    "font": 0,
+    "sender": { "user_id": 200000011, "nickname": "SANITIZED_NICK", "card": "", "role": "member" }
+  }
+}

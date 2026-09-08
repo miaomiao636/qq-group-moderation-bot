@@ -1,0 +1,18 @@
+{
+  "transport": "onebot",
+  "sample_note": "T-306 脱敏fixture：非法事件结构（缺少 group_id，必须被拒绝并计数）",
+  "event": {
+    "time": 1789001000,
+    "self_id": 10000001,
+    "post_type": "message",
+    "message_type": "group",
+    "sub_type": "normal",
+    "message_id": 910000011,
+    "user_id": 200000012,
+    "anonymous": null,
+    "message": [ { "type": "text", "data": { "text": "缺少群ID的事件" } } ],
+    "raw_message": "缺少群ID的事件",
+    "font": 0,
+    "sender": { "user_id": 200000012, "nickname": "SANITIZED_NICK", "card": "", "role": "member" }
+  }
+}

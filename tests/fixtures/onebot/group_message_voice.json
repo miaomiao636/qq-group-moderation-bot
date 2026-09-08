@@ -1,0 +1,21 @@
+{
+  "transport": "onebot",
+  "sample_note": "T-306 脱敏fixture：语音消息（AMR，URL为占位）",
+  "event": {
+    "time": 1789000300,
+    "self_id": 10000001,
+    "post_type": "message",
+    "message_type": "group",
+    "sub_type": "normal",
+    "message_id": 910000004,
+    "user_id": 200000004,
+    "group_id": 300000001,
+    "anonymous": null,
+    "message": [
+      { "type": "record", "data": { "file": "voice_fixture.amr", "url": "https://invalid.example/voice_fixture.amr" } }
+    ],
+    "raw_message": "[CQ:record,file=voice_fixture.amr]",
+    "font": 0,
+    "sender": { "user_id": 200000004, "nickname": "SANITIZED_NICK", "card": "", "role": "member" }
+  }
+}

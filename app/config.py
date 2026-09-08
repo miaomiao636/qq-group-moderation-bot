@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import ipaddress
 from functools import lru_cache
 from pathlib import Path
 from typing import Literal
@@ -14,6 +15,13 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent
 
 # 合法日志级别
 _VALID_LOG_LEVELS = {"DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"}
+
+_TRUSTED_BIND_NETWORKS = (
+    ipaddress.ip_network("10.0.0.0/8"),
+    ipaddress.ip_network("172.16.0.0/12"),
+    ipaddress.ip_network("192.168.0.0/16"),
+    ipaddress.ip_network("fc00::/7"),
+)
 
 
 def _normalize_sqlite_url(url: str) -> str:
@@ -124,6 +132,16 @@ class Settings(BaseSettings):
     ai_per_minute_limit: int = Field(default=30, ge=1, le=600, alias="AI_PER_MINUTE_LIMIT")
     ai_prompt_version: str = Field(default="t204-v1", alias="AI_PROMPT_VERSION")
 
+    # NapCat/OneBot 11 反向WebSocket入站（T-306）：默认关闭；访问令牌只从
+    # 环境变量或系统凭据读取，绝不写入仓库。启用即强制要求令牌与本机/内网绑定。
+    onebot_ws_enabled: bool = Field(default=False, alias="ONEBOT_WS_ENABLED")
+    onebot_access_token: str = Field(default="", alias="ONEBOT_ACCESS_TOKEN", repr=False)
+    onebot_ws_path: str = Field(default="/onebot/ws", alias="ONEBOT_WS_PATH")
+    onebot_queue_max: int = Field(default=500, ge=1, le=10000, alias="ONEBOT_QUEUE_MAX")
+    onebot_heartbeat_timeout_seconds: int = Field(
+        default=90, ge=5, le=3600, alias="ONEBOT_HEARTBEAT_TIMEOUT_SECONDS"
+    )
+
     @model_validator(mode="after")
     def _validate(self) -> Settings:
         """跨字段校验：日志级别合法、生产环境必须设置管理员密码、SQLite 路径规范化。"""
@@ -163,7 +181,45 @@ class Settings(BaseSettings):
             and not self.ai_base_url.startswith(("https://", "http://"))
         ):
             raise ValueError("AI_BASE_URL 必须以 https:// 或 http:// 开头。")
+        self._validate_onebot_ws()
         return self
+
+    def _validate_onebot_ws(self) -> None:
+        """T-306：反向WS启用条件 fail-closed——强制令牌与本机/可信内网绑定。"""
+        if not self.onebot_ws_enabled:
+            return
+        problems: list[str] = []
+        if not self.onebot_access_token.strip():
+            problems.append("ONEBOT_ACCESS_TOKEN 不能为空（NapCat连接必须校验访问令牌）")
+        host = self.web_host.strip()
+        if not _is_loopback_or_private(host):
+            problems.append(
+                f"WEB_HOST={host!r} 不允许：OneBot入站只能监听本机回环或可信内网地址"
+                "（如 127.0.0.1 / 192.168.x.x / 10.x.x.x），禁止暴露公网"
+            )
+        if not self.onebot_ws_path.startswith("/"):
+            problems.append(f"ONEBOT_WS_PATH={self.onebot_ws_path!r} 必须以 / 开头")
+        if problems:
+            raise ValueError("ONEBOT_WS_ENABLED 配置错误：" + "；".join(problems))
+
+
+def _is_loopback_or_private(host: str) -> bool:
+    """判断监听地址是否为回环或明确允许的私有网段。
+
+    ``ipaddress.is_private`` 也会把 ``0.0.0.0`` / ``::`` 等不可路由地址
+    归为 private；这些通配监听地址会暴露所有网卡，不能作为安全边界。
+    """
+    if host.lower() == "localhost":
+        return True
+    try:
+        addr = ipaddress.ip_address(host)
+    except ValueError:
+        return False
+    if addr.is_unspecified or addr.is_multicast:
+        return False
+    return addr.is_loopback or any(
+        addr.version == network.version and addr in network for network in _TRUSTED_BIND_NETWORKS
+    )
 
 
 @lru_cache
