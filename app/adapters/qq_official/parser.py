@@ -12,12 +12,16 @@
 from __future__ import annotations
 
 import re
+from collections.abc import Mapping
 from datetime import datetime
 from typing import Any
 
 from app.adapters.qq_official.contract import (
     Attachment,
     MessageKind,
+    MessageParseError,
+    MessageSegment,
+    Provider,
     Sender,
     SenderRole,
     ShareCardInfo,
@@ -47,7 +51,7 @@ _ROLE_MAP: dict[str, SenderRole] = {
 }
 
 
-class EventParseError(ValueError):
+class EventParseError(MessageParseError):
     """事件载荷不符合已知契约时抛出。"""
 
 
@@ -168,6 +172,15 @@ def parse_group_message(payload: dict[str, Any]) -> StandardMessage:
         mentions = _MENTION_IN_TEXT.findall(content)
 
     attachments = _parse_attachments(payload)
+    segments: list[MessageSegment] = []
+    if content:
+        segments.append(MessageSegment(kind="text", text=content))
+    for index, attachment in enumerate(attachments):
+        attachment_kind = _CONTENT_TYPE_KIND.get(
+            attachment.content_type,
+            "image" if attachment.content_type.startswith("image/") else "file",
+        )
+        segments.append(MessageSegment(kind=attachment_kind, attachment_index=index))
     return StandardMessage(
         message_id=message_id,
         event_type=_KNOWN_EVENT,
@@ -179,6 +192,22 @@ def parse_group_message(payload: dict[str, Any]) -> StandardMessage:
         text=content,
         mentions=mentions,
         face_count=len(_FACE_PATTERN.findall(content)),
+        segments=segments,
         attachments=attachments,
         share_card=_parse_share_card(payload, content),
     )
+
+
+class QQOfficialMessageSource:
+    """官方 Adapter 的 ``MessageSource`` 实现（T-305 seam）。
+
+    供审核链路以 ``MessageSource`` 协议注入；provider 固定为 ``qq_official``，
+    解析行为与 ``parse_group_message`` 完全一致。
+    """
+
+    provider: Provider = "qq_official"
+
+    def parse_group_message(self, payload: Mapping[str, Any], /) -> StandardMessage:
+        if not isinstance(payload, dict):
+            raise EventParseError("事件载荷必须是对象")
+        return parse_group_message(payload)

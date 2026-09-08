@@ -530,3 +530,37 @@
 - NapCat变为核心运行依赖后，掉线、QQ安全验证、版本不兼容或账号限制会同时中断自动监督和处罚。系统必须立即告警、停止自动动作并转人工监管，不得将“进程存活”误报为“群消息正常接收”。
 - 项目不承诺NapCat不会触发QQ风控，不实现设备指纹伪装、代理轮换、随机模拟真人或自动解决安全验证。
 - 实施任务调整为 R-104、T-305、T-306、T-307、T-304、T-404 和T-403，详见 `NEXT_TASKS.md`。
+
+---
+
+## 决策 D-020：传输中立契约与 expand/migrate/contract 数据迁移（T-305）
+
+### 决策日期
+
+2026-09-08
+
+### 决策内容
+
+T-305 已在分支 `feature/t305-neutral-contracts` 实现并完成主审整改；提交 `b3a107b` 的CI运行 `34200777456` 三项全绿，已验收：
+
+- **中立身份键**：`provider + external_group_id + external_user_id + external_message_id`。`Provider` 字面量集合为 `qq_official | onebot`；审核核心只识别该集合，不感知任何一方原始事件结构。
+- **契约上移**：`StandardMessage`/`Sender`/`Attachment`/`ShareCardInfo`/`ActionResult` 及 `MessageSource`/`ModerationActionClient` 两个 seam 协议定义在 `app/core/contracts.py`；`app/adapters/qq_official/contract.py` 与 `actions.py` 变为兼容再导出（既有导入方与全部官方 fixture 回归测试不受影响）。审核、案件、动作意图、报告模块顶层**零**供应商 Adapter 导入；官方客户端仅由组合根 `app/actions/official_wiring.py` 惰性构建。
+- **expand 阶段兼容**：`group_openid`/`member_openid` 等旧字段在领域模型与数据库中**全部保留**，与中立字段构造时双向同步、写入时双写；Alembic 迁移 `b8e2f6a4c1d9` 以 `batch_alter_table` 加列（SQLite 安全）并回填历史数据（provider='qq_official'，幂等只补空），可完整 downgrade 回滚。旧列的删除（contract 阶段）由独立任务另行评估，本任务不做。
+- **镜像不等于跨通道等价**：`provider="onebot"` 的消息其镜像字段虽填充数字ID字符串，仅为过渡期读取兼容；**不得把 OneBot 数字 ID 伪装成 OpenID**，不得调用官方 API。
+- **按群路由**：`group_provider_routes` 以 `message_provider + external_group_id` 为联合主键，避免两个provider中相同字符串冲突。未配置官方群仅为兼容历史链路保留官方默认；未配置OneBot、非法路由和无可验证身份映射的交叉provider均fail-closed。
+- **动作模式隔离**：`ACTION_MODE=OFFICIAL` 只能调用QQ官方Adapter。T-305不得通过注入客户端提前启用OneBot真实动作；OneBot路由在T-307前只记录SKIPPED。
+- **主审整改**：违规累计/案件复用与动作幂等已纳入provider及中立身份；契约增加通用`MessageSegment`；通用去重上移`app/core/dedup.py`；新增纠正迁移`d4f7a9c2e601`。
+- **测试封闭性**：`tests/conftest.py` 强制 `AI_ENABLED=false`——修复了开发机 `.env` 配置真实 AI 时测试会真实外呼 MiMo、导致判定非确定（限流/超时使 `record_only`/`allow` 漂移）的问题。项目规则本就要求 AI 测试只用固定假响应。
+- **未来 NapCat Adapter 的接入面**：入站实现 `MessageSource`（T-306），出站实现 `ModerationActionClient`（T-307，不含踢人）；持久去重键的 `provider + self_id + message_id` 演进留待T-306在真实OneBot契约下完成。
+
+### 原因
+
+- D-019 确定目标大群主通道为 NapCat/OneBot，但现有数据库与领域模型全部是官方 OpenID 命名；原地改名或删列会破坏历史数据与在线升级路径。
+- 官方 fixture 与既有回归测试是资产，必须零改动继续通过；expand/双写是同时满足"新链路中立"与"旧链路不破坏"的最小路径。
+
+### 影响
+
+- 核心模块（moderation/cases/actions/reports/core）不导入任何 Adapter，可被官方与 OneBot fixture 共同驱动（已有自动化测试证明）。
+- 数据库新旧行混合期间读取口径以中立列为准，并兼容仅有旧镜像列的行（有自动化测试证明）。
+- T-306/T-307 直接在本 seam 上实现，不需要再动核心契约；contract 阶段（删旧列）另立任务并需再次评审。
+- 测试套件不再依赖真实远程AI，跨平台 CI 结果不受开发机 `.env` 影响。

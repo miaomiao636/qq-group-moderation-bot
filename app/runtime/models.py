@@ -21,8 +21,14 @@ class ShadowDecision(Base):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     message_id: Mapped[str] = mapped_column(String(128), unique=True)
-    group_openid: Mapped[str] = mapped_column(String(64), index=True)
-    member_openid: Mapped[str] = mapped_column(String(64), index=True)
+    group_openid: Mapped[str] = mapped_column(String(64), index=True)  # 旧镜像，T-305后评估移除
+    member_openid: Mapped[str] = mapped_column(String(64), index=True)  # 旧镜像
+    # T-305 传输中立身份（与镜像字段双写，权威读取口径）
+    provider: Mapped[str] = mapped_column(
+        String(16), default="qq_official", server_default="qq_official"
+    )
+    external_group_id: Mapped[str] = mapped_column(String(128), default="", server_default="")
+    external_user_id: Mapped[str] = mapped_column(String(128), default="", server_default="")
     sender_name: Mapped[str] = mapped_column(
         String(64), default="", index=True
     )  # 群昵称（官方事件自带）

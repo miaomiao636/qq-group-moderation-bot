@@ -219,6 +219,41 @@ async def test_duplicate_message_does_not_replay_or_create_second_violation() ->
 
 
 @pytest.mark.asyncio
+async def test_same_message_id_from_onebot_does_not_reuse_official_intents() -> None:
+    client = FakeOfficialClient()
+    group = f"G_ACT_NAMESPACE_{uuid.uuid4().hex[:6]}"
+    message_id = f"ACT_SHARED_{uuid.uuid4().hex[:8]}"
+    onebot = StandardMessage(
+        message_id=message_id,
+        provider="onebot",
+        external_group_id=group,
+        external_user_id="200000003",
+        sender=Sender(member_openid="200000003"),
+        text="违规测试内容",
+    )
+    official = _msg(group, "M_OFFICIAL", message_id=message_id)
+    async with SessionLocal() as session:
+        onebot_intents = await orchestrate_actions(
+            session,
+            onebot,
+            _high_decision(onebot),
+            official_client=client,
+            settings=_official_settings(),
+        )
+        official_intents = await orchestrate_actions(
+            session,
+            official,
+            _high_decision(official),
+            official_client=client,
+            settings=_official_settings(),
+        )
+
+    assert [intent.status for intent in onebot_intents] == ["SKIPPED"]
+    assert [intent.action for intent in official_intents] == ["recall", "mute", "warn"]
+    assert [call[0] for call in client.calls] == ["recall", "mute", "warn"]
+
+
+@pytest.mark.asyncio
 async def test_unknown_action_result_is_not_replayed() -> None:
     client = FakeOfficialClient(fail_action="recall")
     group = f"G_ACT_UNKNOWN_{uuid.uuid4().hex[:6]}"

@@ -26,6 +26,10 @@ os.environ["WEB_PORT"] = "8123"
 os.environ["LOG_LEVEL"] = "INFO"
 os.environ["ADMIN_USERNAME"] = "admin"
 os.environ["ADMIN_PASSWORD"] = "test-admin-pass"
+# T-305：测试必须完全封闭——即使开发机 `.env` 配置了 AI_ENABLED=true，
+# 测试也绝不允许真实调用远程AI（项目规则：AI测试只用固定假响应；
+# 真实外呼会让测试非确定并外发消息内容）。AI 专属测试均使用显式假模型。
+os.environ["AI_ENABLED"] = "false"
 
 
 @pytest.fixture(scope="session", autouse=True)

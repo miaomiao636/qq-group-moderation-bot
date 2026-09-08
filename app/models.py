@@ -35,6 +35,10 @@ class ProcessedEvent(Base):
 
     message_id: Mapped[str] = mapped_column(String(128), primary_key=True)
     event_type: Mapped[str] = mapped_column(String(64), default="GROUP_MESSAGE_CREATE")
+    # T-305：传输通道（dedup 键在 contract 阶段演进为 provider+message_id 组合）
+    provider: Mapped[str] = mapped_column(
+        String(16), default="qq_official", server_default="qq_official"
+    )
     status: Mapped[str] = mapped_column(
         String(16), default="PROCESSED"
     )  # PROCESSED / PROCESSING / FAILED / DEAD
@@ -68,9 +72,16 @@ class ActionLog(Base):
 
     id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
     action: Mapped[str] = mapped_column(String(16))  # recall / mute / unmute / warn
-    group_openid: Mapped[str] = mapped_column(String(64))
-    target_member_openid: Mapped[str] = mapped_column(String(64), default="")
+    group_openid: Mapped[str] = mapped_column(String(64))  # 旧镜像，T-305后评估移除
+    target_member_openid: Mapped[str] = mapped_column(String(64), default="")  # 旧镜像
     message_id: Mapped[str] = mapped_column(String(128), default="")
+    # T-305 传输中立身份（与镜像字段双写，权威读取口径）
+    provider: Mapped[str] = mapped_column(
+        String(16), default="qq_official", server_default="qq_official"
+    )
+    external_group_id: Mapped[str] = mapped_column(String(128), default="", server_default="")
+    external_user_id: Mapped[str] = mapped_column(String(128), default="", server_default="")
+    external_message_id: Mapped[str] = mapped_column(String(128), default="", server_default="")
     ok: Mapped[bool]
     status_code: Mapped[int | None]
     err_code: Mapped[int | None]

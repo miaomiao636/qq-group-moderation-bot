@@ -20,10 +20,9 @@ from app.actions.orchestrator import (
     orchestrate_actions,
     summarize_intents,
 )
-from app.adapters.qq_official.contract import StandardMessage
-from app.adapters.qq_official.dedup import begin_processing, mark_failed, mark_processed
-from app.adapters.qq_official.parser import EventParseError, parse_group_message
-from app.moderation.ai import AIReviewService, build_default_ai_review_service
+from app.core.contracts import MessageParseError, MessageSource, StandardMessage
+from app.core.dedup import begin_processing, mark_failed, mark_processed
+from app.moderation.ai import AIReviewService
 from app.moderation.decision import ModerationDecision
 from app.moderation.dynamic_rules import load_cached_active_snapshot
 from app.moderation.image_engine import ImageModerationEngine, MediaAnalysis, merge_decisions
@@ -34,6 +33,35 @@ from app.runtime.models import ShadowDecision
 
 MEDIA_DIR = Path(__file__).resolve().parent.parent.parent / "data" / "media"
 logger = logging.getLogger(__name__)
+
+
+def _best_effort_identity(payload: dict[str, Any]) -> tuple[str, str, str]:
+    """解析失败时的兜底身份提取（兼容官方与 OneBot 常见键名）。
+
+    仅用于 record_only 人工记录，绝不用于处罚决策。
+    """
+    author = payload.get("author") or {}
+    if not isinstance(author, dict):
+        author = {}
+    sender = payload.get("sender") or {}
+    if not isinstance(sender, dict):
+        sender = {}
+    group = str(
+        payload.get("group_openid")
+        or payload.get("external_group_id")
+        or payload.get("group_id")
+        or ""
+    )
+    user = str(
+        author.get("member_openid")
+        or author.get("user_id")
+        or sender.get("member_openid")
+        or sender.get("user_id")
+        or payload.get("user_id")
+        or ""
+    )
+    name = str(author.get("username") or sender.get("nickname") or sender.get("card") or "")
+    return group, user, name
 
 
 def _is_image(content_type: str) -> bool:
@@ -64,13 +92,17 @@ async def run_pipeline(
     image_engine: ImageModerationEngine | None = None,
     ai_service: AIReviewService | None = None,
     official_action_client: OfficialActionClient | None = None,
+    message_source: MessageSource | None = None,
 ) -> ShadowDecision | None:
-    """处理一条 GROUP_MESSAGE_CREATE 载荷。
+    """处理一条群消息事件载荷。
+
+    T-305：``message_source`` 为传输中立入站 seam；缺省使用QQ官方解析器
+    （行为与历史版本一致）。审核/落库/动作链路对 source 一视同仁。
 
     返回 ShadowDecision：成功处理（含解析失败/媒体缺失的 record_only 记录）；
     返回 None：事件已被去重跳过。
     """
-    message_id = str(payload.get("id") or "")
+    message_id = str(payload.get("id") or payload.get("message_id") or "")
     if not message_id:
         return None
     claim = await begin_processing(session, message_id)
@@ -79,17 +111,26 @@ async def run_pipeline(
 
     image_engine = image_engine or ImageModerationEngine()
     gate = ReviewGate()
+    if message_source is None:
+        from app.runtime.official_wiring import build_official_message_source
+
+        message_source = build_official_message_source()
+    provider = str(message_source.provider)
 
     try:
-        msg: StandardMessage = parse_group_message(payload)
-    except EventParseError as exc:
+        msg: StandardMessage = message_source.parse_group_message(payload)
+    except MessageParseError as exc:
         # 永久契约解析失败只落一条 record_only，重复投递不再自动重试。
+        fallback_group, fallback_user, fallback_name = _best_effort_identity(payload)
         record = await upsert_shadow_decision(
             session,
             message_id=message_id,
-            group_openid=str(payload.get("group_openid") or ""),
-            member_openid=str((payload.get("author") or {}).get("member_openid") or ""),
-            sender_name=str((payload.get("author") or {}).get("username") or "")[:64],
+            group_openid=fallback_group,
+            member_openid=fallback_user,
+            sender_name=fallback_name[:64],
+            provider=provider,
+            external_group_id=fallback_group,
+            external_user_id=fallback_user,
             kind="unknown",
             verdict="record_only",
             reason=f"事件解析失败，转人工：{exc}"[:500],
@@ -99,7 +140,7 @@ async def run_pipeline(
             session,
             message_id,
             claim.token,
-            f"EventParseError: {exc}",
+            f"MessageParseError: {exc}",
             error_kind="permanent",
         )
         return record
@@ -107,7 +148,7 @@ async def run_pipeline(
     try:
         rule_version_ids: tuple[int, ...] = ()
         local_ai_media_paths: list[Path] = []
-        rule_snapshot = await load_cached_active_snapshot(session, msg.group_openid)
+        rule_snapshot = await load_cached_active_snapshot(session, msg.external_group_id)
         rule_version_ids = rule_snapshot.version_ids
         if text_engine is None:
             text_engine = TextRuleEngine(rule_snapshot=rule_snapshot)
@@ -130,15 +171,19 @@ async def run_pipeline(
                 if _is_voice(att.content_type):
                     media_decisions.append(
                         evaluate_voice(
-                            message_id, msg.group_openid, msg.sender.member_openid, att, text_engine
+                            message_id,
+                            msg.external_group_id,
+                            msg.external_user_id,
+                            att,
+                            text_engine,
                         )
                     )
                 elif _is_video(att.content_type):
                     media_decisions.append(
                         evaluate_video(
                             message_id,
-                            msg.group_openid,
-                            msg.sender.member_openid,
+                            msg.external_group_id,
+                            msg.external_user_id,
                             local,
                             image_engine,
                             MEDIA_DIR / "_frames",
@@ -148,8 +193,8 @@ async def run_pipeline(
                     media_decisions.append(
                         evaluate_file(
                             message_id,
-                            msg.group_openid,
-                            msg.sender.member_openid,
+                            msg.external_group_id,
+                            msg.external_user_id,
                             local,
                             text_engine,
                         )
@@ -197,7 +242,11 @@ async def run_pipeline(
                 decision = decision.model_copy(
                     update={"verdict": "record_only", "reason": "媒体部分转人工"}
                 )
-        service = ai_service or build_default_ai_review_service()
+        if ai_service is None:
+            from app.runtime.ai_wiring import build_default_ai_review_service
+
+            ai_service = build_default_ai_review_service()
+        service = ai_service
         decision, ai_results = await service.review_message(
             session,
             msg,
@@ -217,8 +266,11 @@ async def run_pipeline(
         record = await upsert_shadow_decision(
             session,
             message_id=msg.message_id,
-            group_openid=msg.group_openid,
-            member_openid=msg.sender.member_openid,
+            group_openid=msg.external_group_id,
+            member_openid=msg.external_user_id,
+            provider=msg.provider,
+            external_group_id=msg.external_group_id,
+            external_user_id=msg.external_user_id,
             sender_name=msg.sender.username[:64],
             kind=msg.kind,
             verdict=decision.verdict,
@@ -250,8 +302,9 @@ def _media_decision_from(
     if m.verdict == "violation_high":
         return ModerationDecision(
             message_id=message_id,
-            group_openid=msg.group_openid,
-            sender_member_openid=msg.sender.member_openid,
+            provider=msg.provider,
+            external_group_id=msg.external_group_id,
+            external_user_id=msg.external_user_id,
             verdict="violation_high",
             category="ad",
             confidence=m.confidence,
@@ -260,16 +313,18 @@ def _media_decision_from(
     if m.verdict == "allow":
         return ModerationDecision(
             message_id=message_id,
-            group_openid=msg.group_openid,
-            sender_member_openid=msg.sender.member_openid,
+            provider=msg.provider,
+            external_group_id=msg.external_group_id,
+            external_user_id=msg.external_user_id,
             verdict="allow",
             confidence=m.confidence,
             reason=m.reason,
         )
     return ModerationDecision(
         message_id=message_id,
-        group_openid=msg.group_openid,
-        sender_member_openid=msg.sender.member_openid,
+        provider=msg.provider,
+        external_group_id=msg.external_group_id,
+        external_user_id=msg.external_user_id,
         verdict="record_only",
         confidence=m.confidence,
         reason=m.reason,

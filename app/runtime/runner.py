@@ -19,7 +19,6 @@ import httpx
 from websockets.asyncio.client import connect
 
 from app.adapters.qq_official.media import download_attachment
-from app.adapters.qq_official.parser import EventParseError
 from app.db import SessionLocal
 from app.moderation.image_engine import ImageModerationEngine
 from app.moderation.imaging import dhash
@@ -157,13 +156,9 @@ async def _listen_once(app_id: str, app_secret: str, stop: asyncio.Event) -> flo
                     data = payload.get("d") or {}
                     await _download_attachments(dl_client, data)
                     async with SessionLocal() as session:
-                        try:
-                            record = await run_pipeline(
-                                data, session, text_engine=text_engine, image_engine=image_engine
-                            )
-                        except EventParseError as exc:
-                            print(f"[runner] parse error: {exc}")
-                            continue
+                        record = await run_pipeline(
+                            data, session, text_engine=text_engine, image_engine=image_engine
+                        )
                         if record:
                             print(
                                 f"[shadow] {record.kind} verdict={record.verdict} "

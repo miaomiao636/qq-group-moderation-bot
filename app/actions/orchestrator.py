@@ -1,7 +1,15 @@
-"""Guarded official action orchestration.
+"""Guarded moderation action orchestration（传输中立，T-305）。
 
-T-106: default SHADOW mode never calls QQ official actions. OFFICIAL mode first
-persists idempotent action intents, then calls recall/mute/warn only.
+T-106 引入的 SHADOW/OFFICIAL 编排保持不变；T-305 变更：
+- 契约与客户端协议来自 ``app.core.contracts``（本模块顶层不再导入任何供应商
+  Adapter；官方客户端仅在 OFFICIAL 分支内经 ``app.actions.official_wiring``
+  惰性构建——这是组合根 seam，不是核心对 Adapter 的依赖）。
+- 动作路由按群显式选择 provider（``app.core.routing``）；每群只有一个自动
+  动作出口。解析出的 provider 没有可用客户端时只记录 SKIPPED 意图，绝不
+  回退到官方通道，也不把 OneBot 群当成官方群处理。
+- ActionIntent 与 ActionLog 双写旧镜像列与中立身份列（expand 阶段）。
+
+默认 SHADOW 模式从不调用外部动作；任何路径都不产生踢人动作。
 """
 
 from __future__ import annotations
@@ -9,54 +17,33 @@ from __future__ import annotations
 import json
 from datetime import UTC, datetime
 from hashlib import sha256
-from typing import Any, Literal, Protocol
+from typing import Any, Literal
 
-from sqlalchemy import DateTime, Integer, String, Text, select
+from sqlalchemy import DateTime, Integer, String, Text, and_, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import Mapped, mapped_column
 
-from app.adapters.qq_official.actions import ActionResult, OfficialActionAdapter
-from app.adapters.qq_official.audit import log_action
-from app.adapters.qq_official.auth import TokenManager
-from app.adapters.qq_official.contract import StandardMessage
 from app.cases.service import record_violation
 from app.config import Settings, get_settings
+from app.core.contracts import ActionResult, ModerationActionClient, StandardMessage
+from app.core.routing import resolve_action_provider
 from app.db import Base
+from app.models import ActionLog
 from app.moderation.decision import ModerationDecision
 
 ActionMode = Literal["SHADOW", "OFFICIAL"]
 IntentStatus = Literal["PENDING", "EXECUTING", "SUCCEEDED", "FAILED", "UNKNOWN", "SKIPPED"]
+
+# 兼容别名：既有调用方（pipeline/tests）导入名保持不变。
+OfficialActionClient = ModerationActionClient
 
 
 def _utcnow() -> datetime:
     return datetime.now(UTC)
 
 
-class OfficialActionClient(Protocol):
-    async def recall(
-        self, group_openid: str, message_id: str, *, actor: str = "system"
-    ) -> ActionResult:
-        """Recall a message."""
-
-    async def mute(
-        self, group_openid: str, member_openid: str, seconds: int, *, actor: str = "system"
-    ) -> ActionResult:
-        """Mute a member."""
-
-    async def warn(
-        self,
-        group_openid: str,
-        reply_to_message_id: str,
-        text: str,
-        *,
-        msg_seq: int = 1,
-        actor: str = "system",
-    ) -> ActionResult:
-        """Send one passive warning reply."""
-
-
 class ActionIntent(Base):
-    """Persistent idempotency record for one official moderation action."""
+    """Persistent idempotency record for one moderation action."""
 
     __tablename__ = "action_intents"
 
@@ -64,9 +51,16 @@ class ActionIntent(Base):
     idempotency_key: Mapped[str] = mapped_column(String(64), unique=True, index=True)
     action: Mapped[str] = mapped_column(String(16))
     status: Mapped[str] = mapped_column(String(16), default="PENDING", index=True)
-    group_openid: Mapped[str] = mapped_column(String(128), index=True)
-    target_member_openid: Mapped[str] = mapped_column(String(128), default="")
+    group_openid: Mapped[str] = mapped_column(String(128), index=True)  # 旧镜像，contract阶段移除
+    target_member_openid: Mapped[str] = mapped_column(String(128), default="")  # 旧镜像
     message_id: Mapped[str] = mapped_column(String(128), index=True, default="")
+    # T-305 传输中立身份（与镜像字段双写，权威读取口径）
+    provider: Mapped[str] = mapped_column(
+        String(16), default="qq_official", server_default="qq_official"
+    )
+    external_group_id: Mapped[str] = mapped_column(String(128), default="", server_default="")
+    external_user_id: Mapped[str] = mapped_column(String(128), default="", server_default="")
+    external_message_id: Mapped[str] = mapped_column(String(128), default="", server_default="")
     params_json: Mapped[str] = mapped_column(Text, default="{}")
     result_json: Mapped[str] = mapped_column(Text, default="{}")
     reason: Mapped[str] = mapped_column(String(255), default="")
@@ -82,15 +76,19 @@ async def orchestrate_actions(
     msg: StandardMessage,
     decision: ModerationDecision,
     *,
-    official_client: OfficialActionClient | None = None,
+    official_client: ModerationActionClient | None = None,
     settings: Settings | None = None,
     actor: str = "system",
 ) -> list[ActionIntent]:
-    """Persist and execute official recall/mute/warn in guarded OFFICIAL mode."""
+    """Persist and execute recall/mute/warn in guarded OFFICIAL mode.
+
+    T-305：先按消息来源+群解析动作出口。``ACTION_MODE=OFFICIAL``
+    只允许QQ官方 Adapter；OneBot 真实动作必须等T-307引入独立开关后才能执行。
+    """
     settings = settings or get_settings()
     if settings.action_mode != "OFFICIAL":
         return []
-    existing = await _existing_message_intents(session, msg.message_id)
+    existing = await _existing_message_intents(session, msg)
     if existing:
         return existing
     if settings.emergency_stop:
@@ -102,23 +100,42 @@ async def orchestrate_actions(
     if not decision.recommended_actions:
         return []
 
+    provider = await resolve_action_provider(session, msg.provider, msg.external_group_id)
+    if provider is None:
+        return [
+            await _record_skipped(
+                session,
+                msg,
+                "recall",
+                actor,
+                f"群 {msg.external_group_id} 未配置与消息来源 {msg.provider} 匹配的动作路由",
+            )
+        ]
+    if provider != "qq_official":
+        return [
+            await _record_skipped(
+                session,
+                msg,
+                "recall",
+                actor,
+                "OneBot真实动作尚未启用；必须完成T-307并使用独立开关",
+            )
+        ]
+    client = official_client if official_client is not None else _default_official_client(settings)
+    if client is None:
+        return [await _record_skipped(session, msg, "recall", actor, "QQ官方动作出口未配置客户端")]
+
     outcome = await record_violation(session, msg, decision)
-    client = official_client or _build_official_client(settings)
     intents: list[ActionIntent] = []
     for planned in outcome.planned_actions:
-        intent = await _create_intent(session, msg, planned.action, planned.params, actor)
+        intent = await _create_intent(
+            session, msg, planned.action, planned.params, actor, provider=provider
+        )
         intents.append(intent)
         if intent.status != "PENDING":
             continue
         result = await _execute_intent(session, client, intent)
-        await log_action(
-            session,
-            result,
-            group_openid=msg.group_openid,
-            target_member_openid=msg.sender.member_openid if planned.action == "mute" else "",
-            message_id=msg.message_id,
-            actor=actor,
-        )
+        await _log_action_result(session, intent, result, actor=actor)
         if intent.status == "UNKNOWN":
             break
     return intents
@@ -131,7 +148,11 @@ def summarize_intents(intents: list[ActionIntent]) -> list[dict[str, Any]]:
             "id": intent.id,
             "action": intent.action,
             "status": intent.status,
+            "provider": intent.provider,
             "message_id": intent.message_id,
+            "external_message_id": intent.external_message_id,
+            "external_group_id": intent.external_group_id,
+            "external_user_id": intent.external_user_id,
             "target_member_openid": intent.target_member_openid,
             "reason": intent.reason,
         }
@@ -139,13 +160,27 @@ def summarize_intents(intents: list[ActionIntent]) -> list[dict[str, Any]]:
     ]
 
 
-async def _existing_message_intents(session: AsyncSession, message_id: str) -> list[ActionIntent]:
+async def _existing_message_intents(
+    session: AsyncSession, msg: StandardMessage
+) -> list[ActionIntent]:
+    neutral_identity = and_(
+        ActionIntent.provider == msg.provider,
+        ActionIntent.external_group_id == msg.external_group_id,
+        ActionIntent.external_message_id == msg.external_message_id,
+    )
+    # expand/migrate 兼容：T-305前的官方意图只有旧 message_id。
+    identity_filter = neutral_identity
+    if msg.provider == "qq_official":
+        legacy_official = and_(
+            ActionIntent.external_group_id == "",
+            ActionIntent.external_message_id == "",
+            ActionIntent.message_id == msg.message_id,
+        )
+        identity_filter = or_(neutral_identity, legacy_official)
     return list(
         (
             await session.execute(
-                select(ActionIntent)
-                .where(ActionIntent.message_id == message_id)
-                .order_by(ActionIntent.id.asc())
+                select(ActionIntent).where(identity_filter).order_by(ActionIntent.id.asc())
             )
         )
         .scalars()
@@ -160,7 +195,7 @@ async def _record_skipped(
     actor: str,
     reason: str,
 ) -> ActionIntent:
-    key = _intent_key(msg.message_id, action, {"reason": reason})
+    key = _intent_key(msg, action, {"reason": reason})
     existing = await session.scalar(select(ActionIntent).where(ActionIntent.idempotency_key == key))
     if existing is not None:
         return existing
@@ -168,9 +203,13 @@ async def _record_skipped(
         idempotency_key=key,
         action=action,
         status="SKIPPED",
-        group_openid=msg.group_openid,
-        target_member_openid=msg.sender.member_openid,
+        group_openid=msg.external_group_id,
+        target_member_openid=msg.external_user_id,
         message_id=msg.message_id,
+        provider=msg.provider,
+        external_group_id=msg.external_group_id,
+        external_user_id=msg.external_user_id,
+        external_message_id=msg.external_message_id,
         params_json=json.dumps({"reason": reason}, ensure_ascii=False),
         reason=reason,
         actor=actor,
@@ -186,10 +225,12 @@ async def _create_intent(
     action: str,
     params: dict[str, Any],
     actor: str,
+    *,
+    provider: str = "qq_official",
 ) -> ActionIntent:
     if action not in ("recall", "mute", "warn"):
-        raise ValueError(f"非法官方动作: {action}")
-    key = _intent_key(msg.message_id, action, params)
+        raise ValueError(f"非法动作: {action}")
+    key = _intent_key(msg, action, params)
     existing = await session.scalar(select(ActionIntent).where(ActionIntent.idempotency_key == key))
     if existing is not None:
         return existing
@@ -197,9 +238,13 @@ async def _create_intent(
         idempotency_key=key,
         action=action,
         status="PENDING",
-        group_openid=msg.group_openid,
-        target_member_openid=str(params.get("member_openid") or ""),
+        group_openid=msg.external_group_id,
+        target_member_openid=str(params.get("external_user_id") or ""),
         message_id=msg.message_id,
+        provider=provider,
+        external_group_id=msg.external_group_id,
+        external_user_id=str(params.get("external_user_id") or msg.external_user_id),
+        external_message_id=msg.external_message_id,
         params_json=json.dumps(params, ensure_ascii=False, sort_keys=True),
         actor=actor,
     )
@@ -210,7 +255,7 @@ async def _create_intent(
 
 async def _execute_intent(
     session: AsyncSession,
-    client: OfficialActionClient,
+    client: ModerationActionClient,
     intent: ActionIntent,
 ) -> ActionResult:
     intent.status = "EXECUTING"
@@ -219,18 +264,26 @@ async def _execute_intent(
     params = json.loads(intent.params_json)
     try:
         if intent.action == "recall":
-            result = await client.recall(intent.group_openid, intent.message_id, actor=intent.actor)
+            result = await client.recall(
+                intent.external_group_id or intent.group_openid,
+                intent.external_message_id or intent.message_id,
+                actor=intent.actor,
+            )
         elif intent.action == "mute":
             result = await client.mute(
-                intent.group_openid,
-                intent.target_member_openid,
+                intent.external_group_id or intent.group_openid,
+                intent.external_user_id or intent.target_member_openid,
                 int(params.get("seconds") or 0),
                 actor=intent.actor,
             )
         elif intent.action == "warn":
             result = await client.warn(
-                intent.group_openid,
-                str(params.get("reply_to_message_id") or intent.message_id),
+                intent.external_group_id or intent.group_openid,
+                str(
+                    params.get("reply_to_external_message_id")
+                    or intent.external_message_id
+                    or intent.message_id
+                ),
                 str(params.get("text") or ""),
                 actor=intent.actor,
             )
@@ -254,15 +307,61 @@ async def _execute_intent(
     return result
 
 
-def _intent_key(message_id: str, action: str, params: dict[str, Any]) -> str:
+async def _log_action_result(
+    session: AsyncSession,
+    intent: ActionIntent,
+    result: ActionResult,
+    *,
+    actor: str = "system",
+) -> None:
+    """把动作结果写入中立审计表（原官方 audit.log_action 的中立版）。"""
+    session.add(
+        ActionLog(
+            action=result.action,
+            group_openid=intent.group_openid,
+            target_member_openid=intent.target_member_openid,
+            message_id=intent.message_id,
+            provider=intent.provider,
+            external_group_id=intent.external_group_id,
+            external_user_id=intent.external_user_id,
+            external_message_id=intent.external_message_id,
+            ok=result.ok,
+            status_code=result.status_code,
+            err_code=result.err_code,
+            err_message=result.err_message[:500],
+            attempts=result.attempts,
+            actor=actor,
+        )
+    )
+    await session.commit()
+
+
+def _intent_key(msg: StandardMessage, action: str, params: dict[str, Any]) -> str:
     raw = json.dumps(
-        {"message_id": message_id, "action": action, "params": params},
+        {
+            "provider": msg.provider,
+            "external_group_id": msg.external_group_id,
+            "external_message_id": msg.external_message_id,
+            "action": action,
+            "params": params,
+        },
         ensure_ascii=False,
         sort_keys=True,
     )
     return sha256(raw.encode("utf-8")).hexdigest()
 
 
-def _build_official_client(settings: Settings) -> OfficialActionAdapter:
-    token_manager = TokenManager(settings.qq_app_id, settings.qq_app_secret)
-    return OfficialActionAdapter(token_manager, api_base=settings.qq_api_base)
+def _default_official_client(settings: Settings) -> ModerationActionClient | None:
+    """惰性构建官方动作客户端（组合根 seam，见模块 docstring）。
+
+    未配置官方凭据时返回 None，由调用方记录 SKIPPED 意图（不抛异常、
+    不阻断影子链路）。官方 Adapter 仅在此函数体内被引用。
+    """
+    from app.actions.official_wiring import (
+        build_official_action_client,
+        official_client_configured,
+    )
+
+    if not official_client_configured(settings):
+        return None
+    return build_official_action_client(settings)

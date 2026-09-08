@@ -1,0 +1,31 @@
+{
+  "transport": "onebot",
+  "sample_note": "T-305 脱敏 OneBot 11 群文字消息fixture：全部ID为虚构数字，联系方式为遮蔽占位，不对应任何真实账号或群",
+  "event": {
+    "time": 1789000000,
+    "self_id": 10000001,
+    "post_type": "message",
+    "message_type": "group",
+    "sub_type": "normal",
+    "message_id": 910000001,
+    "user_id": 200000001,
+    "group_id": 300000001,
+    "anonymous": null,
+    "message": [
+      {
+        "type": "text",
+        "data": {
+          "text": " 居家简易线上任务，无需押金垫资，日收益80-200，限安卓手机，裙号SANITIZED_DIGITS"
+        }
+      }
+    ],
+    "raw_message": " 居家简易线上任务，无需押金垫资，日收益80-200，限安卓手机，裙号SANITIZED_DIGITS",
+    "font": 0,
+    "sender": {
+      "user_id": 200000001,
+      "nickname": "SANITIZED_NICKNAME",
+      "card": "",
+      "role": "member"
+    }
+  }
+}

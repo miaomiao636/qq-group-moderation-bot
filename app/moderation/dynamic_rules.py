@@ -16,7 +16,7 @@ from sqlalchemy import Boolean, DateTime, Float, ForeignKey, Integer, String, Te
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import Mapped, mapped_column
 
-from app.adapters.qq_official.contract import StandardMessage
+from app.core.contracts import StandardMessage
 from app.db import Base
 from app.moderation.decision import Category, ModerationDecision, RuleHit, Verdict
 from app.moderation.extract import extract_signals
@@ -572,8 +572,9 @@ def _decision(
 ) -> ModerationDecision:
     return ModerationDecision(
         message_id=msg.message_id,
-        group_openid=msg.group_openid,
-        sender_member_openid=msg.sender.member_openid,
+        provider=msg.provider,
+        external_group_id=msg.external_group_id,
+        external_user_id=msg.external_user_id,
         sender_role=msg.sender.role,
         verdict=verdict,
         category=category,

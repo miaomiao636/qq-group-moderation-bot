@@ -20,8 +20,14 @@ class ViolationRecord(Base):
     __tablename__ = "violation_records"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-    group_openid: Mapped[str] = mapped_column(String(64), index=True)
-    member_openid: Mapped[str] = mapped_column(String(64), index=True)
+    group_openid: Mapped[str] = mapped_column(String(64), index=True)  # 旧镜像，T-305后评估移除
+    member_openid: Mapped[str] = mapped_column(String(64), index=True)  # 旧镜像
+    # T-305 传输中立身份（与镜像字段双写，权威读取口径）
+    provider: Mapped[str] = mapped_column(
+        String(16), default="qq_official", server_default="qq_official"
+    )
+    external_group_id: Mapped[str] = mapped_column(String(128), default="", server_default="")
+    external_user_id: Mapped[str] = mapped_column(String(128), default="", server_default="")
     message_id: Mapped[str] = mapped_column(String(128))
     category: Mapped[str] = mapped_column(String(32))
     confidence: Mapped[float]
@@ -44,8 +50,14 @@ class Case(Base):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     case_no: Mapped[str] = mapped_column(String(32), unique=True)  # 如 R20260905-01
-    group_openid: Mapped[str] = mapped_column(String(64), index=True)
-    member_openid: Mapped[str] = mapped_column(String(64), index=True)
+    group_openid: Mapped[str] = mapped_column(String(64), index=True)  # 旧镜像，T-305后评估移除
+    member_openid: Mapped[str] = mapped_column(String(64), index=True)  # 旧镜像
+    # T-305 传输中立身份（与镜像字段双写，权威读取口径）
+    provider: Mapped[str] = mapped_column(
+        String(16), default="qq_official", server_default="qq_official"
+    )
+    external_group_id: Mapped[str] = mapped_column(String(128), default="", server_default="")
+    external_user_id: Mapped[str] = mapped_column(String(128), default="", server_default="")
     status: Mapped[str] = mapped_column(String(32), default="PENDING_REVIEW", index=True)
     violation_ids_json: Mapped[str] = mapped_column(Text, default="[]")
     # 审批链记录：谁批准、确认码、执行出口与结果

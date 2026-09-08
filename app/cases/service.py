@@ -15,13 +15,13 @@ import json
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
-from sqlalchemy import func, select
+from sqlalchemy import and_, func, or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.adapters.qq_official.contract import StandardMessage
 from app.cases.case_sm import validate_transition
 from app.cases.models import Case, ViolationRecord
+from app.core.contracts import Provider, StandardMessage
 from app.moderation.decision import ModerationDecision
 
 WINDOW_DAYS = 30
@@ -57,9 +57,14 @@ class ViolationOutcome:
 
 
 def _snapshot(msg: StandardMessage, decision: ModerationDecision) -> dict[str, Any]:
-    """证据快照：消息文本、附件元数据、命中规则、决策。"""
+    """证据快照：中立身份、消息文本、附件元数据、命中规则、决策。"""
     return {
         "message_id": msg.message_id,
+        "external_message_id": msg.external_message_id,
+        "provider": msg.provider,
+        "external_group_id": msg.external_group_id,
+        "external_user_id": msg.external_user_id,
+        # 旧镜像字段保留，便于混合版本人工比对（contract 阶段移除）
         "group_openid": msg.group_openid,
         "sender": msg.sender.model_dump(),
         "sent_at": msg.sent_at.isoformat() if msg.sent_at else None,
@@ -87,17 +92,58 @@ async def _generate_case_no(session: AsyncSession) -> str:
     return f"{prefix}-{count + 1:02d}"
 
 
+def _group_filter(
+    model: type[ViolationRecord] | type[Case], provider: Provider, external_group_id: str
+) -> Any:
+    """按中立群标识过滤；兼容混合版本期间旧代码写入的"仅有旧镜像列"行。"""
+    neutral = and_(model.provider == provider, model.external_group_id == external_group_id)
+    if provider != "qq_official":
+        return neutral
+    return or_(
+        neutral,
+        and_(
+            model.provider == "qq_official",
+            model.external_group_id == "",
+            model.group_openid == external_group_id,
+        ),
+    )
+
+
+def _member_filter(
+    model: type[ViolationRecord] | type[Case], provider: Provider, external_user_id: str
+) -> Any:
+    """按中立成员标识过滤；兼容混合版本期间仅有旧镜像列的行。"""
+    neutral = and_(model.provider == provider, model.external_user_id == external_user_id)
+    if provider != "qq_official":
+        return neutral
+    return or_(
+        neutral,
+        and_(
+            model.provider == "qq_official",
+            model.external_user_id == "",
+            model.member_openid == external_user_id,
+        ),
+    )
+
+
 async def count_active_violations(
-    session: AsyncSession, group_openid: str, member_openid: str
+    session: AsyncSession,
+    external_group_id: str,
+    external_user_id: str,
+    *,
+    provider: Provider = "qq_official",
 ) -> int:
-    """30 天窗口内的有效违规数（revoked 不计）。"""
+    """30 天窗口内的有效违规数（revoked 不计）。
+
+    T-305：以中立身份列为准，兼 容仅有旧镜像列的混合版本数据。
+    """
     window_start = datetime.now(UTC) - timedelta(days=WINDOW_DAYS)
     stmt = (
         select(func.count())
         .select_from(ViolationRecord)
         .where(
-            ViolationRecord.group_openid == group_openid,
-            ViolationRecord.member_openid == member_openid,
+            _group_filter(ViolationRecord, provider, external_group_id),
+            _member_filter(ViolationRecord, provider, external_user_id),
             ViolationRecord.revoked.is_(False),
             ViolationRecord.created_at >= window_start,
         )
@@ -120,12 +166,20 @@ async def record_violation(
     if decision.is_protected_sender or msg.sender.role in ("owner", "admin"):
         raise ValueError("保护角色（群主/管理员）不得进入处罚阶梯")
 
-    existing = await count_active_violations(session, msg.group_openid, msg.sender.member_openid)
+    existing = await count_active_violations(
+        session,
+        msg.external_group_id,
+        msg.external_user_id,
+        provider=msg.provider,
+    )
     strike_no = existing + 1
 
     violation = ViolationRecord(
-        group_openid=msg.group_openid,
-        member_openid=msg.sender.member_openid,
+        group_openid=msg.external_group_id,
+        member_openid=msg.external_user_id,
+        provider=msg.provider,
+        external_group_id=msg.external_group_id,
+        external_user_id=msg.external_user_id,
         message_id=msg.message_id,
         category=decision.category or "other",
         confidence=decision.confidence,
@@ -135,25 +189,27 @@ async def record_violation(
     session.add(violation)
     await session.flush()  # 取得 violation.id
 
-    planned: list[PlannedAction] = [PlannedAction("recall", message_id=msg.message_id)]
+    planned: list[PlannedAction] = [
+        PlannedAction("recall", external_message_id=msg.external_message_id)
+    ]
     case: Case | None = None
     if strike_no == 1:
         planned.append(
             PlannedAction(
-                "mute", member_openid=msg.sender.member_openid, seconds=STRIKE1_MUTE_SECONDS
+                "mute", external_user_id=msg.external_user_id, seconds=STRIKE1_MUTE_SECONDS
             )
         )
         planned.append(
             PlannedAction(
                 "warn",
-                reply_to_message_id=msg.message_id,
+                reply_to_external_message_id=msg.external_message_id,
                 text="警告：您发布的内容违反群规，请立即停止。再次违规将被禁言24小时并立案审核。",
             )
         )
     else:
         planned.append(
             PlannedAction(
-                "mute", member_openid=msg.sender.member_openid, seconds=STRIKE2_MUTE_SECONDS
+                "mute", external_user_id=msg.external_user_id, seconds=STRIKE2_MUTE_SECONDS
             )
         )
         case = await _create_case(session, msg, violation)
@@ -176,8 +232,8 @@ async def _create_case(
     """
     # 幂等：已有 PENDING_REVIEW 案件则直接返回，不重复立案
     existing_stmt = select(Case).where(
-        Case.group_openid == msg.group_openid,
-        Case.member_openid == msg.sender.member_openid,
+        _group_filter(Case, msg.provider, msg.external_group_id),
+        _member_filter(Case, msg.provider, msg.external_user_id),
         Case.status == "PENDING_REVIEW",
     )
     existing = (await session.execute(existing_stmt)).scalar_one_or_none()
@@ -187,8 +243,8 @@ async def _create_case(
     # 合并窗口内全部有效违规证据
     window_start = datetime.now(UTC) - timedelta(days=WINDOW_DAYS)
     stmt = select(ViolationRecord).where(
-        ViolationRecord.group_openid == msg.group_openid,
-        ViolationRecord.member_openid == msg.sender.member_openid,
+        _group_filter(ViolationRecord, msg.provider, msg.external_group_id),
+        _member_filter(ViolationRecord, msg.provider, msg.external_user_id),
         ViolationRecord.revoked.is_(False),
         ViolationRecord.created_at >= window_start,
     )
@@ -200,8 +256,11 @@ async def _create_case(
         case_no = await _generate_case_no(session)
         case = Case(
             case_no=case_no,
-            group_openid=msg.group_openid,
-            member_openid=msg.sender.member_openid,
+            group_openid=msg.external_group_id,
+            member_openid=msg.external_user_id,
+            provider=msg.provider,
+            external_group_id=msg.external_group_id,
+            external_user_id=msg.external_user_id,
             status="PENDING_REVIEW",
             violation_ids_json=json.dumps([v.id for v in related]),
             audit_json=json.dumps({"evidence_count": len(related)}, ensure_ascii=False),

@@ -7,9 +7,9 @@ record_only 表示中等风险只记录转人工，allow 表示放行。
 
 from __future__ import annotations
 
-from typing import Literal
+from typing import Any, Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 Verdict = Literal["allow", "record_only", "violation_high"]
 RecommendedAction = Literal["recall", "mute", "warn"]
@@ -27,11 +27,19 @@ class RuleHit(BaseModel):
 
 
 class ModerationDecision(BaseModel):
-    """文字审核决策结构。"""
+    """文字审核决策结构。
+
+    T-305：新增传输中立身份字段 ``provider``/``external_group_id``/
+    ``external_user_id``；旧字段 ``group_openid``/``sender_member_openid``
+    保留为镜像视图并在构造时双向同步（expand 阶段），后续 contract 阶段移除。
+    """
 
     message_id: str
-    group_openid: str
-    sender_member_openid: str
+    group_openid: str = ""
+    sender_member_openid: str = ""
+    provider: str = "qq_official"
+    external_group_id: str = ""
+    external_user_id: str = ""
     sender_role: str = "member"
     verdict: Verdict = "allow"
     category: Category = None
@@ -40,3 +48,23 @@ class ModerationDecision(BaseModel):
     recommended_actions: list[RecommendedAction] = Field(default_factory=list)
     reason: str = ""
     is_protected_sender: bool = False  # 群主/管理员：只记录不处罚
+
+    @model_validator(mode="before")
+    @classmethod
+    def _sync_identity(cls, data: Any) -> Any:
+        """构造前双向同步旧命名镜像与中立身份字段（只补空，不覆盖显式值）。"""
+        if not isinstance(data, dict):
+            return data
+        group_openid = data.get("group_openid")
+        external_group_id = data.get("external_group_id")
+        if external_group_id and not group_openid:
+            data["group_openid"] = external_group_id
+        elif group_openid and not external_group_id:
+            data["external_group_id"] = group_openid
+        sender_member_openid = data.get("sender_member_openid")
+        external_user_id = data.get("external_user_id")
+        if external_user_id and not sender_member_openid:
+            data["sender_member_openid"] = external_user_id
+        elif sender_member_openid and not external_user_id:
+            data["external_user_id"] = sender_member_openid
+        return data

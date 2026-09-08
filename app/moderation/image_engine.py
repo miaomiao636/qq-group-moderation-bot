@@ -18,7 +18,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Literal
 
-from app.adapters.qq_official.contract import StandardMessage
+from app.core.contracts import StandardMessage
 from app.moderation.imaging import (
     decode_qr_codes,
     dhash,

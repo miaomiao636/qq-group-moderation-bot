@@ -2,13 +2,87 @@
 
 ## 日期
 
-2026-09-08
+2026-09-08（T-305主审整改轮）
 
 ## 当前任务
 
-**D-019 NapCat主通道架构文档与R-104质量门禁已推送远程 `main`**。文档提交为 `512daca`，R-104纯格式提交为 `2d8f405`；GitHub Actions运行 `34186194703` 的Ubuntu、Windows和干净运行时任务全部成功。下一个只可开始T-305；通过独立审核后再按 `T-306 → T-303 → T-307 → T-404 → T-403` 推进，T-304人工批准踢人是T-307之后的独立可选增强。
+**T-305初版未通过主审；发现的4类规格/安全问题已整改，本地门禁与提交 `b3a107b` 的远程Ubuntu/Windows/干净运行时CI全部通过，T-305已验收。** 下一项为T-306，随后 `T-303 → T-307 → T-404 → T-403`；T-304人工批准踢人为T-307之后的可选增强。
+
+## T-305主审整改摘要
+
+- 修复P0：路由改为`message_provider + external_group_id`联合键；未配置OneBot、交叉provider或非法路由默认拒绝，不再回退官方API。
+- 修复P1：违规累计、案件复用和动作幂等纳入provider+中立身份，不会因两通道ID文本相同而串案。
+- 修复P1：通用去重上移`app/core/dedup.py`，审核核心、案件、编排与流水线无供应商Adapter反向导入，并新增AST回归测试。
+- 修复P2：新增通用`MessageSegment`，官方和OneBot fixture都转换为中立段，不透出原始CQ/官方结构。
+- 动作边界：`ACTION_MODE=OFFICIAL`只能调官方Adapter；OneBot只记SKIPPED，必须等T-307的独立配置。
+- 数据库：新增纠正迁移`d4f7a9c2e601`，完整`upgrade head → downgrade base → upgrade head`通过。
+- 验收证据：本地234项收集，233 passed / 1 skipped；mypy 57源文件、ruff check/format、`git diff --check`通过。远程CI运行 `34200777456` 三项全绿：Ubuntu job `101978815953`、Windows job `101978815792`、干净运行时 job `101978815991`。
+- CI维护：提交 `3377279` 将`actions/checkout`升级至v7.0.1、`astral-sh/setup-uv`升级至v10.0.1并固定提交哈希；运行 `34203205684` 三项全绿，Node.js 20弃用警告已消除。
+
+## Windows专机待执行事项
+
+- **现在不需要真机动作测试**：T-305是契约与迁移任务，GitHub Windows CI通过即可关闭跨平台代码兼容门禁。若在Windows本机拉取该分支，先执行`uv run alembic upgrade head`，当前head应为`d4f7a9c2e601`。
+- **T-306后执行W1/W2**：安装并固定QQ/NapCat版本，在隔离群验证全消息类型、媒体下载、重放去重、断线重连、QQ登录态和连续24小时影子运行；外部管理动作调用数必须为0。
+- **T-307后执行W3**：只在隔离群分别测试撤回、禁言3600/86400秒、首次警告、保护角色、急停、重复事件和`UNKNOWN`人工复核。
+- **T-404后执行W4**：验证锁屏/熄屏、禁止睡眠、Windows Service自启、强制终止恢复、断网、系统更新重启、备份恢复和外部心跳。
+- **W1至W4均通过后才做W5**：目标大群先影子、再逐群开撤回/禁言/警告；踢人首版可始终由人工QQ客户端执行。详细进入/退出标准见`docs/windows-operations.md`。
 
 ## 已完成内容
+
+### T-305 实现（2026-09-08，实现Agent）
+
+**任务边界遵守情况**：
+- 未实现T-306（无OneBot WebSocket入站、无NapCat运行器、无真实媒体下载）；`tests/test_onebot_fixture.py` 中的 `OneBotFixtureSource` 是**测试内最小映射**，仅为证明核心链路可被OneBot fixture驱动。
+- 未实现真实撤回/禁言/踢人：影子模式边界未变；`ModerationActionClient` 协议只有 recall/mute/warn，无kick；新动作路径默认SHADOW下调用数为0并有测试断言。
+- 未修改任何真实凭据：diff与新增文件扫描无真实AppID/AppSecret/API Key/个人信息；fixture全部使用虚构数字ID。
+- 未执行任何真实QQ群动作。
+
+**实现清单**：
+1. 新增 `app/core/contracts.py`：`Provider`（qq_official|onebot）、中立 `StandardMessage`（provider/external_group_id/external_user_id/external_message_id，与旧字段构造时双向同步的镜像视图）、`Sender/Attachment/ShareCardInfo/ActionResult` 上移、`MessageSource`/`ModerationActionClient` 位置限定参数协议（runtime-checkable）。
+2. 新增 `app/core/routing.py`：`GroupProviderRoute` 以 `message_provider + external_group_id` 为联合键；`resolve_action_provider` 对未配置OneBot、非法值和交叉provider一律fail-closed，仅旧官方链路保留兼容默认；`upsert_group_route` 拒绝未经映射的跨provider配置。
+3. 新增 `app/core/identity_backfill.py`：回填SQL单一事实来源（幂等只补空，迁移与测试共用）。
+4. 新增 `app/actions/official_wiring.py`：官方动作客户端组合根（凭据缺失→未配置→SKIPPED意图，不异常）。
+5. 契约上移与兼容再导出：`app/adapters/qq_official/contract.py`、`actions.py` 保留原导入路径；`QQOfficialMessageSource` 实现seam。核心模块（moderation/cases/actions/reports/core）顶层零 `from app.adapters` 导入（静态扫描验证）。
+6. 动作编排 `orchestrator.py`：按消息provider与群ID联合解析动作路由；`ACTION_MODE=OFFICIAL`只能构建并调用官方客户端，OneBot路径在T-307前始终生成SKIPPED意图且不能注入客户端绕过；`ActionIntent`/`ActionLog` 双写中立身份；审计改为编排器内中立写入（原官方 `audit.log_action` 保留未删）。
+7. 案件服务：违规/案件双写中立身份；窗口计数与案件幂等查询以中立列为准，兼容仅旧镜像列的混合行（`or_` 回退条件）。
+8. 流水线：新增 `message_source` seam参数（缺省官方解析器，行为不变）；解析失败兜底身份兼容官方/OneBot键名；影子判定双写。
+9. 反馈/AI用量：`FeedbackRecord`、`AIUsageLog`（external_group_id；其provider列语义为AI供应商故不复用）、`AIModerationRequest` 双写/透传中立群标识。
+10. Alembic迁移 `b8e2f6a4c1d9`（down_revision `a0b4d72e5f31`）：8张表batch加列（provider/external_*，含server_default）+回填+`group_provider_routes`表；downgrade完整逆操作。已验证 `upgrade head → downgrade base → re-upgrade head` 周期。
+11. ORM同步加列：`app/runtime/models.py`、`app/cases/models.py`、`app/models.py`、`app/moderation/feedback.py`、`app/moderation/ai.py`；`ModerationDecision` 增加中立字段（双向同步validator）。
+12. **测试封闭性修复**：`tests/conftest.py` 强制 `AI_ENABLED=false`。缺陷背景：开发机 `.env` 配置 `AI_ENABLED=true` 时，pytest审核链路会真实外呼MiMo（T-204 factory按settings构建），限流/超时导致 `allow/record_only` 判定漂移、测试非确定失败。项目规则本要求AI测试只用固定假响应；该修复使测试封闭，CI结果不再受开发机 `.env` 影响。
+13. 新增测试23项与fixture：`test_core_contracts.py`（9）、`test_onebot_fixture.py`（5，含脱敏OneBot fixture 2份）、`test_provider_routing.py`（5）、`test_migration_t305.py`（4）。
+
+**远程CI证据（PR #2，head提交 `df910ef`，运行 `34191586792`，结论 success）**：
+- 分支：`feature/t305-neutral-contracts`（已推送并跟踪origin）。
+- Pull Request：https://github.com/miaomiao636/qq-group-moderation-bot/pull/2（目标 `main`，**保持open等待主审审核**，未合并）。
+- 运行总览：https://github.com/miaomiao636/qq-group-moderation-bot/actions/runs/34191586792
+- Ubuntu质量（ruff/mypy/pytest）：https://github.com/miaomiao636/qq-group-moderation-bot/actions/runs/34191586792/job/101950589365 `SUCCESS`
+- Windows质量（ruff/mypy/pytest）：https://github.com/miaomiao636/qq-group-moderation-bot/actions/runs/34191586792/job/101950589286 `SUCCESS`
+- 干净运行时依赖回归：https://github.com/miaomiao636/qq-group-moderation-bot/actions/runs/34191586792/job/101950589387 `SUCCESS`
+- 执行备注：本机直连GitHub间歇不可达，推送与API查询经本机既有代理 `127.0.0.1:7890` 完成（仅git `-c http.proxy` 单次参数与urllib代理，未修改任何git全局/仓库配置）。
+
+**本地验证结果**：
+- `uv run pytest`：**227 passed**（基线203 + 新增23；此前"1 skipped"为ffmpeg视频生成运行时skip，本轮执行成功无skip）。
+- `uv run mypy app`：**54个源文件**通过（strict模式）。
+- `uv run ruff check app tests alembic` / `uv run ruff format --check app tests alembic`：通过。
+- Alembic完整周期：临时库 `upgrade head（b8e2f6a4c1d9）→ 写入哨兵行 → downgrade base → re-upgrade head`，路由表重建、alembic_version正确。
+- 干净运行时依赖：独立venv `uv sync --locked --no-dev` 后导入 `app.main/app.core.*/官方兼容再导出/编排/流水线` 全部成功，`StandardMessage`/`ActionResult` 与再导出为同一对象，pytest不可导入。
+- 核心模块静态扫描：contracts/routing/identity_backfill/orchestrator/cases.service/decision 六文件零 `from app.adapters` 顶层导入。
+- 敏感信息扫描：diff与新增文件无真实AppID/AppSecret/API Key/个人QQ号；`SECRET`等命中均为既有测试占位符。
+
+**已知风险与未完成事项**：
+- **未验收**：本实现等待主审按T-305完成标准独立复核，不自行宣布验收通过。
+- 旧镜像列（group_openid/member_openid等）仍保留于数据库与领域模型（expand阶段设计使然）；删除属contract阶段，需独立任务与评审。
+- `app/adapters/qq_official/audit.py` 的 `log_action` 已不在编排器调用路径上，暂保留（兼容未删）；contract阶段一并清理。
+- OneBot事件去重键仍是裸 `message_id`（`processed_events.provider` 列已加但未参与主键）；provider化去重键（`provider+self_id+message_id`）按T-306验收标准实现。
+- `processed_events` 的provider列目前由写入方（未来T-306）填充，官方路径默认值qq_official；本任务未改dedup逻辑（保持官方行为零改动）。
+- 报告构建器（`reports/service.py`）仅 `pending_manual_review` 增加中立字段输出；日报/周报计数仍读旧镜像列（双写保证一致），contract阶段切换。
+- 远程CI（Ubuntu/Windows/干净运行时）在分支推送后运行，结果见下方CI小节；CI通过不等于T-305验收。
+- 真实NapCat、真实MiMo评测、Windows 24×7仍全部未验收（与基线一致，未因本任务变化）。
+
+### 历史交接
+
+### D-019 NapCat主通道架构文档与R-104质量门禁（2026-09-08，主审Agent）
 
 ### D-019架构与任务重排（2026-09-07，主审Agent）
 
@@ -25,11 +99,11 @@
 - `app/reports/stats.py` 仅由ruff格式化，没有行为修改；提交 `2d8f405`。
 - 本地验证：pytest 203 passed / 1 skipped；mypy 49个源文件成功；ruff check与format check成功。
 - 远程验证：GitHub Actions运行 `34186194703` 中Ubuntu、Windows和干净运行时依赖三个任务全部成功。
-- CI有非阻塞Node.js 20运行时弃用警告，后续维护时升级对应Action，不影响当前T-305进入条件。
+- 此处记录的是R-104当时的历史警告；该问题已由T-405和提交 `3377279` 关闭。
 
 ### 下一位Agent注意事项（2026-09-08更新）
 
-- 只先认领T-305；T-305未通过前不得将OneBot事件直接塞入官方专用 `StandardMessage`或复用 `ACTION_MODE=OFFICIAL`。
+- T-305已通过，下一位Agent只先认领T-306；不得在T-306内实现真实处罚，也不得复用 `ACTION_MODE=OFFICIAL` 调用NapCat。
 - NapCat真实验收只在Windows 10专用机、专用QQ和隔离群完成；凭据只留本机，不得写入文档或Git。
 - 官方机器人实测只证明可接入小群的技术能力，不得再声称目标大群的官方上线前提已满足。
 

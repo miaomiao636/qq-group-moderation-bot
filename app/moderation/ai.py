@@ -13,7 +13,6 @@ import re
 import time
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
-from functools import lru_cache
 from pathlib import Path
 from typing import Any, Literal, Protocol, cast
 
@@ -22,8 +21,8 @@ from sqlalchemy import Boolean, DateTime, Integer, String, Text
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import Mapped, mapped_column
 
-from app.adapters.qq_official.contract import StandardMessage
-from app.config import Settings, get_settings
+from app.config import Settings
+from app.core.contracts import StandardMessage
 from app.db import Base
 from app.moderation.decision import Category, ModerationDecision, RuleHit
 
@@ -90,6 +89,8 @@ class AIModerationRequest(BaseModel):
 
     message_id: str
     group_openid: str
+    # T-305：消息来源通道的群中立标识；为空时用量记录回退到 group_openid。
+    external_group_id: str = ""
     content_kind: AIContentKind
     text: str = ""
     media_bytes: bytes | None = Field(default=None, repr=False, exclude=True)
@@ -179,7 +180,9 @@ class AIUsageLog(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     provider: Mapped[str] = mapped_column(String(64), default="")
     model_id: Mapped[str] = mapped_column(String(128), default="")
-    group_openid: Mapped[str] = mapped_column(String(128), index=True)
+    group_openid: Mapped[str] = mapped_column(String(128), index=True)  # 旧镜像
+    # T-305：消息来源通道的群中立标识（provider 列此处含义是AI供应商，故不复用）
+    external_group_id: Mapped[str] = mapped_column(String(128), default="", server_default="")
     message_id: Mapped[str] = mapped_column(String(128), index=True)
     source: Mapped[str] = mapped_column(String(16), default="")
     cache_key: Mapped[str] = mapped_column(String(64), default="", index=True)
@@ -355,6 +358,7 @@ async def record_ai_usage(
             provider=result.provider,
             model_id=result.model_id,
             group_openid=request.group_openid,
+            external_group_id=request.external_group_id or request.group_openid,
             message_id=request.message_id,
             source=result.source,
             cache_key=cache_key,
@@ -428,7 +432,7 @@ class AIReviewService:
         rule_version_ids: tuple[int, ...] = (),
     ) -> tuple[ModerationDecision, list[AIModerationResult]]:
         """Run AI only for explicitly enabled groups and non-final local decisions."""
-        if not self.enabled_for_group(msg.group_openid):
+        if not self.enabled_for_group(msg.external_group_id):
             return decision, []
         if decision.verdict == "violation_high":
             return decision, []
@@ -441,7 +445,7 @@ class AIReviewService:
         if text and self.text_moderator is not None:
             request = AIModerationRequest(
                 message_id=msg.message_id,
-                group_openid=msg.group_openid,
+                group_openid=msg.external_group_id,
                 content_kind="text",
                 text=text,
                 rule_version_ids=list(rule_version_ids),
@@ -487,7 +491,7 @@ class AIReviewService:
             )
         request = AIModerationRequest(
             message_id=msg.message_id,
-            group_openid=msg.group_openid,
+            group_openid=msg.external_group_id,
             content_kind="gif" if path.suffix.lower() == ".gif" else "image",
             text=_ai_text_from_message(msg),
             media_bytes=media_bytes,
@@ -600,70 +604,6 @@ def merge_ai_evidence(
             }
         )
     return local.model_copy(update={"rule_hits": local.rule_hits + hits})
-
-
-@lru_cache
-def build_default_ai_review_service() -> AIReviewService:
-    """Build the default service from environment settings.
-
-    This factory intentionally returns a safe disabled/no-op service unless both
-    global and per-group switches are configured at runtime.
-    """
-    settings = get_settings()
-    enabled_groups = parse_enabled_groups(settings.ai_enabled_groups)
-    if not settings.ai_enabled:
-        return AIReviewService(enabled=False, enabled_groups=enabled_groups)
-    missing = []
-    if not settings.ai_api_key:
-        missing.append("AI_API_KEY")
-    if not settings.ai_base_url:
-        missing.append("AI_BASE_URL")
-    text_moderator: TextModerator | None = None
-    vision_moderator: VisionModerator | None = None
-    if missing:
-        return AIReviewService(
-            enabled=True,
-            enabled_groups=enabled_groups,
-            config_problem="missing_" + "_".join(missing).lower(),
-        )
-
-    from app.adapters.ai.openai_compatible import (
-        OpenAICompatibleTextModerator,
-        OpenAICompatibleVisionModerator,
-    )
-
-    if settings.ai_text_model:
-        text_moderator = OpenAICompatibleTextModerator(
-            base_url=settings.ai_base_url,
-            api_key=settings.ai_api_key,
-            model_id=settings.ai_text_model,
-            timeout_seconds=settings.ai_timeout_seconds,
-            prompt_version=settings.ai_prompt_version,
-        )
-    if settings.ai_vision_model:
-        vision_moderator = OpenAICompatibleVisionModerator(
-            base_url=settings.ai_base_url,
-            api_key=settings.ai_api_key,
-            model_id=settings.ai_vision_model,
-            timeout_seconds=settings.ai_timeout_seconds,
-            prompt_version=settings.ai_prompt_version,
-        )
-    if text_moderator is None and vision_moderator is None:
-        return AIReviewService(
-            enabled=True,
-            enabled_groups=enabled_groups,
-            config_problem="missing_ai_models",
-        )
-    return AIReviewService(
-        enabled=True,
-        enabled_groups=enabled_groups,
-        text_moderator=text_moderator,
-        vision_moderator=vision_moderator,
-        quota=AIQuota(
-            daily_budget_cents=settings.ai_daily_budget_cents,
-            per_minute_limit=settings.ai_per_minute_limit,
-        ),
-    )
 
 
 def _reject_forbidden_response_fields(payload: Any) -> None:

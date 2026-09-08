@@ -51,8 +51,14 @@ class FeedbackRecord(Base):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     message_id: Mapped[str] = mapped_column(String(128), index=True)
-    group_openid: Mapped[str] = mapped_column(String(128), index=True, default="")
-    member_openid: Mapped[str] = mapped_column(String(128), index=True, default="")
+    group_openid: Mapped[str] = mapped_column(String(128), index=True, default="")  # 旧镜像
+    member_openid: Mapped[str] = mapped_column(String(128), index=True, default="")  # 旧镜像
+    # T-305 传输中立身份（与镜像字段双写，权威读取口径）
+    provider: Mapped[str] = mapped_column(
+        String(16), default="qq_official", server_default="qq_official"
+    )
+    external_group_id: Mapped[str] = mapped_column(String(128), default="", server_default="")
+    external_user_id: Mapped[str] = mapped_column(String(128), default="", server_default="")
     label: Mapped[str] = mapped_column(String(32), index=True)
     category: Mapped[str] = mapped_column(String(32), default="other")
     operator: Mapped[str] = mapped_column(String(64))
@@ -126,6 +132,9 @@ async def record_feedback(
         message_id=message_id,
         group_openid=(group_openid or metadata.get("group_openid", ""))[:128],
         member_openid=(member_openid or metadata.get("member_openid", ""))[:128],
+        provider=str(metadata.get("provider") or "qq_official")[:16],
+        external_group_id=str(metadata.get("external_group_id") or group_openid or "")[:128],
+        external_user_id=str(metadata.get("external_user_id") or member_openid or "")[:128],
         label=label_clean,
         category=category_clean[:32],
         operator=operator[:64],
@@ -343,6 +352,9 @@ async def _resolve_message_metadata(session: AsyncSession, message_id: str) -> d
         return {
             "group_openid": shadow.group_openid,
             "member_openid": shadow.member_openid,
+            "provider": shadow.provider or "qq_official",
+            "external_group_id": shadow.external_group_id or shadow.group_openid,
+            "external_user_id": shadow.external_user_id or shadow.member_openid,
             "text": str(detail.get("text_preview") or ""),
         }
     violation = await session.scalar(
@@ -355,9 +367,19 @@ async def _resolve_message_metadata(session: AsyncSession, message_id: str) -> d
         return {
             "group_openid": violation.group_openid,
             "member_openid": violation.member_openid or str(sender.get("member_openid") or ""),
+            "provider": violation.provider or "qq_official",
+            "external_group_id": violation.external_group_id or violation.group_openid,
+            "external_user_id": violation.external_user_id or violation.member_openid,
             "text": str(snapshot.get("text") or ""),
         }
-    return {"group_openid": "", "member_openid": "", "text": ""}
+    return {
+        "group_openid": "",
+        "member_openid": "",
+        "provider": "qq_official",
+        "external_group_id": "",
+        "external_user_id": "",
+        "text": "",
+    }
 
 
 def _safe_json(raw: str) -> dict[str, Any]:

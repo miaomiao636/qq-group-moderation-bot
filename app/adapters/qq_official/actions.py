@@ -14,13 +14,19 @@
 from __future__ import annotations
 
 from datetime import datetime, timedelta
-from typing import Literal
 from zoneinfo import ZoneInfo
 
 import httpx
-from pydantic import BaseModel
 
 from app.adapters.qq_official.auth import TokenManager
+from app.core.contracts import ActionResult  # T-305：结果契约上移至中立核心
+
+# 兼容再导出：既有调用方 `from ...actions import ActionResult` 不受影响。
+__all__ = [
+    "ActionNotConfiguredError",
+    "ActionResult",
+    "OfficialActionAdapter",
+]
 
 CITY_TZ = ZoneInfo("Asia/Shanghai")
 
@@ -29,27 +35,9 @@ _ACTION_TIMEOUT = httpx.Timeout(10.0)
 _MAX_ATTEMPTS_IDEMPOTENT = 2  # 撤回/禁言可安全重试
 _MAX_ATTEMPTS_NON_IDEMPOTENT = 1  # 警告不可重试
 
-ActionName = Literal["recall", "mute", "unmute", "warn"]
-
 
 class ActionNotConfiguredError(RuntimeError):
     """动作适配器未正确配置（缺少令牌等）。"""
-
-
-class ActionResult(BaseModel):
-    """动作执行结果，可审计。"""
-
-    action: ActionName
-    ok: bool
-    status_code: int | None = None
-    err_code: int | None = None
-    err_message: str = ""
-    attempts: int = 0
-
-    @property
-    def is_permission_error(self) -> bool:
-        """权限不足类错误（实测：撤回40062003无操作权限；禁言40103004保护角色）。"""
-        return self.err_code in (40062003, 40103004)
 
 
 def _mute_expire_at(seconds: int) -> str:
