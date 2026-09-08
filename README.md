@@ -85,7 +85,7 @@ uv run mypy app
 
 CI（`.github/workflows/ci.yml`）会在每次 push/PR 时，在 Linux 与 Windows 上自动运行以上全部检查。
 
-> 当前基线提醒（2026-09-08）：T-305整改提交 `b3a107b` 的CI运行 `34200777456` 三项全绿。下一项是 `NEXT_TASKS.md` 的T-306。CI仍有部分Action使用已弃用Node.js 20运行时的非阻塞警告。
+> 当前基线提醒（2026-09-08）：T-305整改已通过；CI维护提交 `3377279` 的运行 `34203205684` 在Ubuntu、Windows和干净运行时三项全绿，Node.js 20弃用警告已消除。下一项是 `NEXT_TASKS.md` 的T-306。
 
 ## 目录结构
 

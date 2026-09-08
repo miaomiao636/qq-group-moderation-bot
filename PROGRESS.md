@@ -14,6 +14,8 @@
 
 ## 已完成
 
+- **T-405 GitHub Actions运行时维护（2026-09-08，已完成）**：`actions/checkout`升级到v7.0.1，`astral-sh/setup-uv`升级到v10.0.1，均固定官方提交哈希；没有删除或放宽质量步骤。提交 `3377279` 的CI运行 `34203205684` 中Ubuntu、Windows和干净运行时三项全绿，Node.js 20弃用警告已消除。
+
 - **T-305 传输中立消息、身份和动作契约（2026-09-08，已验收）**：
   1. `app/core/contracts.py`：中立契约 `Provider`（qq_official|onebot）、`StandardMessage`（含 `provider/external_group_id/external_user_id/external_message_id`，与旧字段构造时双向同步）、`ActionResult`、`MessageSource`/`ModerationActionClient` 位置限定参数协议（均 runtime-checkable）；`app/adapters/qq_official/contract.py`、`actions.py` 兼容再导出，12份官方fixture回归零改动通过。
   2. 核心模块（`app/core`、`app/moderation`、`app/cases`、`app/actions/orchestrator`、`app/reports`）顶层零供应商Adapter导入；官方客户端仅在组合根 `app/actions/official_wiring.py` 惰性构建（缺少凭据返回None→SKIPPED意图）。

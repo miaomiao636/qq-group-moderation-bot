@@ -17,6 +17,7 @@
 - 动作边界：`ACTION_MODE=OFFICIAL`只能调官方Adapter；OneBot只记SKIPPED，必须等T-307的独立配置。
 - 数据库：新增纠正迁移`d4f7a9c2e601`，完整`upgrade head → downgrade base → upgrade head`通过。
 - 验收证据：本地234项收集，233 passed / 1 skipped；mypy 57源文件、ruff check/format、`git diff --check`通过。远程CI运行 `34200777456` 三项全绿：Ubuntu job `101978815953`、Windows job `101978815792`、干净运行时 job `101978815991`。
+- CI维护：提交 `3377279` 将`actions/checkout`升级至v7.0.1、`astral-sh/setup-uv`升级至v10.0.1并固定提交哈希；运行 `34203205684` 三项全绿，Node.js 20弃用警告已消除。
 
 ## Windows专机待执行事项
 
@@ -98,11 +99,11 @@
 - `app/reports/stats.py` 仅由ruff格式化，没有行为修改；提交 `2d8f405`。
 - 本地验证：pytest 203 passed / 1 skipped；mypy 49个源文件成功；ruff check与format check成功。
 - 远程验证：GitHub Actions运行 `34186194703` 中Ubuntu、Windows和干净运行时依赖三个任务全部成功。
-- CI有非阻塞Node.js 20运行时弃用警告，后续维护时升级对应Action，不影响当前T-305进入条件。
+- 此处记录的是R-104当时的历史警告；该问题已由T-405和提交 `3377279` 关闭。
 
 ### 下一位Agent注意事项（2026-09-08更新）
 
-- 只先认领T-305；T-305未通过前不得将OneBot事件直接塞入官方专用 `StandardMessage`或复用 `ACTION_MODE=OFFICIAL`。
+- T-305已通过，下一位Agent只先认领T-306；不得在T-306内实现真实处罚，也不得复用 `ACTION_MODE=OFFICIAL` 调用NapCat。
 - NapCat真实验收只在Windows 10专用机、专用QQ和隔离群完成；凭据只留本机，不得写入文档或Git。
 - 官方机器人实测只证明可接入小群的技术能力，不得再声称目标大群的官方上线前提已满足。
 
