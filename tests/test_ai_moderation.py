@@ -124,10 +124,10 @@ def test_single_vision_ai_fraud_high_confidence_upgrades() -> None:
 
 
 def test_vision_ai_below_threshold_stays_record_only() -> None:
-    """视觉模型置信度不足0.90时仍只升 record_only。"""
+    """视觉模型置信度不足0.80时仍只升 record_only。"""
     result = AIModerationResult(
         category="ad",
-        confidence=0.85,
+        confidence=0.75,
         evidence="疑似广告",
         model_id="mimo-v2.5",
         prompt_version="v1",

@@ -600,11 +600,12 @@ def merge_ai_evidence(
             }
         )
     # 方案B：单个视觉模型对明确广告/诈骗类高置信直接升级（图片无确定性规则兜底）
+    # 阈值0.80：实测模型对真实广告图常返回0.85，0.90会漏放大量违规
     if not local.is_protected_sender:
         vision_high = [
             r
-            for r in high_ai
-            if r.source == "vision" and r.category in ("ad", "fraud") and r.confidence >= 0.90
+            for r in usable
+            if r.source == "vision" and r.category in ("ad", "fraud") and r.confidence >= 0.80
         ]
         if vision_high:
             best = max(vision_high, key=lambda r: r.confidence)
