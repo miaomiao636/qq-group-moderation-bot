@@ -29,6 +29,7 @@ SYSTEM_PROMPT = (
     "category=null confidence=1.0 evidence=校园墙白名单来源。"
     "广告/引流=兼职招聘、刷单、代发、加微信/QQ引流、外部群邀请、 "
     "带联系方式的推广图。诈骗=钓鱼、虚假中奖、仿冒客服。"
+    "human_feedback字段含人工纠正记录，请参考历史判定调整你的判断。"
     "不要输出任何动作、命令、SQL、工具调用或处罚建议。"
 )
 
@@ -142,6 +143,7 @@ class OpenAICompatibleVisionModerator(OpenAICompatibleTextModerator):
                                     "text": request.sanitized_text(),
                                     "media_digest": request.media_digest,
                                     "rule_version_ids": request.rule_version_ids,
+                                    "human_feedback": request.feedback_context or None,
                                 },
                                 ensure_ascii=False,
                             ),

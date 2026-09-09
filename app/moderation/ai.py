@@ -38,7 +38,7 @@ AIContentKind = Literal[
 ]
 AIResultSource = Literal["text", "vision", "degraded", "cache"]
 
-PROMPT_VERSION = "t204-v2"  # v2：增加校园墙白名单指令+广告/诈骗边界澄清
+PROMPT_VERSION = "t204-v3"  # v3：加入人工反馈纠正上下文+校园墙白名单指令
 MAX_AI_TEXT_CHARS = 4_000
 MAX_AI_MEDIA_BYTES = 5 * 1024 * 1024
 
@@ -97,6 +97,8 @@ class AIModerationRequest(BaseModel):
     media_mime: str = ""
     media_digest: str = ""
     rule_version_ids: list[int] = Field(default_factory=list)
+    # T-205增强：人工确认反馈的纠正上下文，让模型从人工判定中学习
+    feedback_context: str = ""
 
     @model_validator(mode="after")
     def _fill_media_digest(self) -> AIModerationRequest:
@@ -297,6 +299,9 @@ def ai_cache_key(
         "model_id": model_id,
         "prompt_version": prompt_version,
         "rule_version_ids": request.rule_version_ids,
+        "feedback_sha256": hashlib.sha256(request.feedback_context.encode("utf-8")).hexdigest()
+        if request.feedback_context
+        else "",
     }
     return hashlib.sha256(
         json.dumps(payload, sort_keys=True, ensure_ascii=False).encode("utf-8")
@@ -498,6 +503,10 @@ class AIReviewService:
             media_mime=_mime_from_path(path),
             rule_version_ids=list(rule_version_ids),
         )
+        # T-205增强：加载人工确认反馈作为纠正上下文，让模型从人工判定中学习
+        from app.moderation.feedback import load_vision_feedback_context
+
+        request.feedback_context = await load_vision_feedback_context(session)
         return await self._call_with_cache(session, request, self.vision_moderator, "vision")
 
     async def _call_with_cache(

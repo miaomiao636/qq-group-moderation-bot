@@ -130,7 +130,7 @@ class Settings(BaseSettings):
     ai_timeout_seconds: float = Field(default=5.0, ge=0.2, le=60.0, alias="AI_TIMEOUT_SECONDS")
     ai_daily_budget_cents: int = Field(default=0, ge=0, alias="AI_DAILY_BUDGET_CENTS")
     ai_per_minute_limit: int = Field(default=30, ge=1, le=600, alias="AI_PER_MINUTE_LIMIT")
-    ai_prompt_version: str = Field(default="t204-v2", alias="AI_PROMPT_VERSION")
+    ai_prompt_version: str = Field(default="t204-v3", alias="AI_PROMPT_VERSION")
 
     # NapCat/OneBot 11 反向WebSocket入站（T-306）：默认关闭；访问令牌只从
     # 环境变量或系统凭据读取，绝不写入仓库。启用即强制要求令牌与本机/内网绑定。

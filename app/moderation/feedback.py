@@ -425,3 +425,68 @@ def _safe_json(raw: str) -> dict[str, Any]:
     except json.JSONDecodeError:
         return {}
     return data if isinstance(data, dict) else {}
+
+
+async def load_vision_feedback_context(session: AsyncSession) -> str:
+    """加载人工确认的图片反馈，蒸馏成纠正上下文喂给视觉AI。
+
+    T-205增强：人工判定是真值。把"AI判错的人工纠正"和"AI判对的人工确认"
+    汇总成简洁指导，让模型从历史判定中学习（尤其校园墙白名单 vs 真广告）。
+    """
+    rows = (
+        await session.execute(
+            select(FeedbackRecord, ShadowDecision)
+            .join(ShadowDecision, FeedbackRecord.message_id == ShadowDecision.message_id)
+            .where(
+                ShadowDecision.kind == "image",
+                FeedbackRecord.label.in_(tuple(POSITIVE_LABELS | NEGATIVE_LABELS)),
+            )
+            .order_by(FeedbackRecord.id.desc())
+            .limit(40)
+        )
+    ).all()
+
+    corrections: list[str] = []
+    reinforcements: list[str] = []
+    for fb, shadow in rows:
+        detail = _safe_json(shadow.detail_json)
+        ai_results = detail.get("ai_results") or []
+        ai_cat = None
+        ai_conf = 0.0
+        for r in ai_results:
+            if isinstance(r, dict) and r.get("category"):
+                ai_cat = r.get("category")
+                ai_conf = float(r.get("confidence") or 0)
+                break
+        human_label = "违规" if fb.label in POSITIVE_LABELS else "正常"
+        fb_reason = (fb.reason or "").strip()
+        if fb.label in NEGATIVE_LABELS and ai_cat in ("ad", "fraud"):
+            # AI判违规但人工确认正常 → 校园墙白名单纠正
+            corrections.append(
+                f"你之前判{ai_cat}({ai_conf:.1f})但人工确认正常"
+                f"（{fb_reason or '白名单来源'}）→应判null"
+            )
+        elif fb.label in POSITIVE_LABELS and ai_cat in (None, "other", "normal"):
+            # AI没判违规但人工确认违规 → 漏判纠正
+            corrections.append(
+                f"你之前判{ai_cat or 'null'}但人工确认违规"
+                f"（{fb_reason or '广告/引流'}）→应判ad"
+            )
+        elif fb.label in POSITIVE_LABELS and ai_cat in ("ad", "fraud"):
+            # AI判对且人工确认 → 强化
+            reinforcements.append(f"人工确认违规（{fb_reason or '广告/引流'}）→{ai_cat}正确")
+
+    parts: list[str] = []
+    if corrections:
+        # 去重（同一类纠正只保留代表性描述）
+        seen = set()
+        unique_corr = []
+        for c in corrections:
+            key = c.split("但")[0]
+            if key not in seen:
+                seen.add(key)
+                unique_corr.append(c)
+        parts.append("人工纠正记录：" + "；".join(unique_corr[:5]))
+    if reinforcements:
+        parts.append("人工确认正确：" + "；".join(reinforcements[:3]))
+    return "；".join(parts) if parts else ""
