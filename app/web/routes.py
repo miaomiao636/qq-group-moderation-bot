@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import html
 import json
+import secrets
 from datetime import timedelta
 from pathlib import Path
 from typing import Any
@@ -1589,31 +1590,63 @@ async def _build_ai_daily_stats(session: AsyncSession, days: int = 7) -> list[di
 
 # ---------- 管理 REST API（AI Agent 对接） ----------
 
+# P0-1: REST API 权限范围
+_API_SCOPES = {"project:read", "settings:write", "rules:publish", "actions:enable"}
 
-def _require_api_token(request: Request) -> str | None:
-    """REST API鉴权：与Web登录同token（session cookie）或Bearer token。"""
-    # 优先用cookie session
+
+def _require_api_token(request: Request, *, scope: str = "project:read") -> str | None:
+    """REST API鉴权（P0-1修复）。
+
+    - Cookie session: 必须通过 ``auth.is_valid`` 验证（修复伪造Cookie绕过）；
+    - Bearer token: 与 ADMIN_PASSWORD 分离，使用独立 AGENT_API_TOKEN + 常量时间比较；
+    - Cookie 发起 POST 写操作必须有 CSRF token；
+    - 未授权返回 None（调用方返回 HTTP 401/403）。
+    """
+    settings = get_settings()
     cookie_token = request.cookies.get(auth.SESSION_COOKIE)
     if cookie_token:
+        # P0-1 修复：必须验证 session 有效性，不接受任意非空字符串
+        if not auth.is_valid(cookie_token):
+            return None
+        # Cookie POST 写操作必须有 CSRF
+        if request.method in ("POST", "PUT", "PATCH", "DELETE"):
+            submitted = request.headers.get("x-csrf-token") or ""
+            if not submitted:
+                # 也接受 form 字段
+                try:
+                    form = request.scope.get("_form")
+                    if form is not None:
+                        submitted = form.get("csrf", "")
+                except Exception:  # noqa: BLE001
+                    pass
+            if not auth.validate_csrf(cookie_token, submitted):
+                raise HTTPException(403, "CSRF token required for cookie-originated write")
         return cookie_token
-    # 否则用Authorization: Bearer <admin_password>
+    # Bearer token: 独立 AGENT_API_TOKEN，常量时间比较
     auth_header = request.headers.get("authorization") or ""
     if auth_header.lower().startswith("bearer "):
         token = auth_header[7:].strip()
-        if token == get_settings().admin_password:
-            return "bearer:admin"
+        if settings.agent_api_token and secrets.compare_digest(token, settings.agent_api_token):
+            return f"bearer:{scope}"
     return None
 
 
-def _api_unauthorized() -> dict[str, object]:
+def _api_unauthorized_response() -> dict[str, object]:
     return {"error": "unauthorized"}
+
+
+def _require_api_auth(request: Request, *, scope: str = "project:read") -> str:
+    """鉴权失败直接 raise 401；成功返回 token 标识。"""
+    token = _require_api_token(request, scope=scope)
+    if token is None:
+        raise HTTPException(401, "authentication required", headers={"WWW-Authenticate": "Bearer"})
+    return token
 
 
 @router.get("/api/status")
 async def api_status(request: Request) -> dict[str, object]:
     """综合状态：进程、OneBot、判定统计（AI Agent 对接用）。"""
-    if _require_api_token(request) is None:
-        return _api_unauthorized()
+    _require_api_auth(request, scope="project:read")
     from app.runtime.onebot_ws import onebot_status
 
     async with SessionLocal() as session:
@@ -1631,8 +1664,7 @@ async def api_status(request: Request) -> dict[str, object]:
 @router.get("/api/groups")
 async def api_groups(request: Request) -> list[dict[str, Any]]:
     """群设置列表（AI Agent 对接用）。"""
-    if _require_api_token(request) is None:
-        return _api_unauthorized()  # type: ignore[return-value]
+    _require_api_auth(request, scope="project:read")
     from app.models import GroupSettings
 
     async with SessionLocal() as session:
@@ -1658,8 +1690,7 @@ async def api_group_settings(
     name: str | None = None,
 ) -> dict[str, Any]:
     """更新群设置（AI Agent 对接用）。"""
-    if _require_api_token(request) is None:
-        return _api_unauthorized()
+    _require_api_auth(request, scope="settings:write")
     from app.core.group_settings import get_or_create_group_settings
 
     async with SessionLocal() as session:
@@ -1675,6 +1706,19 @@ async def api_group_settings(
         if name is not None:
             gs.name = name.strip()[:64]
         await session.commit()
+    # P0-1: Agent 写操作必须审计
+    await record_admin_audit(
+        "api_token",
+        "group_settings_save",
+        "group",
+        group_openid,
+        {
+            "moderation_enabled": moderation_enabled,
+            "action_enabled": action_enabled,
+            "name": name[:64] if name else None,
+            "auto_routed_providers": routed,
+        },
+    )
     return {
         "group_openid": gs.group_openid,
         "name": gs.name,
@@ -1687,6 +1731,7 @@ async def api_group_settings(
 @router.get("/api/stats/ai")
 async def api_ai_stats(request: Request) -> list[dict[str, Any]]:
     """每日AI调用统计（AI Agent 对接用）。"""
+    _require_api_auth(request, scope="project:read")
     if _require_api_token(request) is None:
         return _api_unauthorized()  # type: ignore[return-value]
     async with SessionLocal() as session:

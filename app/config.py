@@ -108,6 +108,9 @@ class Settings(BaseSettings):
     admin_username: str = Field(default="admin", alias="ADMIN_USERNAME")
     admin_password: str = Field(default="", alias="ADMIN_PASSWORD")
 
+    # Agent REST API 独立令牌（P0-1）：与 ADMIN_PASSWORD 分离，可独立撤销轮换
+    agent_api_token: str = Field(default="", alias="AGENT_API_TOKEN", repr=False)
+
     # 数据保留期（天）
     raw_retention_days: int = Field(default=30, ge=1, alias="RAW_RETENTION_DAYS")
     decision_retention_days: int = Field(default=180, ge=1, alias="DECISION_RETENTION_DAYS")
