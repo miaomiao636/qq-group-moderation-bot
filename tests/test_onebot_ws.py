@@ -435,17 +435,34 @@ def test_file_without_url_and_unknown_segment_degrade() -> None:
 
 
 def test_onebot_adapter_never_defines_management_actions() -> None:
-    """OneBot Adapter 包内不得出现任何管理动作实现（撤回/禁言/警告/踢人）。"""
+    """T-307：管理动作只允许出现在 onebot/actions.py；踢人全包禁止。"""
     import ast
 
     adapter_dir = Path(__file__).parent.parent / "app" / "adapters" / "onebot"
+    allowed_file = "actions.py"
     forbidden = {"recall", "mute", "unmute", "warn", "kick"}
     for py in sorted(adapter_dir.rglob("*.py")):
         tree = ast.parse(py.read_text(encoding="utf-8"))
         for node in ast.walk(tree):
             if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
-                assert node.name not in forbidden, f"{py.name} 定义了管理动作 {node.name}"
-        assert "kick" not in py.read_text(encoding="utf-8").lower(), f"{py.name} 出现 kick"
+                if node.name == "kick" or "kick" in node.name.lower():
+                    raise AssertionError(f"{py.name} 定义了踢人 {node.name}")
+                if node.name in forbidden and py.name != allowed_file:
+                    raise AssertionError(
+                        f"{py.name} 定义了管理动作 {node.name}（只允许 {allowed_file}）"
+                    )
+        content = py.read_text(encoding="utf-8").lower()
+        assert "kick" not in content, f"{py.name} 出现 kick"
+        if py.name == allowed_file:
+            # 动作实现必须显式声明无踢人且受独立开关保护（组合根检查）
+            assert "t-307" in content, f"{py.name} 缺少 T-307 架构约束说明"
+
+    # 运行时hub不得内置任何具体管理动作端点名（recall=delete_msg 等由 Adapter 提供）
+    runtime_hub = Path(__file__).parent.parent / "app" / "runtime" / "onebot_actions.py"
+    hub_content = runtime_hub.read_text(encoding="utf-8")
+    assert "delete_msg" not in hub_content
+    assert "set_group_ban" not in hub_content
+    assert "send_group_msg" not in hub_content
 
 
 # ---------- 配置 fail-closed 校验 ----------

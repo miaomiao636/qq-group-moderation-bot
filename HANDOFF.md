@@ -2,11 +2,15 @@
 
 ## 日期
 
-2026-09-09（架构审查+修复+T-303实机轮）
+2026-09-09晚（T-303收尾 + T-307实现 + Windows服务化）
 
 ## 当前任务
 
-**T-303 Windows隔离群影子验证进行中 + 架构审查8项修复已实施**。NapCat 4.18.19 + QQ 9.9.31 在专机上实机跑通反向WS影子链路（420条判定/467次AI调用/11条规则已发布），24小时窗口已启动。期间做了一次全面架构审查，发现8项问题并全部修复（详见PROGRESS.md"已完成"区）。本地291项测试通过、mypy/ruff通过、服务重启NapCat自动重连ready。**T-303尚未验收——24小时数据汇总和断线演练待完成。**
+**T-303 24h影子数据汇总完成 + T-307 OneBot动作Adapter实现 + NSSM服务化**。
+- T-303窗口满24h，937条判定/936次AI调用/action_intents=0，证据 `data/t303-report.md`；断线演练三项通过 `data/drill-log-2026-09-09.md`。**待主审验收。**
+- T-307在分支 `feature/t307-onebot-actions` 实现：撤回=delete_msg/禁言=set_group_ban/警告=send_group_msg，经反向WS echo出站；数字ID强制校验；发送前未就绪=FAILED，发送后超时/断线=UNKNOWN冻结不重放；`ONEBOT_ACTIONS_ENABLED` 默认关闭，独立于ACTION_MODE第二道开关。29项新测试，全套320项通过、mypy 65文件、ruff通过。**未自行宣布验收，待主审独立审核。**
+- NSSM服务化：`QQBotWeb`/`QQBotRuntime` 已注册（开机自启/崩溃5s重启/日志轮转），NapCat启动脚本入启动文件夹；崩溃重启实测通过。**真实动作隔离群实测属W3，需T-307验收后进行。**
+- 切OFFICIAL前置：T-307验收 + ONEBOT_ACTIONS_ENABLED=true + 按群route(onebot→onebot) + 按群action_enabled + 急停关。当前默认仍SHADOW。
 
 ## 已完成内容
 

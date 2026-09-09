@@ -142,6 +142,13 @@ class Settings(BaseSettings):
         default=90, ge=5, le=3600, alias="ONEBOT_HEARTBEAT_TIMEOUT_SECONDS"
     )
 
+    # T-307：OneBot 真实管理动作（撤回/禁言/警告）。独立于 ACTION_MODE=OFFICIAL
+    # 的第二道开关：代码同步、服务重启或 NapCat 重连都不会自动开启真实处罚。
+    onebot_actions_enabled: bool = Field(default=False, alias="ONEBOT_ACTIONS_ENABLED")
+    onebot_action_timeout_seconds: int = Field(
+        default=10, ge=1, le=60, alias="ONEBOT_ACTION_TIMEOUT_SECONDS"
+    )
+
     @model_validator(mode="after")
     def _validate(self) -> Settings:
         """跨字段校验：日志级别合法、生产环境必须设置管理员密码、SQLite 路径规范化。"""
@@ -182,6 +189,12 @@ class Settings(BaseSettings):
         ):
             raise ValueError("AI_BASE_URL 必须以 https:// 或 http:// 开头。")
         self._validate_onebot_ws()
+        # T-307：真实动作经反向WS出站，必须同时开启 WS 入站
+        if self.onebot_actions_enabled and not self.onebot_ws_enabled:
+            raise ValueError(
+                "ONEBOT_ACTIONS_ENABLED 配置错误：真实动作经反向WS出站，"
+                "必须同时开启 ONEBOT_WS_ENABLED"
+            )
         return self
 
     def _validate_onebot_ws(self) -> None:

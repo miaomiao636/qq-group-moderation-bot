@@ -77,13 +77,16 @@ async def orchestrate_actions(
     decision: ModerationDecision,
     *,
     official_client: ModerationActionClient | None = None,
+    onebot_client: ModerationActionClient | None = None,
     settings: Settings | None = None,
     actor: str = "system",
 ) -> list[ActionIntent]:
     """Persist and execute recall/mute/warn in guarded OFFICIAL mode.
 
-    T-305：先按消息来源+群解析动作出口。``ACTION_MODE=OFFICIAL``
-    只允许QQ官方 Adapter；OneBot 真实动作必须等T-307引入独立开关后才能执行。
+    T-305：先按消息来源+群解析动作出口。``ACTION_MODE=OFFICIAL`` 下
+    QQ官方与OneBot Adapter 各自需要显式客户端配置；OneBot 真实动作
+    另需 ``ONEBOT_ACTIONS_ENABLED`` 独立开关（T-307），代码同步、
+    服务重启或NapCat重连都不会自动开启。
     """
     settings = settings or get_settings()
     if settings.action_mode != "OFFICIAL":
@@ -117,19 +120,35 @@ async def orchestrate_actions(
                 f"群 {msg.external_group_id} 未配置与消息来源 {msg.provider} 匹配的动作路由",
             )
         ]
-    if provider != "qq_official":
+    client: ModerationActionClient | None
+    if provider == "qq_official":
+        client = official_client if official_client is not None else _default_official_client(settings)
+        if client is None:
+            return [await _record_skipped(session, msg, "recall", actor, "QQ官方动作出口未配置客户端")]
+    elif provider == "onebot":
+        if not settings.onebot_actions_enabled:
+            return [
+                await _record_skipped(
+                    session,
+                    msg,
+                    "recall",
+                    actor,
+                    "OneBot真实动作开关未开启（ONEBOT_ACTIONS_ENABLED），仅记录不执行",
+                )
+            ]
+        client = onebot_client if onebot_client is not None else _default_onebot_client(settings)
+        if client is None:
+            return [await _record_skipped(session, msg, "recall", actor, "OneBot动作出口未配置客户端")]
+    else:
         return [
             await _record_skipped(
                 session,
                 msg,
                 "recall",
                 actor,
-                "OneBot真实动作尚未启用；必须完成T-307并使用独立开关",
+                f"provider {provider} 无可用动作出口（fail-closed）",
             )
         ]
-    client = official_client if official_client is not None else _default_official_client(settings)
-    if client is None:
-        return [await _record_skipped(session, msg, "recall", actor, "QQ官方动作出口未配置客户端")]
 
     outcome = await record_violation(session, msg, decision)
     intents: list[ActionIntent] = []
@@ -371,3 +390,16 @@ def _default_official_client(settings: Settings) -> ModerationActionClient | Non
     if not official_client_configured(settings):
         return None
     return build_official_action_client(settings)
+
+
+def _default_onebot_client(settings: Settings) -> ModerationActionClient | None:
+    """惰性构建 OneBot 动作客户端（组合根 seam，与官方对称）。
+
+    ``ONEBOT_ACTIONS_ENABLED`` 已在调用前检查；此处再校验 WS 配置齐全，
+    未配置时返回 None，由调用方记录 SKIPPED 意图。
+    """
+    from app.actions.onebot_wiring import build_onebot_action_client, onebot_actions_configured
+
+    if not onebot_actions_configured(settings):
+        return None
+    return build_onebot_action_client(settings)

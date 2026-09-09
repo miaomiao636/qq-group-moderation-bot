@@ -153,7 +153,7 @@ async def test_routed_onebot_group_never_borrows_official_client() -> None:
     assert intents[0].status == "SKIPPED"
     assert intents[0].provider == "onebot"
     assert intents[0].external_group_id == group
-    assert "T-307" in intents[0].reason
+    assert "ONEBOT_ACTIONS_ENABLED" in intents[0].reason
 
 
 @pytest.mark.asyncio
@@ -190,7 +190,7 @@ async def test_official_mode_never_enables_injected_onebot_client() -> None:
     assert [i.status for i in intents] == ["SKIPPED"]
     assert all(i.provider == "onebot" for i in route_rows)
     assert all(i.external_group_id == group for i in route_rows)
-    assert "T-307" in intents[0].reason
+    assert "ONEBOT_ACTIONS_ENABLED" in intents[0].reason
 
 
 @pytest.mark.asyncio

@@ -30,6 +30,7 @@ from app.db import SessionLocal
 from app.moderation.image_engine import ImageModerationEngine
 from app.moderation.rules import TextRuleEngine
 from app.runtime import onebot_wiring
+from app.runtime.onebot_actions import onebot_action_hub
 
 logger = logging.getLogger(__name__)
 
@@ -306,6 +307,11 @@ def build_onebot_router(ws_path: str) -> APIRouter:
         queue_max=settings.onebot_queue_max,
         heartbeat_timeout=float(settings.onebot_heartbeat_timeout_seconds),
     )
+    # T-307：出站动作通道复用本连接；就绪语义与 /onebot/status 一致
+    onebot_action_hub.configure(
+        timeout_seconds=float(settings.onebot_action_timeout_seconds),
+        readiness=onebot_status.state,
+    )
     router = APIRouter()
 
     @router.get("/onebot/status")
@@ -337,6 +343,7 @@ def build_onebot_router(ws_path: str) -> APIRouter:
 
         await websocket.accept()
         onebot_status.register_connect()
+        onebot_action_hub.bind(websocket)
         invalid_streak = 0
         try:
             while True:
@@ -353,6 +360,10 @@ def build_onebot_router(ws_path: str) -> APIRouter:
                 invalid_streak = 0
                 if not isinstance(event, dict):
                     onebot_status.count_invalid()
+                    continue
+
+                # T-307：NapCat 对动作调用的 echo 响应优先匹配出站通道
+                if onebot_action_hub.handle_response(event):
                     continue
 
                 self_id = event.get("self_id")
@@ -390,6 +401,7 @@ def build_onebot_router(ws_path: str) -> APIRouter:
         else:
             onebot_status.register_disconnect()
         finally:
+            onebot_action_hub.unbind(websocket)
             if onebot_status.connected:
                 onebot_status.register_disconnect()
 

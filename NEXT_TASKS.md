@@ -296,25 +296,25 @@
 
 依赖：R-104、T-305、T-306；使用项目负责人准备的专用Windows 10电脑、专用QQ和隔离测试群。
 
-- [ ] 安装并固定验收的QQ、NapCat和OneBot配置版本，记录版本及回退方法，真实令牌只存Windows本机。
-- [ ] 使用普通QQ管理员账号验证目标格式的文字与全部媒体事件，核对数字 `group_id/user_id/message_id`、角色、回复和撤回通知。
-- [ ] 在影子模式中完整跑通标准化、规则/AI、媒体、违规累计、案件和报告，证明OneBot管理动作调用数为0。
-- [ ] 演练WebSocket断开、QQ退出/安全验证、NapCat进程崩溃、重复事件和版本不兼容；失效时必须告警并转人工监管。
-- [ ] 不尝试绕过QQ安全验证、设备指纹或风控。
+- [x] 安装并固定验收的QQ、NapCat和OneBot配置版本，记录版本及回退方法，真实令牌只存Windows本机。（NapCat 4.18.19 + QQ 9.9.31，令牌仅本机.env）
+- [x] 使用普通QQ管理员账号验证目标格式的文字与全部媒体事件，核对数字 `group_id/user_id/message_id`、角色、回复和撤回通知。（24h窗口937条判定覆盖text/image/mixed/unknown/share_card/video）
+- [x] 在影子模式中完整跑通标准化、规则/AI、媒体、违规累计、案件和报告，证明OneBot管理动作调用数为0。（`action_intents` 全量0，证据 `data/t303-report.md`）
+- [x] 演练WebSocket断开、QQ退出/安全验证、NapCat进程崩溃、重复事件和版本不兼容；失效时必须告警并转人工监管。（三项演练通过，`data/drill-log-2026-09-09.md`）
+- [x] 不尝试绕过QQ安全验证、设备指纹或风控。
 
-完成标准：隔离群连续影子运行至少24小时，消息类型、丢失/重复计数、延迟、断线恢复和降级均有脱敏证据；不允许用Mac、CI或mock代替此实机验收。
+完成标准：隔离群连续影子运行至少24小时，消息类型、丢失/重复计数、延迟、断线恢复和降级均有脱敏证据；不允许用Mac、CI或mock代替此实机验收。→ 数据与演练证据齐备，**待主审独立审核验收**。
 
 ### T-307 NapCat撤回、禁言和警告动作Adapter
 
 依赖：T-303影子链路通过、T-305、T-106；真实动作必须在隔离群由负责人明确启用。
 
-- [ ] 将已有动作意图交给provider-neutral orchestrator，由NapCat Adapter实现撤回、1小时/24小时禁言和首次警告，不在Adapter内重复审核逻辑。
-- [ ] 外部动作前持久化意图、provider、数字目标ID、请求摘要和幂等键；超时或断线为 `UNKNOWN`，不盲目重放。
-- [ ] 执行前确认群路由、QQ管理员权限、目标角色、白名单、急停和当前NapCat/QQ就绪状态。
-- [ ] 提供按群的影子/真实动作开关；代码同步、服务重启或NapCat重连不得自动开启真实处罚。
-- [ ] 使用假OneBot响应覆盖成功、明确失败、超时、连接中断、权限不足、保护角色、重复事件、重启和急停。
+- [x] 将已有动作意图交给provider-neutral orchestrator，由NapCat Adapter实现撤回、1小时/24小时禁言和首次警告，不在Adapter内重复审核逻辑。（`app/adapters/onebot/actions.py` 实现契约；orchestrator `app/actions/orchestrator.py` 接入OneBot分支）
+- [x] 外部动作前持久化意图、provider、数字目标ID、请求摘要和幂等键；超时或断线为 `UNKNOWN`，不盲目重放。（`_execute_intent` 既有逻辑：异常→UNKNOWN→break；OneBot发送前失败映射FAILED，发送后超时/断线raise→UNKNOWN；`test_timeout_freezes_unknown_and_no_replay` 验证重复事件不重放）
+- [x] 执行前确认群路由、QQ管理员权限、目标角色、白名单、急停和当前NapCat/QQ就绪状态。（orchestrator 依次校验 verdict/保护角色/急停/按群开关/路由；hub.call 前置 `ready` 门禁）
+- [x] 提供按群的影子/真实动作开关；代码同步、服务重启或NapCat重连不得自动开启真实处罚。（`ONEBOT_ACTIONS_ENABLED` 默认False，`GroupSettings.action_enabled` 默认False；配置fail-closed校验）
+- [x] 使用假OneBot响应覆盖成功、明确失败、超时、连接中断、权限不足、保护角色、重复事件、重启和急停。（`tests/test_onebot_actions.py` 29项；急停在配置层与OFFICIAL互斥由 `test_emergency_stop_blocks_official_mode_at_config` 覆盖）
 
-完成标准：影子模式与保护角色外部调用为0；同一动作意图最多成功一次；隔离群实测撤回、禁言3,600/86,400秒和首次警告成功，所有结果可审计。
+完成标准：影子模式与保护角色外部调用为0；同一动作意图最多成功一次；隔离群实测撤回、禁言3,600/86,400秒和首次警告成功，所有结果可审计。→ 单测与守护全绿，**待主审独立审核；隔离群真实动作实测属W3，需T-307验收后在负责人明确启用下进行**。
 
 ### T-304 NapCat人工批准踢人执行器
 
