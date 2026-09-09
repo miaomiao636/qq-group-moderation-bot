@@ -38,7 +38,7 @@ AIContentKind = Literal[
 ]
 AIResultSource = Literal["text", "vision", "degraded", "cache"]
 
-PROMPT_VERSION = "t204-v1"
+PROMPT_VERSION = "t204-v2"  # v2：增加校园墙白名单指令+广告/诈骗边界澄清
 MAX_AI_TEXT_CHARS = 4_000
 MAX_AI_MEDIA_BYTES = 5 * 1024 * 1024
 
