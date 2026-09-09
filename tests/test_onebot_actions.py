@@ -105,9 +105,7 @@ def test_mute_out_of_range_seconds_is_failed() -> None:
 def test_mute_sends_set_group_ban_with_int_ids() -> None:
     caller = _FakeCaller(response={"status": "ok", "retcode": 0})
     asyncio.run(OneBotActionClient(caller).mute("100", "200", 3600))
-    assert caller.calls == [
-        ("set_group_ban", {"group_id": 100, "user_id": 200, "duration": 3600})
-    ]
+    assert caller.calls == [("set_group_ban", {"group_id": 100, "user_id": 200, "duration": 3600})]
 
 
 def test_warn_sends_send_group_msg_with_reply_and_text() -> None:
@@ -285,7 +283,9 @@ def _official_onebot_settings() -> Settings:
     )
 
 
-def _ob_msg(group: str, member: str, *, mid: str | None = None, role: str = "member") -> StandardMessage:
+def _ob_msg(
+    group: str, member: str, *, mid: str | None = None, role: str = "member"
+) -> StandardMessage:
     ext_mid = mid or str(uuid.uuid4().int)[:12]
     return StandardMessage(
         message_id=ext_mid,
@@ -314,9 +314,7 @@ def _high_decision(msg: StandardMessage) -> ModerationDecision:
 
 
 async def _setup_onebot_group(session: AsyncSession, group: str, *, enabled: bool = True) -> None:
-    await upsert_group_route(
-        session, group, message_provider="onebot", action_provider="onebot"
-    )
+    await upsert_group_route(session, group, message_provider="onebot", action_provider="onebot")
     gs = await session.get(GroupSettings, group)
     if gs is None:
         gs = GroupSettings(group_openid=group, action_enabled=enabled)
@@ -334,7 +332,10 @@ async def test_official_shadow_never_calls_onebot_client() -> None:
     async with SessionLocal() as session:
         await _setup_onebot_group(session, group)
         intents = await orchestrate_actions(
-            session, msg, _high_decision(msg), onebot_client=client,
+            session,
+            msg,
+            _high_decision(msg),
+            onebot_client=client,
             settings=Settings(action_mode="SHADOW", _env_file=None),
         )
     assert intents == []
@@ -349,10 +350,18 @@ async def test_official_onebot_actions_disabled_is_skipped() -> None:
     async with SessionLocal() as session:
         await _setup_onebot_group(session, group)
         intents = await orchestrate_actions(
-            session, msg, _high_decision(msg), onebot_client=client,
+            session,
+            msg,
+            _high_decision(msg),
+            onebot_client=client,
             settings=Settings(
-                app_env="prod", admin_password="p", qq_app_id="a", qq_app_secret="s",
-                action_mode="OFFICIAL", onebot_actions_enabled=False, _env_file=None,
+                app_env="prod",
+                admin_password="p",
+                qq_app_id="a",
+                qq_app_secret="s",
+                action_mode="OFFICIAL",
+                onebot_actions_enabled=False,
+                _env_file=None,
             ),
         )
     assert len(intents) == 1 and intents[0].status == "SKIPPED"
@@ -369,7 +378,10 @@ async def test_official_onebot_success_executes_recall_mute_warn() -> None:
     async with SessionLocal() as session:
         await _setup_onebot_group(session, group)
         intents = await orchestrate_actions(
-            session, msg, _high_decision(msg), onebot_client=client,
+            session,
+            msg,
+            _high_decision(msg),
+            onebot_client=client,
             settings=_official_onebot_settings(),
         )
     statuses = {i.action: i.status for i in intents}
@@ -379,7 +391,10 @@ async def test_official_onebot_success_executes_recall_mute_warn() -> None:
     # 幂等键包含 provider/external_*：再次调用不应重复执行
     async with SessionLocal() as session:
         again = await orchestrate_actions(
-            session, msg, _high_decision(msg), onebot_client=client,
+            session,
+            msg,
+            _high_decision(msg),
+            onebot_client=client,
             settings=_official_onebot_settings(),
         )
     assert len(again) == 3
@@ -395,7 +410,10 @@ async def test_timeout_freezes_unknown_and_no_replay() -> None:
     async with SessionLocal() as session:
         await _setup_onebot_group(session, group)
         intents = await orchestrate_actions(
-            session, msg, _high_decision(msg), onebot_client=client,
+            session,
+            msg,
+            _high_decision(msg),
+            onebot_client=client,
             settings=_official_onebot_settings(),
         )
     assert len(intents) == 1 and intents[0].status == "UNKNOWN"
@@ -404,7 +422,10 @@ async def test_timeout_freezes_unknown_and_no_replay() -> None:
     # 重复事件不得重放
     async with SessionLocal() as session:
         again = await orchestrate_actions(
-            session, msg, _high_decision(msg), onebot_client=client,
+            session,
+            msg,
+            _high_decision(msg),
+            onebot_client=client,
             settings=_official_onebot_settings(),
         )
     assert again[0].status == "UNKNOWN"
@@ -416,9 +437,14 @@ async def test_emergency_stop_blocks_official_mode_at_config() -> None:
     # 急停与 OFFICIAL 互斥：配置层即拒绝启动，无法进入动作执行路径
     with pytest.raises(ValueError, match="EMERGENCY_STOP=false"):
         Settings(
-            app_env="prod", admin_password="p", qq_app_id="a", qq_app_secret="s",
-            action_mode="OFFICIAL", onebot_actions_enabled=True,
-            emergency_stop=True, _env_file=None,
+            app_env="prod",
+            admin_password="p",
+            qq_app_id="a",
+            qq_app_secret="s",
+            action_mode="OFFICIAL",
+            onebot_actions_enabled=True,
+            emergency_stop=True,
+            _env_file=None,
         )
 
 
@@ -430,7 +456,10 @@ async def test_group_action_disabled_is_skipped() -> None:
     async with SessionLocal() as session:
         await _setup_onebot_group(session, group, enabled=False)
         intents = await orchestrate_actions(
-            session, msg, _high_decision(msg), onebot_client=client,
+            session,
+            msg,
+            _high_decision(msg),
+            onebot_client=client,
             settings=_official_onebot_settings(),
         )
     assert intents and intents[0].status == "SKIPPED" and "群动作已禁用" in intents[0].reason
@@ -445,7 +474,10 @@ async def test_protected_role_is_skipped() -> None:
     async with SessionLocal() as session:
         await _setup_onebot_group(session, group)
         intents = await orchestrate_actions(
-            session, msg, _high_decision(msg), onebot_client=client,
+            session,
+            msg,
+            _high_decision(msg),
+            onebot_client=client,
             settings=_official_onebot_settings(),
         )
     assert intents and intents[0].status == "SKIPPED" and "保护角色" in intents[0].reason
@@ -464,7 +496,10 @@ async def test_no_route_fail_closed() -> None:
             session.add(GroupSettings(group_openid=group, action_enabled=True))
             await session.commit()
         intents = await orchestrate_actions(
-            session, msg, _high_decision(msg), onebot_client=client,
+            session,
+            msg,
+            _high_decision(msg),
+            onebot_client=client,
             settings=_official_onebot_settings(),
         )
     assert intents and intents[0].status == "SKIPPED" and "路由" in intents[0].reason
@@ -482,17 +517,24 @@ async def test_action_logs_written_for_audit() -> None:
     async with SessionLocal() as session:
         await _setup_onebot_group(session, group)
         await orchestrate_actions(
-            session, msg, _high_decision(msg), onebot_client=client,
+            session,
+            msg,
+            _high_decision(msg),
+            onebot_client=client,
             settings=_official_onebot_settings(),
         )
         logs = (
-            await session.execute(
-                select(ActionLog).where(
-                    ActionLog.provider == "onebot",
-                    ActionLog.external_group_id == group,
+            (
+                await session.execute(
+                    select(ActionLog).where(
+                        ActionLog.provider == "onebot",
+                        ActionLog.external_group_id == group,
+                    )
                 )
             )
-        ).scalars().all()
+            .scalars()
+            .all()
+        )
         assert len(logs) == 3
     assert {log.action for log in logs} == {"recall", "mute", "warn"}
     assert all(log.ok for log in logs)

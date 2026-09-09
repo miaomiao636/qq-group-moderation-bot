@@ -59,12 +59,14 @@ async def test_enable_action_idempotent_single_route() -> None:
         await _ensure_action_routes(session, group)
         await _ensure_action_routes(session, group)
         rows = (
-            await session.execute(
-                select(GroupProviderRoute).where(
-                    GroupProviderRoute.external_group_id == group
+            (
+                await session.execute(
+                    select(GroupProviderRoute).where(GroupProviderRoute.external_group_id == group)
                 )
             )
-        ).scalars().all()
+            .scalars()
+            .all()
+        )
     assert len(rows) == 1
 
 
@@ -78,12 +80,14 @@ async def test_disable_action_does_not_delete_route() -> None:
     # 模拟面板取消勾选动作：_ensure_action_routes 不会被调用，路由自然保留
     async with SessionLocal() as session:
         rows = (
-            await session.execute(
-                select(GroupProviderRoute).where(
-                    GroupProviderRoute.external_group_id == group
+            (
+                await session.execute(
+                    select(GroupProviderRoute).where(GroupProviderRoute.external_group_id == group)
                 )
             )
-        ).scalars().all()
+            .scalars()
+            .all()
+        )
     assert len(rows) == 1
     async with SessionLocal() as session:
         assert await resolve_action_provider(session, "onebot", group) == "onebot"

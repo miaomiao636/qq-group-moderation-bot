@@ -68,7 +68,9 @@ class OneBotActionClient:
     def __init__(self, caller: OneBotActionCaller) -> None:
         self._caller = caller
 
-    async def _call(self, action_name: str, endpoint: str, params: Mapping[str, Any]) -> ActionResult:
+    async def _call(
+        self, action_name: str, endpoint: str, params: Mapping[str, Any]
+    ) -> ActionResult:
         try:
             resp = await self._caller(endpoint, params)
         except OneBotActionError as exc:

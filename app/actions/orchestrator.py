@@ -122,9 +122,13 @@ async def orchestrate_actions(
         ]
     client: ModerationActionClient | None
     if provider == "qq_official":
-        client = official_client if official_client is not None else _default_official_client(settings)
+        client = (
+            official_client if official_client is not None else _default_official_client(settings)
+        )
         if client is None:
-            return [await _record_skipped(session, msg, "recall", actor, "QQ官方动作出口未配置客户端")]
+            return [
+                await _record_skipped(session, msg, "recall", actor, "QQ官方动作出口未配置客户端")
+            ]
     elif provider == "onebot":
         if not settings.onebot_actions_enabled:
             return [
@@ -138,7 +142,9 @@ async def orchestrate_actions(
             ]
         client = onebot_client if onebot_client is not None else _default_onebot_client(settings)
         if client is None:
-            return [await _record_skipped(session, msg, "recall", actor, "OneBot动作出口未配置客户端")]
+            return [
+                await _record_skipped(session, msg, "recall", actor, "OneBot动作出口未配置客户端")
+            ]
     else:
         return [
             await _record_skipped(

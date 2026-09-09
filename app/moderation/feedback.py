@@ -468,8 +468,7 @@ async def load_vision_feedback_context(session: AsyncSession) -> str:
         elif fb.label in POSITIVE_LABELS and ai_cat in (None, "other", "normal"):
             # AI没判违规但人工确认违规 → 漏判纠正
             corrections.append(
-                f"你之前判{ai_cat or 'null'}但人工确认违规"
-                f"（{fb_reason or '广告/引流'}）→应判ad"
+                f"你之前判{ai_cat or 'null'}但人工确认违规（{fb_reason or '广告/引流'}）→应判ad"
             )
         elif fb.label in POSITIVE_LABELS and ai_cat in ("ad", "fraud"):
             # AI判对且人工确认 → 强化

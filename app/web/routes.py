@@ -1346,7 +1346,6 @@ async def _ensure_action_routes(session: AsyncSession, group_openid: str) -> lis
     return routed
 
 
-
 @router.get("/groups", response_class=HTMLResponse)
 async def groups_page(request: Request, notice: str = "") -> Response:
     """群管理面板：列出所有被监测的群，按群开关审核与动作。"""

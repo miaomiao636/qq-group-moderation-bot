@@ -26,9 +26,7 @@ async def _add_image_feedback(
     mid = f"FB_IMG_{uuid.uuid4().hex[:6]}"
     detail = json.dumps(
         {
-            "ai_results": [{"category": ai_cat, "confidence": ai_conf}]
-            if ai_cat
-            else [],
+            "ai_results": [{"category": ai_cat, "confidence": ai_conf}] if ai_cat else [],
         },
         ensure_ascii=False,
     )
