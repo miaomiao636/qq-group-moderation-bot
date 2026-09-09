@@ -1217,9 +1217,8 @@ async def mine_feedback_submit(request: Request, csrf: str = Form("")) -> Respon
     from app.moderation.feedback import mine_rule_candidates
 
     async with SessionLocal() as session:
-        # T-303负责人确认：放宽成员数门槛至1（单成员反复刷屏是典型广告模式）；
-        # 仍要求 ≥3条消息 且 0负例冲突，候选仅是提案，发布前必须人工审核。
-        candidates = await mine_rule_candidates(session, min_members=1)
+        # 负责人确认：确认即真值，门槛降至1条即学（不再需要≥3条×≥2人）
+        candidates = await mine_rule_candidates(session, min_messages=1, min_members=1)
     await record_admin_audit(
         operator, "feedback_mine_candidates", "rule_candidate", "batch", {"count": len(candidates)}
     )

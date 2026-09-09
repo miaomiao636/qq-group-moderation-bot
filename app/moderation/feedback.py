@@ -350,16 +350,12 @@ def _put_candidate(
 
 
 def _phrase_windows(text: str) -> set[str]:
-    phrases: set[str] = set()
+    """整段作为一个关键词（不再滑窗碎片），截断到30字防过长。"""
     compact = re.sub(r"[^\u4e00-\u9fffA-Za-z0-9]+", "", text)
-    if len(compact) < 4:
-        return phrases
-    for size in range(4, min(8, len(compact)) + 1):
-        for idx in range(0, len(compact) - size + 1):
-            phrase = compact[idx : idx + size]
-            if _usable_phrase(phrase):
-                phrases.add(phrase)
-    return phrases
+    compact = compact[:30]
+    if len(compact) < 4 or not _usable_phrase(compact):
+        return set()
+    return {compact}
 
 
 def _usable_phrase(text: str) -> bool:
