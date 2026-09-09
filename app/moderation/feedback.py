@@ -458,7 +458,6 @@ async def load_vision_feedback_context(session: AsyncSession) -> str:
                 ai_cat = r.get("category")
                 ai_conf = float(r.get("confidence") or 0)
                 break
-        human_label = "违规" if fb.label in POSITIVE_LABELS else "正常"
         fb_reason = (fb.reason or "").strip()
         if fb.label in NEGATIVE_LABELS and ai_cat in ("ad", "fraud"):
             # AI判违规但人工确认正常 → 校园墙白名单纠正
