@@ -163,14 +163,14 @@ def test_owner_and_admin_never_punished() -> None:
 # ---------- 刷屏 ----------
 
 
-def test_flood_same_content_over_5_in_60s() -> None:
+def test_flood_same_content_3_in_60s() -> None:
     engine = TextRuleEngine()
     base = 1000.0
     verdict = "allow"
-    for i in range(6):
+    for i in range(3):
         decision = engine.evaluate(
             make_message(text="水一水", member_openid="MEM_FLOOD", message_id=f"FLOOD_{i}"),
-            now=base + i * 5,  # 每5秒一条，共6条在60秒窗口内
+            now=base + i * 5,  # 每5秒一条，共3条在60秒窗口内
         )
         verdict = decision.verdict
     assert verdict == "violation_high"
@@ -183,7 +183,7 @@ def test_no_flood_when_spread_out() -> None:
     for i in range(8):
         decision = engine.evaluate(
             make_message(text="水一水", member_openid="MEM_SPREAD", message_id=f"SPREAD_{i}"),
-            now=base + i * 20,  # 每20秒一条，60秒窗口内最多3条
+            now=base + i * 35,  # 每35秒一条，60秒窗口内最多2条
         )
         verdict = decision.verdict
     assert verdict == "allow"
