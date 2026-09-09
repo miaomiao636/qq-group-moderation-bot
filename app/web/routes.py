@@ -1313,6 +1313,40 @@ async def cleanup_now(request: Request, csrf: str = Form("")) -> RedirectRespons
 # ---------- 群管理（P0：按群审核/动作开关） ----------
 
 
+async def _ensure_action_routes(session: AsyncSession, group_openid: str) -> list[str]:
+    """动作开启时按该群已见消息来源补齐同通道路由（T-307）。
+
+    仅写入 ``message_provider == action_provider`` 的合法路由（跨通道被
+    ``upsert_group_route`` 拒绝）。未见过消息的群不写路由——没有消息来源
+    就没有动作出口可言，orchestrator 会以"未配置路由"SKIPPED。
+    """
+    from app.core.routing import upsert_group_route
+    from app.runtime.models import ShadowDecision
+
+    providers = {
+        r[0]
+        for r in (
+            await session.execute(
+                select(ShadowDecision.provider)
+                .where(ShadowDecision.external_group_id == group_openid)
+                .distinct()
+            )
+        ).all()
+        if r[0]
+    }
+    routed: list[str] = []
+    for provider in sorted(providers):
+        await upsert_group_route(
+            session,
+            group_openid,
+            message_provider=provider,
+            action_provider=provider,
+        )
+        routed.append(provider)
+    return routed
+
+
+
 @router.get("/groups", response_class=HTMLResponse)
 async def groups_page(request: Request, notice: str = "") -> Response:
     """群管理面板：列出所有被监测的群，按群开关审核与动作。"""
@@ -1337,11 +1371,21 @@ async def groups_page(request: Request, notice: str = "") -> Response:
         alias_map = {a.group_openid: a.name for a in alias_rows}
         seen.update(settings_map.keys())
         seen.update(alias_map.keys())
+        # 动作出口路由（T-307）：显示每群已配置的 provider→action_provider
+        from app.core.routing import GroupProviderRoute
+
+        route_rows = (await session.execute(select(GroupProviderRoute))).scalars().all()
+        route_map: dict[str, list[str]] = {}
+        for r in route_rows:
+            route_map.setdefault(r.external_group_id, []).append(
+                f"{r.message_provider}→{r.action_provider}"
+            )
 
     groups = sorted(seen)
     rows = "".join(
         "<tr>"
         f"<td><code>{_esc(g[:20])}{'…' if len(g) > 20 else ''}</code></td>"
+        f"<td class=muted>{_esc(' / '.join(route_map.get(g, [])) or '—')}</td>"
         f"<td>"
         f'<form method=post action="/admin/groups/settings" style="display:flex;gap:6px;align-items:center">'
         f"{csrf}"
@@ -1362,10 +1406,10 @@ async def groups_page(request: Request, notice: str = "") -> Response:
         "<h2>群管理</h2>"
         "<p>列出所有被 NapCat 监测到的群。<b>审核</b>=消息是否进入规则/AI审核；"
         "<b>动作</b>=OFFICIAL模式下是否执行撤回/禁言（安全默认关闭，须显式开启）。"
-        "未开动作的群即使判违规也只记录。</p>"
+        "勾选动作保存时会自动补齐同通道路由（出口列）；未开动作的群即使判违规也只记录。</p>"
         f"{notice_html}"
-        "<table><tr><th>群ID</th><th>设置</th></tr>"
-        f"{rows or '<tr><td colspan=2 class=muted>暂无群消息记录</td></tr>'}</table>"
+        "<table><tr><th>群ID</th><th>动作出口</th><th>设置</th></tr>"
+        f"{rows or '<tr><td colspan=3 class=muted>暂无群消息记录</td></tr>'}</table>"
     )
     return _page("群管理", body, refresh_seconds=15)
 
@@ -1389,6 +1433,9 @@ async def save_group_settings(
         gs.name = name.strip()[:64]
         gs.moderation_enabled = moderation_enabled == "1"
         gs.action_enabled = action_enabled == "1"
+        routed: list[str] = []
+        if gs.action_enabled:
+            routed = await _ensure_action_routes(session, group_openid)
         await session.commit()
     await record_admin_audit(
         await _operator(request),
@@ -1399,10 +1446,13 @@ async def save_group_settings(
             "name": name[:64],
             "moderation_enabled": moderation_enabled == "1",
             "action_enabled": action_enabled == "1",
+            "auto_routed_providers": routed,
         },
     )
     return RedirectResponse(
-        f"/admin/groups?notice=已保存：{_esc(name[:20] or group_openid[:20])}", status_code=303
+        f"/admin/groups?notice=已保存：{_esc(name[:20] or group_openid[:20])}"
+        + (f"（自动配置动作出口：{','.join(routed)}）" if routed else ""),
+        status_code=303,
     )
 
 
@@ -1617,7 +1667,11 @@ async def api_group_settings(
         gs = await get_or_create_group_settings(session, group_openid)
         if moderation_enabled is not None:
             gs.moderation_enabled = moderation_enabled
-        if action_enabled is not None:
+        routed: list[str] = []
+        if action_enabled is True:
+            gs.action_enabled = True
+            routed = await _ensure_action_routes(session, group_openid)
+        elif action_enabled is not None:
             gs.action_enabled = action_enabled
         if name is not None:
             gs.name = name.strip()[:64]
@@ -1627,6 +1681,7 @@ async def api_group_settings(
         "name": gs.name,
         "moderation_enabled": gs.moderation_enabled,
         "action_enabled": gs.action_enabled,
+        "auto_routed_providers": routed,
     }
 
 

@@ -10,7 +10,7 @@
 - T-303窗口满24h，937条判定/936次AI调用/action_intents=0，证据 `data/t303-report.md`；断线演练三项通过 `data/drill-log-2026-09-09.md`。**待主审验收。**
 - T-307在分支 `feature/t307-onebot-actions` 实现：撤回=delete_msg/禁言=set_group_ban/警告=send_group_msg，经反向WS echo出站；数字ID强制校验；发送前未就绪=FAILED，发送后超时/断线=UNKNOWN冻结不重放；`ONEBOT_ACTIONS_ENABLED` 默认关闭，独立于ACTION_MODE第二道开关。29项新测试，全套320项通过、mypy 65文件、ruff通过。**未自行宣布验收，待主审独立审核。**
 - NSSM服务化：`QQBotWeb`/`QQBotRuntime` 已注册（开机自启/崩溃5s重启/日志轮转），NapCat启动脚本入启动文件夹；崩溃重启实测通过。**真实动作隔离群实测属W3，需T-307验收后进行。**
-- 切OFFICIAL前置：T-307验收 + ONEBOT_ACTIONS_ENABLED=true + 按群route(onebot→onebot) + 按群action_enabled + 急停关。当前默认仍SHADOW。
+- 切OFFICIAL前置：T-307验收 + ONEBOT_ACTIONS_ENABLED=true + 按群route(onebot→onebot) + 按群action_enabled + 急停关。当前默认仍SHADOW。面板勾"动作"已自动补齐同通道路由（方案A），完整流程见 `docs/switch-official.md`。
 
 ## 已完成内容
 

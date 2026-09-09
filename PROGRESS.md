@@ -7,6 +7,7 @@
 - 断线演练三项全部通过（`data/drill-log-2026-09-09.md`）：①WS停用→自动重连；②后端崩溃kill→瞬时重连+DB零差异；③QQ进程全灭→服务如实offline/degraded告警+快速登录免扫码约2分钟恢复。**T-303待主审独立审核验收。**
 - T-307 NapCat撤回/禁言/警告动作Adapter实现（分支 `feature/t307-onebot-actions`）：`app/adapters/onebot/actions.py`（契约实现，数字ID强制校验，发送前失败=FAILED/发送后超时=UNKNOWN不重放）、`app/runtime/onebot_actions.py`（反向WS echo出站通道hub，就绪门禁）、`app/actions/onebot_wiring.py`（组合根seam）、orchestrator接入OneBot分支+`ONEBOT_ACTIONS_ENABLED`独立开关（默认关闭，代码同步/重启/NapCat重连均不自动开启）。新增29项测试（适配器12/Hub6/编排器8/配置3），AST守护更新为"动作只允许actions.py+踢人全包禁止+hub不得内置端点名"。本地320项测试通过、mypy 65源文件0错误、ruff通过。**T-307待主审独立审核验收，未自行宣布关闭。**
 - Windows无人值守（T-404主体落地）：NSSM注册 `QQBotWeb`/`QQBotRuntime` 两个服务（开机自启、崩溃自动重启5s、日志轮转10MB），NapCat启动脚本入用户启动文件夹（带单实例保护）；崩溃自动重启实测通过（kill→12s内新PID+healthz 200）。路径乱码坑已记录（PS5.1读UTF-8脚本需BOM）。**真实动作隔离群实测与W3验收仍待T-307通过后进行。**
+- 群管理面板"动作"开关自动补齐同通道路由（方案A）：勾选动作保存时按该群已见消息来源自动 `upsert_group_route`（onebot→onebot，跨通道仍被禁止），面板新增"动作出口"列；未见过消息的群不写路由。配套 `docs/switch-official.md` 切换操作手册（三层开关+前置条件+急停回退+按群临时关闭）。**真实动作隔离群实测与W3验收仍待T-307通过后进行。**
 
 **T-303实机验证进行中 + 架构审查8项修复（2026-09-09）**：NapCat主通道在Windows专机上实机跑通——NapCat 4.18.19注入QQ 9.9.31，反向WS连入影子服务，24小时窗口已启动（9月8日19:50起）。实机420条影子判定、467次AI调用（131文字+53视觉+280缓存），11条人工反馈挖掘的候选规则已发布生效。期间进行了一次全面架构审查，发现并修复8项问题（详见下方"已完成"）。本地291项测试通过、mypy 61源文件、ruff通过、服务重启NapCat自动重连ready、healthz不再泄露敏感状态、僵尸租约已清理。**T-303尚未验收——24小时数据汇总和断线演练待完成。**
 
