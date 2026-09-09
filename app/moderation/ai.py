@@ -557,7 +557,15 @@ def merge_ai_evidence(
     *,
     independent_confirmed: bool = False,
 ) -> ModerationDecision:
-    """Merge AI outputs. A single AI model can only move `allow` to `record_only`."""
+    """Merge AI outputs into the local decision.
+
+    策略（2026-09-09 调整，方案B）：
+    - 文字模型单结果：只能把 allow 升到 record_only（软证据），避免误判；
+    - **视觉模型单结果**：图片没有确定性规则兜底，AI 是唯一判据。当 category
+      属于 ad/fraud（明确广告/引流/诈骗）且 confidence≥0.90 时，直接升级
+      violation_high。保护角色仍由 orchestrator 在执行前拦截。
+    - 两个独立模型均高置信（independent_confirmed）：任意类别均可升级。
+    """
     usable = [result for result in ai_results if not result.degraded_reason and result.category]
     if not usable:
         return local
@@ -591,6 +599,25 @@ def merge_ai_evidence(
                 "reason": "AI主模型与独立复核模型均高置信，进入高置信违规",
             }
         )
+    # 方案B：单个视觉模型对明确广告/诈骗类高置信直接升级（图片无确定性规则兜底）
+    if not local.is_protected_sender:
+        vision_high = [
+            r
+            for r in high_ai
+            if r.source == "vision" and r.category in ("ad", "fraud") and r.confidence >= 0.90
+        ]
+        if vision_high:
+            best = max(vision_high, key=lambda r: r.confidence)
+            return local.model_copy(
+                update={
+                    "verdict": "violation_high",
+                    "category": best.category,
+                    "confidence": min(best.confidence, 0.95),
+                    "rule_hits": local.rule_hits + hits,
+                    "recommended_actions": ["recall", "mute", "warn"],
+                    "reason": f"视觉AI高置信识别{best.category}（conf={best.confidence:.2f}），直接升级违规",
+                }
+            )
     # 只在AI给出有意义（非正常类+足够置信）信号时才升级record_only，
     # 避免正常消息被AI泛泛"可能有广告"的软证据洪泛到人工队列。
     meaningful = [r for r in usable if r.category not in (None, "normal") and r.confidence >= 0.60]

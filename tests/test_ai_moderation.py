@@ -79,17 +79,76 @@ def _msg(text: str, *, group: str = "G_AI") -> StandardMessage:
     )
 
 
-def test_single_ai_result_is_soft_evidence_only() -> None:
+def test_single_text_ai_result_is_soft_evidence_only() -> None:
+    """文字模型单结果只能升到 record_only（软证据），不直接违规。"""
     result = AIModerationResult(
         category="ad",
         confidence=0.99,
         evidence="疑似广告",
         model_id="fake",
         prompt_version="v1",
+        source="text",
     )
     decision = merge_ai_evidence(_allow_decision(), [result])
     assert decision.verdict == "record_only"
     assert decision.recommended_actions == []
+
+
+def test_single_vision_ai_high_confidence_ad_upgrades_to_violation() -> None:
+    """方案B：视觉模型对广告类高置信直接升级 violation_high（图片无确定性规则兜底）。"""
+    result = AIModerationResult(
+        category="ad",
+        confidence=0.95,
+        evidence="图片含招聘引流广告",
+        model_id="mimo-v2.5",
+        prompt_version="v1",
+        source="vision",
+    )
+    decision = merge_ai_evidence(_allow_decision(), [result])
+    assert decision.verdict == "violation_high"
+    assert decision.category == "ad"
+    assert decision.recommended_actions == ["recall", "mute", "warn"]
+
+
+def test_single_vision_ai_fraud_high_confidence_upgrades() -> None:
+    result = AIModerationResult(
+        category="fraud",
+        confidence=0.90,
+        evidence="诈骗图片",
+        model_id="mimo-v2.5",
+        prompt_version="v1",
+        source="vision",
+    )
+    decision = merge_ai_evidence(_allow_decision(), [result])
+    assert decision.verdict == "violation_high"
+
+
+def test_vision_ai_below_threshold_stays_record_only() -> None:
+    """视觉模型置信度不足0.90时仍只升 record_only。"""
+    result = AIModerationResult(
+        category="ad",
+        confidence=0.85,
+        evidence="疑似广告",
+        model_id="mimo-v2.5",
+        prompt_version="v1",
+        source="vision",
+    )
+    decision = merge_ai_evidence(_allow_decision(), [result])
+    assert decision.verdict == "record_only"
+
+
+def test_vision_ai_other_category_stays_record_only() -> None:
+    """视觉模型非 ad/fraud 类（如 other）即使高置信也不直接升级。"""
+    result = AIModerationResult(
+        category="other",
+        confidence=0.95,
+        evidence="未知内容",
+        model_id="mimo-v2.5",
+        prompt_version="v1",
+        source="vision",
+    )
+    decision = merge_ai_evidence(_allow_decision(), [result])
+    assert decision.verdict == "record_only"
 
 
 def test_ai_result_rejects_action_like_fields() -> None:
