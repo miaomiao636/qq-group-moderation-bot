@@ -65,6 +65,32 @@ class GroupAlias(Base):
     )
 
 
+class GroupSettings(Base):
+    """群级管理设置：按群控制审核与动作开关（管理员可视化操作）。"""
+
+    __tablename__ = "group_settings"
+
+    group_openid: Mapped[str] = mapped_column(String(128), primary_key=True)
+    name: Mapped[str] = mapped_column(String(64), default="")
+    moderation_enabled: Mapped[bool] = mapped_column(default=True, server_default="1")
+    action_enabled: Mapped[bool] = mapped_column(default=False, server_default="0")
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=_utcnow, onupdate=_utcnow
+    )
+
+
+class SystemSetting(Base):
+    """系统级设置：保留期、清理开关等（管理后台可视化配置）。"""
+
+    __tablename__ = "system_settings"
+
+    key: Mapped[str] = mapped_column(String(64), primary_key=True)
+    value: Mapped[str] = mapped_column(String(255), default="")
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=_utcnow, onupdate=_utcnow
+    )
+
+
 class ActionLog(Base):
     """动作审计表：每次撤回/禁言/警告调用都记录结果（可审计要求）。"""
 

@@ -16,6 +16,7 @@ from app.core.routing import (
 from app.db import SessionLocal
 from app.moderation.decision import ModerationDecision
 from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
 
 
 class RecordingClient:
@@ -79,6 +80,19 @@ def _high_decision(msg: StandardMessage) -> ModerationDecision:
     )
 
 
+async def _enable_actions(session: AsyncSession, group_openid: str) -> None:
+    """T-303 UX：OFFICIAL 模式测试需显式为测试群启用动作。"""
+    from app.models import GroupSettings
+
+    gs = await session.get(GroupSettings, group_openid)
+    if gs is None:
+        gs = GroupSettings(group_openid=group_openid, action_enabled=True)
+        session.add(gs)
+    else:
+        gs.action_enabled = True
+    await session.commit()
+
+
 @pytest.mark.asyncio
 async def test_default_official_route_keeps_legacy_official_behavior() -> None:
     group = f"G_ROUTE_DEFAULT_{uuid.uuid4().hex[:6]}"
@@ -121,6 +135,7 @@ async def test_routed_onebot_group_never_borrows_official_client() -> None:
     official = RecordingClient("official")
     msg = _msg(group, "200000001")
     async with SessionLocal() as session:
+        await _enable_actions(session, group)
         await upsert_group_route(
             session, group, message_provider="onebot", action_provider="onebot"
         )
@@ -149,6 +164,7 @@ async def test_official_mode_never_enables_injected_onebot_client() -> None:
     onebot = RecordingClient("onebot")
     msg = _msg(group, "200000002")
     async with SessionLocal() as session:
+        await _enable_actions(session, group)
         await upsert_group_route(
             session, group, message_provider="onebot", action_provider="onebot"
         )
@@ -203,6 +219,7 @@ async def test_unrouted_group_keeps_official_behavior() -> None:
         text="违规测试内容",
     )
     async with SessionLocal() as session:
+        await _enable_actions(session, group)
         intents = await orchestrate_actions(
             session,
             msg,

@@ -10,12 +10,14 @@ from __future__ import annotations
 import html
 import json
 from datetime import timedelta
+from pathlib import Path
 from typing import Any
 from urllib.parse import quote
 
 from fastapi import APIRouter, Form, HTTPException, Request, Response
 from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse
 from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.cases.case_sm import IllegalTransitionError
 from app.cases.models import Case, ViolationRecord
@@ -54,8 +56,10 @@ def _page(
             '<a href="/admin/shadow" style="color:#93c5fd">影子判定</a> &nbsp; '
             '<a href="/admin/rules" style="color:#93c5fd">规则</a> &nbsp; '
             '<a href="/admin/feedback" style="color:#93c5fd">反馈学习</a> &nbsp; '
+            '<a href="/admin/groups" style="color:#93c5fd">群管理</a> &nbsp; '
             '<a href="/admin/stats" style="color:#93c5fd">统计</a> &nbsp; '
             '<a href="/admin/reports" style="color:#93c5fd">报告</a> &nbsp; '
+            '<a href="/admin/settings" style="color:#93c5fd">设置</a> &nbsp; '
             '<a href="/admin/logout" style="color:#fca5a5">退出</a></div></header>'
         )
     refresh = ""
@@ -117,6 +121,23 @@ def _ai_model_table(models: list[dict[str, Any]]) -> str:
     return (
         "<div class=card><h3>AI 调用（按模型）</h3>"
         "<table><tr><th>模型</th><th>调用</th><th>成功</th><th>失败</th>"
+        "<th>平均延迟</th><th>费用</th></tr>" + rows + "</table></div>"
+    )
+
+
+def _ai_daily_table(daily: list[dict[str, Any]]) -> str:
+    """AI 每日消耗表（调用量/成功率/延迟/费用）。"""
+    if not daily:
+        return "<div class=card><h3>AI 每日消耗</h3><p class=muted>暂无AI调用记录</p></div>"
+    rows = "".join(
+        f"<tr><td>{_esc(d['day'])}</td><td>{d['calls']}</td><td>{d['ok']}</td>"
+        f"<td>{d['fail']}</td><td>{d['avg_latency_ms']}ms</td><td>¥{d['cost_yuan']}</td></tr>"
+        for d in daily
+    )
+    total_cost = sum(d["cost_yuan"] for d in daily)
+    return (
+        f"<div class=card><h3>AI 每日消耗（累计 ¥{total_cost:.2f}）</h3>"
+        "<table><tr><th>日期</th><th>调用</th><th>成功</th><th>失败</th>"
         "<th>平均延迟</th><th>费用</th></tr>" + rows + "</table></div>"
     )
 
@@ -283,7 +304,8 @@ async def stats_dashboard(request: Request) -> Response:
         return _login_redirect()
     async with SessionLocal() as session:
         stats = await build_stats(session)
-    return _page("统计大盘", _stats_body(stats))
+        ai_daily = await _build_ai_daily_stats(session)
+    return _page("统计大盘", _stats_body(stats) + _ai_daily_table(ai_daily))
 
 
 # ---------- 案件详情 ----------
@@ -1286,3 +1308,332 @@ async def cleanup_now(request: Request, csrf: str = Form("")) -> RedirectRespons
         await purge_expired(session)
     await record_admin_audit(await _operator(request), "cleanup_now", "retention", "manual")
     return RedirectResponse("/admin/reports", status_code=303)
+
+
+# ---------- 群管理（P0：按群审核/动作开关） ----------
+
+
+@router.get("/groups", response_class=HTMLResponse)
+async def groups_page(request: Request, notice: str = "") -> Response:
+    """群管理面板：列出所有被监测的群，按群开关审核与动作。"""
+    token = await _require_login(request)
+    if not token:
+        return _login_redirect()
+    csrf = _csrf_field(token)
+    from app.models import GroupAlias, GroupSettings
+    from app.runtime.models import ShadowDecision
+
+    async with SessionLocal() as session:
+        # 所有出现过的群（影子判定+去重记录+别名）
+        seen = set()
+        for row in (
+            await session.execute(select(ShadowDecision.external_group_id).distinct())
+        ).all():
+            if row[0]:
+                seen.add(row[0])
+        gs_rows = (await session.execute(select(GroupSettings))).scalars().all()
+        settings_map = {g.group_openid: g for g in gs_rows}
+        alias_rows = (await session.execute(select(GroupAlias))).scalars().all()
+        alias_map = {a.group_openid: a.name for a in alias_rows}
+        seen.update(settings_map.keys())
+        seen.update(alias_map.keys())
+
+    groups = sorted(seen)
+    rows = "".join(
+        "<tr>"
+        f"<td><code>{_esc(g[:20])}{'…' if len(g) > 20 else ''}</code></td>"
+        f"<td>"
+        f'<form method=post action="/admin/groups/settings" style="display:flex;gap:6px;align-items:center">'
+        f"{csrf}"
+        f'<input type=hidden name=group_openid value="{_esc(g)}">'
+        f'<input name=name value="{_esc(settings_map.get(g, GroupSettings(group_openid=g)).name or alias_map.get(g, ""))}" placeholder="群名称" style="width:140px">'
+        f'<label style="margin-right:12px"><input type=checkbox name=moderation_enabled value=1 {"checked" if (settings_map.get(g) is None or settings_map[g].moderation_enabled) else ""}>审核</label>'
+        f"<label><input type=checkbox name=action_enabled value=1 {'checked' if (settings_map.get(g) is not None and settings_map[g].action_enabled) else ''}>动作</label>"
+        f"<button class=btn>保存</button>"
+        f"</form>"
+        f"</td>"
+        f"</tr>"
+        for g in groups
+    )
+    notice_html = (
+        f'<div class=card style="border-color:#16804b">{_esc(notice)}</div>' if notice else ""
+    )
+    body = (
+        "<h2>群管理</h2>"
+        "<p>列出所有被 NapCat 监测到的群。<b>审核</b>=消息是否进入规则/AI审核；"
+        "<b>动作</b>=OFFICIAL模式下是否执行撤回/禁言（安全默认关闭，须显式开启）。"
+        "未开动作的群即使判违规也只记录。</p>"
+        f"{notice_html}"
+        "<table><tr><th>群ID</th><th>设置</th></tr>"
+        f"{rows or '<tr><td colspan=2 class=muted>暂无群消息记录</td></tr>'}</table>"
+    )
+    return _page("群管理", body, refresh_seconds=15)
+
+
+@router.post("/groups/settings")
+async def save_group_settings(
+    request: Request,
+    group_openid: str = Form(""),
+    name: str = Form(""),
+    moderation_enabled: str = Form(""),
+    action_enabled: str = Form(""),
+    csrf: str = Form(""),
+) -> RedirectResponse:
+    await _require_admin_post(request, csrf)
+    if not group_openid:
+        return RedirectResponse("/admin/groups", status_code=303)
+    from app.core.group_settings import get_or_create_group_settings
+
+    async with SessionLocal() as session:
+        gs = await get_or_create_group_settings(session, group_openid)
+        gs.name = name.strip()[:64]
+        gs.moderation_enabled = moderation_enabled == "1"
+        gs.action_enabled = action_enabled == "1"
+        await session.commit()
+    await record_admin_audit(
+        await _operator(request),
+        "group_settings_save",
+        "group",
+        group_openid,
+        {
+            "name": name[:64],
+            "moderation_enabled": moderation_enabled == "1",
+            "action_enabled": action_enabled == "1",
+        },
+    )
+    return RedirectResponse(
+        f"/admin/groups?notice=已保存：{_esc(name[:20] or group_openid[:20])}", status_code=303
+    )
+
+
+# ---------- 系统设置（保留期/清理/备份） ----------
+
+
+@router.get("/settings", response_class=HTMLResponse)
+async def settings_page(request: Request, notice: str = "") -> Response:
+    """系统设置：保留期、清理、备份、存储路径。"""
+    token = await _require_login(request)
+    if not token:
+        return _login_redirect()
+    csrf = _csrf_field(token)
+    from app.config import get_settings
+
+    settings = get_settings()
+    async with SessionLocal() as session:
+        from app.models import SystemSetting
+
+        auto_cleanup = await session.get(SystemSetting, "auto_cleanup_enabled")
+    auto_on = (auto_cleanup.value if auto_cleanup else "0") == "1"
+
+    notice_html = (
+        f'<div class=card style="border-color:#16804b">{_esc(notice)}</div>' if notice else ""
+    )
+    body = (
+        "<h2>系统设置</h2>"
+        f"{notice_html}"
+        "<div class=card><h3>数据保留期（来自 .env，修改需重启）</h3>"
+        f"<p>原始消息/媒体：<b>{settings.raw_retention_days}</b> 天　"
+        f"判定/反馈/动作记录：<b>{settings.decision_retention_days}</b> 天</p></div>"
+        "<div class=card><h3>存储路径</h3>"
+        f"<p>媒体目录：<code>{_esc(str(settings.database_url)[:80])}</code></p>"
+        f"<p>数据库：<code>data/moderation.db</code></p></div>"
+        "<div class=card><h3>数据清理</h3>"
+        f"<p>自动清理：{'<b style=color:green>已开启</b>' if auto_on else '<b style=color:gray>已关闭</b>'}（每6小时按保留期清理过期数据）</p>"
+        f'<form method=post action="/admin/settings/auto-cleanup" style="display:inline">{csrf}'
+        f"<button class=btn>{'关闭自动清理' if auto_on else '开启自动清理'}</button></form>"
+        '<form method=post action="/admin/cleanup" style="display:inline;margin-left:12px">{csrf}'
+        "<button class=btn>立即执行清理</button></form></div>"
+        "<div class=card><h3>数据库备份</h3>"
+        '<form method=post action="/admin/settings/backup">{csrf}'
+        "<button class=btn>立即备份（复制到 data/backups/）</button></form></div>"
+    )
+    return _page("系统设置", body)
+
+
+@router.post("/settings/auto-cleanup")
+async def toggle_auto_cleanup(request: Request, csrf: str = Form("")) -> RedirectResponse:
+    await _require_admin_post(request, csrf)
+    async with SessionLocal() as session:
+        from app.models import SystemSetting
+
+        s = await session.get(SystemSetting, "auto_cleanup_enabled")
+        if s is None:
+            from app.models import SystemSetting
+
+            s = SystemSetting(key="auto_cleanup_enabled", value="0")
+            session.add(s)
+        s.value = "0" if s.value == "1" else "1"
+        await session.commit()
+    await record_admin_audit(
+        await _operator(request),
+        "auto_cleanup_toggle",
+        "system",
+        "cleanup",
+        {"enabled": s.value == "1"},
+    )
+    return RedirectResponse(
+        f"/admin/settings?notice=自动清理已{'开启' if s.value == '1' else '关闭'}", status_code=303
+    )
+
+
+@router.post("/settings/backup")
+async def backup_db(request: Request, csrf: str = Form("")) -> RedirectResponse:
+    await _require_admin_post(request, csrf)
+    import shutil
+    from datetime import datetime as dt
+
+    backup_dir = Path("data/backups")
+    backup_dir.mkdir(parents=True, exist_ok=True)  # noqa: ASYNC240
+    src = Path("data/moderation.db")
+    if src.exists():  # noqa: ASYNC240
+        dest = backup_dir / f"moderation_backup_{dt.now():%Y%m%d_%H%M%S}.db"
+        shutil.copy2(src, dest)  # noqa: ASYNC240
+        msg = f"已备份到 {dest.name}"
+    else:
+        msg = "数据库文件不存在"
+    await record_admin_audit(
+        await _operator(request),
+        "db_backup",
+        "system",
+        "backup",
+        {"dest": str(dest) if src.exists() else ""},  # noqa: ASYNC240
+    )
+    return RedirectResponse(f"/admin/settings?notice={_esc(msg)}", status_code=303)
+
+
+# ---------- AI 消费面板（扩展统计页） ----------
+
+
+async def _build_ai_daily_stats(session: AsyncSession, days: int = 7) -> list[dict[str, Any]]:
+    """每日AI调用统计（按天聚合）。"""
+    from app.moderation.ai import AIUsageLog
+
+    rows = (
+        (await session.execute(select(AIUsageLog).order_by(AIUsageLog.created_at.desc())))
+        .scalars()
+        .all()
+    )
+    per_day: dict[str, dict[str, Any]] = {}
+    for r in rows:
+        day = r.created_at.strftime("%m-%d")
+        d = per_day.setdefault(day, {"calls": 0, "ok": 0, "cost": 0, "latency": []})
+        d["calls"] += 1
+        d["ok"] += 1 if r.ok else 0
+        d["cost"] += r.cost_cents or 0
+        d["latency"].append(r.latency_ms or 0)
+    result = []
+    for day in sorted(per_day, reverse=True)[:days]:
+        d = per_day[day]
+        avg = sum(d["latency"]) / len(d["latency"]) if d["latency"] else 0
+        result.append(
+            {
+                "day": day,
+                "calls": d["calls"],
+                "ok": d["ok"],
+                "fail": d["calls"] - d["ok"],
+                "cost_yuan": round(d["cost"] / 100, 2),
+                "avg_latency_ms": round(avg, 0),
+            }
+        )
+    return result
+
+
+# ---------- 管理 REST API（AI Agent 对接） ----------
+
+
+def _require_api_token(request: Request) -> str | None:
+    """REST API鉴权：与Web登录同token（session cookie）或Bearer token。"""
+    # 优先用cookie session
+    cookie_token = request.cookies.get(auth.SESSION_COOKIE)
+    if cookie_token:
+        return cookie_token
+    # 否则用Authorization: Bearer <admin_password>
+    auth_header = request.headers.get("authorization") or ""
+    if auth_header.lower().startswith("bearer "):
+        token = auth_header[7:].strip()
+        if token == get_settings().admin_password:
+            return "bearer:admin"
+    return None
+
+
+def _api_unauthorized() -> dict[str, object]:
+    return {"error": "unauthorized"}
+
+
+@router.get("/api/status")
+async def api_status(request: Request) -> dict[str, object]:
+    """综合状态：进程、OneBot、判定统计（AI Agent 对接用）。"""
+    if _require_api_token(request) is None:
+        return _api_unauthorized()
+    from app.runtime.onebot_ws import onebot_status
+
+    async with SessionLocal() as session:
+        from app.reports.stats import build_stats
+
+        stats = await build_stats(session)
+    return {
+        "status": "ok",
+        "onebot": onebot_status.snapshot(include_sensitive=False),
+        "stats": stats["totals"],
+        "generated_at": stats["generated_at"],
+    }
+
+
+@router.get("/api/groups")
+async def api_groups(request: Request) -> list[dict[str, Any]]:
+    """群设置列表（AI Agent 对接用）。"""
+    if _require_api_token(request) is None:
+        return _api_unauthorized()  # type: ignore[return-value]
+    from app.models import GroupSettings
+
+    async with SessionLocal() as session:
+        rows = (await session.execute(select(GroupSettings))).scalars().all()
+    return [
+        {
+            "group_openid": g.group_openid,
+            "name": g.name,
+            "moderation_enabled": g.moderation_enabled,
+            "action_enabled": g.action_enabled,
+            "updated_at": g.updated_at.isoformat(),
+        }
+        for g in rows
+    ]
+
+
+@router.post("/api/groups/{group_openid}/settings")
+async def api_group_settings(
+    request: Request,
+    group_openid: str,
+    moderation_enabled: bool | None = None,
+    action_enabled: bool | None = None,
+    name: str | None = None,
+) -> dict[str, Any]:
+    """更新群设置（AI Agent 对接用）。"""
+    if _require_api_token(request) is None:
+        return _api_unauthorized()
+    from app.core.group_settings import get_or_create_group_settings
+
+    async with SessionLocal() as session:
+        gs = await get_or_create_group_settings(session, group_openid)
+        if moderation_enabled is not None:
+            gs.moderation_enabled = moderation_enabled
+        if action_enabled is not None:
+            gs.action_enabled = action_enabled
+        if name is not None:
+            gs.name = name.strip()[:64]
+        await session.commit()
+    return {
+        "group_openid": gs.group_openid,
+        "name": gs.name,
+        "moderation_enabled": gs.moderation_enabled,
+        "action_enabled": gs.action_enabled,
+    }
+
+
+@router.get("/api/stats/ai")
+async def api_ai_stats(request: Request) -> list[dict[str, Any]]:
+    """每日AI调用统计（AI Agent 对接用）。"""
+    if _require_api_token(request) is None:
+        return _api_unauthorized()  # type: ignore[return-value]
+    async with SessionLocal() as session:
+        return await _build_ai_daily_stats(session)

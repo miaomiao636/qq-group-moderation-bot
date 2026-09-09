@@ -175,6 +175,28 @@ async def run_pipeline(
         await mark_failed(session, claim_key, claim.token, f"{type(exc).__name__}: {exc}")
         return None
 
+    # 按群审核开关：禁用群的消息仅记录为allow，不进入规则/AI/媒体审核
+    from app.core.group_settings import is_moderation_enabled
+
+    if not await is_moderation_enabled(session, msg.external_group_id):
+        record = await upsert_shadow_decision(
+            session,
+            message_id=claim_key,
+            external_message_id=msg.external_message_id,
+            group_openid=msg.external_group_id,
+            member_openid=msg.external_user_id,
+            provider=msg.provider,
+            external_group_id=msg.external_group_id,
+            external_user_id=msg.external_user_id,
+            sender_name=(msg.sender.username or "")[:64],
+            kind=msg.kind,
+            verdict="allow",
+            reason="群审核已禁用（管理员设置），仅记录",
+            detail_json=json.dumps({"moderation_disabled": True}, ensure_ascii=False),
+        )
+        await mark_processed(session, claim_key, claim.token)
+        return record
+
     try:
         rule_version_ids: tuple[int, ...] = ()
         local_ai_media_paths: list[Path] = []

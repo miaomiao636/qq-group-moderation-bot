@@ -15,6 +15,7 @@ from app.models import ActionLog
 from app.moderation.decision import ModerationDecision
 from app.runtime.pipeline import run_pipeline
 from sqlalchemy import func, select
+from sqlalchemy.ext.asyncio import AsyncSession
 
 
 class FakeOfficialClient:
@@ -62,6 +63,19 @@ def _official_settings() -> Settings:
         action_mode="OFFICIAL",
         _env_file=None,
     )
+
+
+async def _enable_actions(session: AsyncSession, group_openid: str) -> None:
+    """T-303 UX：OFFICIAL 模式测试需显式为测试群启用动作。"""
+    from app.models import GroupSettings
+
+    gs = await session.get(GroupSettings, group_openid)
+    if gs is None:
+        gs = GroupSettings(group_openid=group_openid, action_enabled=True)
+        session.add(gs)
+    else:
+        gs.action_enabled = True
+    await session.commit()
 
 
 def _msg(
@@ -129,6 +143,7 @@ async def test_official_first_strike_persists_intents_then_calls() -> None:
     member = "M1"
     msg = _msg(group, member)
     async with SessionLocal() as session:
+        await _enable_actions(session, group)
         intents = await orchestrate_actions(
             session,
             msg,
@@ -156,6 +171,7 @@ async def test_official_second_strike_uses_24h_mute_and_no_warn() -> None:
     group = f"G_ACT_SECOND_{uuid.uuid4().hex[:6]}"
     member = "M1"
     async with SessionLocal() as session:
+        await _enable_actions(session, group)
         first = _msg(group, member)
         await orchestrate_actions(
             session,
@@ -191,6 +207,7 @@ async def test_duplicate_message_does_not_replay_or_create_second_violation() ->
     member = "M1"
     msg = _msg(group, member)
     async with SessionLocal() as session:
+        await _enable_actions(session, group)
         await orchestrate_actions(
             session,
             msg,
@@ -233,6 +250,7 @@ async def test_same_message_id_from_onebot_does_not_reuse_official_intents() -> 
     )
     official = _msg(group, "M_OFFICIAL", message_id=message_id)
     async with SessionLocal() as session:
+        await _enable_actions(session, group)
         onebot_intents = await orchestrate_actions(
             session,
             onebot,
@@ -259,6 +277,7 @@ async def test_unknown_action_result_is_not_replayed() -> None:
     group = f"G_ACT_UNKNOWN_{uuid.uuid4().hex[:6]}"
     msg = _msg(group, "M1")
     async with SessionLocal() as session:
+        await _enable_actions(session, group)
         intents = await orchestrate_actions(
             session,
             msg,

@@ -100,6 +100,12 @@ async def orchestrate_actions(
     if not decision.recommended_actions:
         return []
 
+    # 按群动作开关：禁用群不执行任何动作（安全默认值）
+    from app.core.group_settings import is_action_enabled
+
+    if not await is_action_enabled(session, msg.external_group_id):
+        return [await _record_skipped(session, msg, "recall", actor, "群动作已禁用（管理员设置）")]
+
     provider = await resolve_action_provider(session, msg.provider, msg.external_group_id)
     if provider is None:
         return [
