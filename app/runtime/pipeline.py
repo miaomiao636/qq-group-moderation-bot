@@ -302,6 +302,8 @@ async def run_pipeline(
             "is_protected_sender": decision.is_protected_sender,
             "text_preview": msg.text[:60],
             "media_kinds": [a.content_type for a in msg.attachments],
+            # T-306增强：媒体文件名（SHA安全名），供后台详情页回看原图/视频
+            "media_files": [{"name": a.filename, "type": a.content_type} for a in msg.attachments],
             "rule_version_ids": list(rule_version_ids),
             "ai_results": [r.model_dump() for r in ai_results],
         }

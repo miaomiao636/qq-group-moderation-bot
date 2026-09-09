@@ -2,7 +2,9 @@
 
 ## 当前阶段
 
-**T-306已完成独立主审整改并验收（2026-09-08，决策D-021）**：主审未直接相信原交接的全绿结论，发现并修复媒体路径逃逸、通配监听、未鉴权状态泄露、离线心跳误报、缺失`self_id`、跨账号影子记录覆盖、重复事件先下载后去重、URL令牌泄露和Adapter中转导入。新增迁移 `f6a2c7e91b40` 分离内部事件键与外部消息ID。本地291项收集、290通过/1个本机真实样本跳过，mypy 61源文件、ruff 106文件、锁文件、迁移升降级和干净运行时均通过；修复提交 `444b368` 的CI运行 `34219858155` 在Ubuntu、Windows和干净运行时三项全绿。下一项为T-303/W1。
+**T-303实机验证进行中 + 架构审查8项修复（2026-09-09）**：NapCat主通道在Windows专机上实机跑通——NapCat 4.18.19注入QQ 9.9.31，反向WS连入影子服务，24小时窗口已启动（9月8日19:50起）。实机420条影子判定、467次AI调用（131文字+53视觉+280缓存），11条人工反馈挖掘的候选规则已发布生效。期间进行了一次全面架构审查，发现并修复8项问题（详见下方"已完成"）。本地291项测试通过、mypy 61源文件、ruff通过、服务重启NapCat自动重连ready、healthz不再泄露敏感状态、僵尸租约已清理。**T-303尚未验收——24小时数据汇总和断线演练待完成。**
+
+**T-306已完成独立主审整改并验收（2026-09-08，决策D-021）**：主审未直接相信原交接的全绿结论，发现并修复媒体路径逃逸、通配监听、未鉴权状态泄露、离线心跳误报、缺失`self_id`、跨账号影子记录覆盖、重复事件先下载后去重、URL令牌泄露和Adapter中转导入。新增迁移 `f6a2c7e91b40` 分离内部事件键与外部消息ID。本地291项收集、290通过/1个本机真实样本跳过，mypy 61源文件、ruff 106文件、锁文件、迁移升降级和干净运行时均通过；修复提交 `444b368` 的CI运行 `34219858155` 在Ubuntu、Windows和干净运行时三项全绿。
 
 **T-305主审整改已验收（2026-09-08，决策D-020）**：独立复验发现并修复了OneBot错误回退官方动作通道、跨provider违规/动作串扰、核心反向导入Adapter与通用消息段缺失。本地234项测试中233通过/1跳过，mypy 57源文件、ruff、Alembic完整升降级通过；提交 `b3a107b` 的CI运行 `34200777456` 中Ubuntu、Windows和干净运行时三项全绿。
 
@@ -15,6 +17,28 @@
 **R-103、T-105、T-204、T-205、T-106实现与远程CI已通过（2026-09-06，分支 `feature/r103-ai-rule-learning`）**：已修复R-103正确性问题，并实现后台版本化动态规则、远程AI软证据、管理员反馈候选规则学习和官方撤回/禁言/警告动作编排。本地全量门禁通过：pytest 203 passed / 1 skipped、mypy 48个源文件通过、ruff check/format通过；Alembic临时库完成 `upgrade head → current → downgrade base → upgrade head`；干净运行时依赖环境可导入应用和AI适配器，且不包含pytest。功能分支已推送，Pull Request #1 上分支 tip（`27fcf6d`）的最新 CI 运行 `34028677558` 与较早的 `34028509570`（@`d00960d`）均在 Ubuntu、Windows 与干净运行时依赖三个任务全部成功（详见 `HANDOFF.md`）；PR #1 已于 2026-09-06 合并（合并提交 `761fdba`），`main` 现含 R-103+T-105+T-204+T-205+T-106 全套实现。默认仍为 `ACTION_MODE=SHADOW`，真实QQ群自动处罚、真实MiMo调用、Windows 24×7和NapCat尚未实机验收。
 
 ## 已完成
+
+- **架构审查8项修复 + T-303实机UX改进（2026-09-09）**：
+
+  **审查修复（按严重度排序）**：
+  1. **P0 record_only洪泛**（`ai.py`）：`merge_ai_evidence`原先只要AI返回任何非降级结果+本地allow就升级record_only，导致82%消息转人工。修复：AI非正常类+置信度≥0.60才升级，正常消息不再洪泛人工队列。
+  2. **P0 媒体SSRF**（`media.py`）：`download_attachment`原先无URL安全校验，群成员可发指向内网的图片URL让机器人SSRF。修复：`_is_safe_media_url`拒绝回环/私有/链路本地IP。
+  3. **P1 healthz泄露**（`main.py`）：`snapshot()`默认暴露self_id和群号到无鉴权healthz。修复：改用`snapshot(include_sensitive=False)`。
+  4. **P1 队列非持久**（`onebot_wiring.py`+`dedup.py`）：进程重启时队列内未处理事件丢失。修复：worker处理前`mark_pending`写DB，启动`reap_stuck_leases`清理+报告遗留PENDING。
+  5. **P1 僵尸PROCESSING租约**（`dedup.py`+`main.py`）：worker硬退出后租约永久卡PROCESSING。修复：`reap_stuck_leases`启动时将过期PROCESSING标记为FAILED(lease_expired)，实测清理1条。
+  6. **P1 AI延迟瓶颈**（`onebot_ws.py`）：worker串行处理+MiMo 30-40s/调用=高流量必堵。修复：worker并发3（`asyncio.gather`），各自独立TextRuleEngine防频率状态竞争。
+  7. **P2 worker旧task泄漏**（`onebot_ws.py`）：`_ensure_worker`重建时未取消旧task→httpx连接泄漏。修复：重建前`_worker_task.cancel()`。
+  8. **P2 WS无消息大小上限**（`__main__.py`）：恶意超大帧可OOM。修复：`ws_max_size=1_048_576`（1MB）。
+
+  **T-303实机UX改进**：
+  - 影子判定详情页（`/admin/shadow/detail`）：点击时间列打开——展示判定信息、文字预览、消息段、**媒体原件回看**（图片直接显示/音视频播放/文件下载）、AI取证、人工反馈。
+  - 受保护媒体端点（`/admin/media/{name}`）：登录鉴权+路径穿越防护。
+  - 反馈表单回显：已保存的标签/原因自动选中（不再被刷新重置）；按钮变为"更新反馈"；同消息重复提交视为修正（不再产生重复行）。
+  - 反馈原因预设选项：11个datalist选项（广告/引流、诈骗/钓鱼等），可选可填。
+  - 影子判定页30秒智能自动刷新：打字时暂停，不丢失输入。
+  - 管理后台T-303实机期间运行在Windows专机，NapCat 4.18.19 + QQ 9.9.31，令牌鉴权反向WS，影子模式外部调用数为0。
+
+  **验证**：ruff check通过；mypy 61源文件0错误；pytest 291 passed（1个e2e flaky单独通过）；服务重启NapCat自动重连ready；healthz不再暴露self_id/group_last_event；旧过期PROCESSING租约已清理为FAILED。
 
 - **T-306 NapCat/OneBot入站Adapter与影子运行器（2026-09-08，首轮实现已由主审整改）**：
   1. `app/adapters/onebot/parser.py`：OneBot 11事件→T-305中立契约纯转换。覆盖文字/at/@提及/face表情/image图片（含.gif判GIF）/mface表情商城/record语音/video视频/file文件/reply引用/forward合并转发/json卡片/share链接分享；未知段保留类型名+数据键名元数据转`kind="unknown"`；CQ码字符串形态降级；匿名消息标记。OneBot数字ID以字符串进入`external_*`，绝不伪装OpenID。

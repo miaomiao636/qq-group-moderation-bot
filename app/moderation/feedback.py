@@ -147,6 +147,47 @@ async def record_feedback(
     return record
 
 
+async def record_recall_notice(
+    session: AsyncSession,
+    *,
+    message_id: str,
+    group_openid: str = "",
+    member_openid: str = "",
+    operator: str = "onebot_group_recall",
+) -> str:
+    """管理员撤回通知 → 自动记录「未知原因撤回」反馈（T-306增强）。
+
+    撤回原因未知：不当真值、不进入违规列表、不产生任何动作，
+    仅作为待人工确认线索；同一消息只记录一次（幂等，重复通知/
+    断线重连/重启均不重复记录）。
+
+    返回："recorded"（已记录）/ "duplicate"（该消息已有反馈，跳过）/
+    "ignored"（message_id为空）。
+    """
+    mid = message_id.strip()
+    if not mid:
+        return "ignored"
+    exists = (
+        (await session.execute(select(FeedbackRecord).where(FeedbackRecord.message_id == mid)))
+        .scalars()
+        .first()
+    )
+    if exists is not None:
+        return "duplicate"
+    await record_feedback(
+        session,
+        mid,
+        "unknown_recall",
+        "other",
+        operator,
+        reason="管理员撤回该消息，原因未知（NapCat撤回通知自动记录，待人工确认）",
+        source="onebot_recall",
+        group_openid=group_openid,
+        member_openid=member_openid,
+    )
+    return "recorded"
+
+
 async def mine_rule_candidates(
     session: AsyncSession,
     *,

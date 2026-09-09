@@ -18,9 +18,21 @@ from app.web.routes import router as admin_router
 
 @asynccontextmanager
 async def lifespan(_: FastAPI) -> AsyncIterator[None]:
-    """应用生命周期：初始化日志并校验数据库已通过 Alembic 迁移。"""
+    """应用生命周期：初始化日志、校验迁移、清理僵尸租约。"""
     setup_logging()
     await check_db_migrated()
+    # 启动清理：过期PROCESSING→FAILED，统计遗留PENDING
+    from app.core.dedup import reap_stuck_leases
+    from app.db import SessionLocal
+
+    async with SessionLocal() as session:
+        reaped, pending = await reap_stuck_leases(session)
+    if reaped or pending:
+        import logging
+
+        logging.getLogger(__name__).warning(
+            "启动清理：%d条过期租约已标记FAILED，%d条PENDING待重放", reaped, pending
+        )
     yield
 
 

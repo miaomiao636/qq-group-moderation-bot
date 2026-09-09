@@ -90,6 +90,7 @@ async def _claim_existing(
         .where(ProcessedEvent.message_id == message_id)
         .where(
             or_(
+                ProcessedEvent.status == "PENDING",  # 入队前预写，worker领取
                 and_(
                     ProcessedEvent.status == "FAILED",
                     or_(
@@ -207,6 +208,81 @@ def _remember(message_id: str) -> None:
 def reset_memory_cache() -> None:
     """仅供测试使用。"""
     _MEMORY_SEEN.clear()
+
+
+async def reap_stuck_leases(session: AsyncSession) -> tuple[int, int]:
+    """启动清理：将过期PROCESSING标记为FAILED，统计遗留PENDING。
+
+    返回 (reaped_stuck, pending_count)。
+    T-306审查发现：worker硬退出后租约永久卡在PROCESSING，无人重入即僵尸。
+    """
+    now = datetime.now(UTC)
+    # 过期PROCESSING → FAILED（可重试）
+    reaped = await session.execute(
+        update(ProcessedEvent)
+        .where(ProcessedEvent.status == "PROCESSING")
+        .where(
+            or_(
+                ProcessedEvent.lease_expires_at.is_(None),
+                ProcessedEvent.lease_expires_at <= now,
+            )
+        )
+        .values(
+            status="FAILED",
+            error_kind="lease_expired",
+            error_message="租约过期，worker可能硬退出",
+            next_retry_at=now,
+            lease_expires_at=None,
+        )
+        .execution_options(synchronize_session=False)
+    )
+    reaped_count = _rowcount(reaped)
+    # 统计遗留PENDING（入队但worker未处理即重启）
+    from sqlalchemy import func, select
+
+    pending_count = int(
+        (
+            await session.execute(
+                select(func.count())
+                .select_from(ProcessedEvent)
+                .where(ProcessedEvent.status == "PENDING")
+            )
+        ).scalar_one()
+    )
+    await session.commit()
+    return reaped_count, pending_count
+
+
+async def mark_pending(
+    session: AsyncSession,
+    message_id: str,
+    event_type: str = "GROUP_MESSAGE_CREATE",
+    *,
+    provider: str = "onebot",
+) -> bool:
+    """入队前持久化事件为PENDING状态（防进程重启丢消息）。
+
+    已存在则不重复插入（幂等）。返回True表示新插入。
+    """
+    existing = await session.get(ProcessedEvent, message_id)
+    if existing is not None:
+        return False
+    try:
+        session.add(
+            ProcessedEvent(
+                message_id=message_id,
+                event_type=event_type,
+                status="PENDING",
+                attempts=0,
+                processed_at=datetime.now(UTC),
+                provider=provider,
+            )
+        )
+        await session.commit()
+        return True
+    except IntegrityError:
+        await session.rollback()
+        return False
 
 
 def _rowcount(result: object) -> int:

@@ -591,7 +591,10 @@ def merge_ai_evidence(
                 "reason": "AI主模型与独立复核模型均高置信，进入高置信违规",
             }
         )
-    if high_ai or local.verdict == "allow":
+    # 只在AI给出有意义（非正常类+足够置信）信号时才升级record_only，
+    # 避免正常消息被AI泛泛"可能有广告"的软证据洪泛到人工队列。
+    meaningful = [r for r in usable if r.category not in (None, "normal") and r.confidence >= 0.60]
+    if high_ai or meaningful or local.verdict == "record_only":
         return local.model_copy(
             update={
                 "verdict": "record_only",

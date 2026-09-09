@@ -97,6 +97,10 @@ async def process_onebot_event(
 ) -> ShadowDecision | None:
     """处理一条 OneBot 群消息事件：去重认领 → 下载媒体 → 影子流水线。"""
     key = dedup_key_for(payload, str(payload.get("message_id") or ""))
+    # ④ 处理前持久化PENDING，进程重启时不丢事件（同session，无跨循环问题）
+    from app.core.dedup import mark_pending
+
+    await mark_pending(session, key, provider="onebot")
 
     async def _prepare(current_payload: dict[str, Any]) -> None:
         msg = parse_onebot_event(current_payload)

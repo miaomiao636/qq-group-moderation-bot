@@ -2,6 +2,43 @@
 
 ## 日期
 
+2026-09-09（架构审查+修复+T-303实机轮）
+
+## 当前任务
+
+**T-303 Windows隔离群影子验证进行中 + 架构审查8项修复已实施**。NapCat 4.18.19 + QQ 9.9.31 在专机上实机跑通反向WS影子链路（420条判定/467次AI调用/11条规则已发布），24小时窗口已启动。期间做了一次全面架构审查，发现8项问题并全部修复（详见PROGRESS.md"已完成"区）。本地291项测试通过、mypy/ruff通过、服务重启NapCat自动重连ready。**T-303尚未验收——24小时数据汇总和断线演练待完成。**
+
+## 已完成内容
+
+### 架构审查8项修复 + T-303实机UX改进（2026-09-09）
+
+**修改文件清单**（10文件，+437/-33行）：
+
+| 文件 | 改动 |
+|---|---|
+| `app/__main__.py` | ⑧ uvicorn `ws_max_size=1_048_576`（1MB WS帧上限） |
+| `app/main.py` | ⑤ lifespan启动时调用`reap_stuck_leases`清理过期租约+统计PENDING |
+| `app/moderation/ai.py` | ① `merge_ai_evidence`加AI置信度门槛：非正常类+≥0.60才升级record_only |
+| `app/adapters/qq_official/media.py` | ② `_is_safe_media_url`+`_BLOCKED_NETWORKS`SSRF防护 |
+| `app/core/dedup.py` | ⑤ `reap_stuck_leases`函数 + ④ `mark_pending`函数 + PENDING加入`_claim_existing`可领取条件 |
+| `app/runtime/onebot_ws.py` | ⑥ worker并发3（`asyncio.gather`独立引擎）+ ⑦ `_ensure_worker`重建前`cancel()`旧task |
+| `app/runtime/onebot_wiring.py` | ④ `process_onebot_event`处理前调`mark_pending` |
+| `app/runtime/pipeline.py` | detail补存`media_files`（供详情页回看原图） |
+| `app/moderation/feedback.py` | ④ `record_recall_notice`撤回通知自动记录 + `record_feedback`重复提交改为更新 |
+| `app/web/routes.py` | 详情页+媒体端点+反馈回显+datalist预设+30秒智能刷新 |
+
+**验证结果**：
+- `uv run ruff check app`：All checks passed
+- `uv run ruff format --check app`：61 files formatted
+- `uv run mypy app`：61源文件0错误（strict）
+- `uv run pytest`：**291 passed**（1个e2e flaky单独通过）
+- 服务重启：NapCat 5秒自动重连→`ready`
+- healthz：`self_id`/`group_last_event`不再暴露（`include_sensitive=False`）
+- 僵尸租约：旧1条过期PROCESSING→FAILED(lease_expired)已清理
+- 负责人已预同意：T-002样本达标+AI评测一致率满足后，升级AI参与自动处罚的政策（需走DECISIONS流程）
+
+### 历史交接
+
 2026-09-08（T-306主审整改轮）
 
 ## 当前任务

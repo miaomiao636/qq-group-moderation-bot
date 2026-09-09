@@ -11,8 +11,10 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import ipaddress
 import logging
 import time
+import urllib.parse
 from datetime import datetime
 from pathlib import Path
 
@@ -121,6 +123,38 @@ async def stream_download(
         return False, f"写入失败:{type(exc).__name__}", bytes_written
 
 
+# SSRF防护：拒绝回环/私有/链路本地地址
+_BLOCKED_NETWORKS = [
+    ipaddress.ip_network(n)
+    for n in (
+        "127.0.0.0/8",
+        "10.0.0.0/8",
+        "172.16.0.0/12",
+        "192.168.0.0/16",
+        "169.254.0.0/16",
+        "0.0.0.0/8",
+        "::1/128",
+        "fc00::/7",
+        "fe80::/10",
+    )
+]
+
+
+def _is_safe_media_url(url: str) -> bool:
+    """拒绝指向内网/回环/链路本地地址的媒体URL（SSRF防护）。"""
+    parsed = urllib.parse.urlparse(url)
+    if parsed.scheme not in ("http", "https"):
+        return False
+    host = (parsed.hostname or "").lower()
+    if not host or host == "localhost":
+        return False
+    try:
+        ip = ipaddress.ip_address(host)
+    except ValueError:
+        return True  # 域名（非IP字面量）放行，QQ CDN均为域名
+    return not any(ip in net for net in _BLOCKED_NETWORKS)
+
+
 async def download_attachment(
     client: httpx.AsyncClient,
     url: str,
@@ -139,6 +173,8 @@ async def download_attachment(
         return None, "", "无URL"
     if url.startswith("//"):
         url = "https:" + url
+    if not _is_safe_media_url(url):
+        return None, "", "URL被SSRF防护拦截（内网/回环/链路本地地址）"
 
     ensure_media_dir(media_dir)
     async with _QUOTA_LOCK:

@@ -14,7 +14,7 @@ from typing import Any
 from urllib.parse import quote
 
 from fastapi import APIRouter, Form, HTTPException, Request, Response
-from fastapi.responses import HTMLResponse, RedirectResponse
+from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse
 from sqlalchemy import select
 
 from app.cases.case_sm import IllegalTransitionError
@@ -43,7 +43,9 @@ _STYLE = (
 )
 
 
-def _page(title: str, body: str, logged_in: bool = True) -> Response:
+def _page(
+    title: str, body: str, logged_in: bool = True, refresh_seconds: int | None = None
+) -> Response:
     header = ""
     if logged_in:
         header = (
@@ -56,8 +58,20 @@ def _page(title: str, body: str, logged_in: bool = True) -> Response:
             '<a href="/admin/reports" style="color:#93c5fd">报告</a> &nbsp; '
             '<a href="/admin/logout" style="color:#fca5a5">退出</a></div></header>'
         )
+    refresh = ""
+    if refresh_seconds:
+        # 仅用脚本刷新（不用meta硬刷新）：正在打字/填写反馈时跳过本次刷新
+        interval_ms = refresh_seconds * 1000
+        refresh = (
+            "<script>setInterval(function(){var a=document.activeElement;"
+            "if(a&&(a.tagName==='INPUT'||a.tagName==='SELECT'||a.tagName==='TEXTAREA'))return;"
+            "var i=document.querySelectorAll('input[name=reason]');"
+            "for(var j=0;j<i.length;j++){if(i[j].value)return;}"
+            f"location.reload();}}, {interval_ms});</script>"
+        )
     return HTMLResponse(
-        f"<!DOCTYPE html><html lang=zh-CN><head><meta charset=utf-8><title>{title}</title>{_STYLE}</head>{header}<main>{body}</main></html>"
+        f"<!DOCTYPE html><html lang=zh-CN><head><meta charset=utf-8><title>{title}</title>"
+        f"{refresh}{_STYLE}</head>{header}<main>{body}</main></html>"
     )
 
 
@@ -485,6 +499,41 @@ def _zh_kind(kind: str) -> str:
     return KIND_ZH.get(kind, kind)
 
 
+def _beijing(naive_utc: Any) -> str:
+    """数据库存 naive UTC，展示转为北京时间。"""
+    return f"{naive_utc + timedelta(hours=8):%m-%d %H:%M:%S}"
+
+
+def _feedback_form_html(
+    record: Any, csrf: str, saved_label: str = "", saved_reason: str = ""
+) -> str:
+    """人工反馈表单；已保存时回显（下拉选中、原因带默认值、按钮为更新）。"""
+    category = _esc(record.category or "other")
+    has_saved = bool(saved_label)
+    options = [
+        ("confirmed_violation", "确认违规"),
+        ("confirmed_normal", "确认正常"),
+        ("false_positive", "误判"),
+        ("unknown_recall", "未知原因撤回"),
+        ("other_recall", "其他原因撤回"),
+    ]
+    sel = "".join(
+        f"<option value={v}{' selected' if v == saved_label else ''}>{t}</option>"
+        for v, t in options
+    )
+    return (
+        '<form method=post action="/admin/feedback" style="display:grid;gap:4px">'
+        f"{csrf}"
+        f'<input type=hidden name=message_id value="{_esc(record.message_id)}">'
+        f'<input type=hidden name=category value="{category}">'
+        f"<select name=label>{sel}</select>"
+        f'<input name=reason list=feedback-reasons value="{_esc(saved_reason)}" '
+        f'data-default="{_esc(saved_reason)}" placeholder="原因，可选" style="width:140px">'
+        + ("<span class=muted>已反馈✓</span>" if has_saved else "")
+        + f"<button class=btn>{'更新反馈' if has_saved else '保存反馈'}</button></form>"
+    )
+
+
 @router.get("/shadow", response_class=HTMLResponse)
 async def shadow_page(request: Request, verdict: str = "") -> Response:
     token = await _require_login(request)
@@ -504,15 +553,23 @@ async def shadow_page(request: Request, verdict: str = "") -> Response:
             select(GroupAlias).where(GroupAlias.group_openid.in_(distinct_groups))
         )
         group_names = {g.group_openid: g.name for g in group_rows.scalars()}
+        # 已保存的人工反馈：用于回显（保存后下拉/原因保持，不再被刷新重置）
+        saved_map: dict[str, tuple[str, str]] = {}
+        if records:
+            from app.moderation.feedback import FeedbackRecord
+
+            fb_rows = await session.execute(
+                select(FeedbackRecord).where(
+                    FeedbackRecord.message_id.in_([r.message_id for r in records])
+                )
+            )
+            for f in fb_rows.scalars():
+                saved_map.setdefault(f.message_id, (f.label, f.reason or ""))
 
     counts: dict[str, int] = {}
     for r in records:
         counts[r.verdict] = counts.get(r.verdict, 0) + 1
     summary = "、".join(f"{_zh_verdict(k)}={v}" for k, v in sorted(counts.items())) or "暂无"
-
-    def _beijing(naive_utc: Any) -> str:
-        """数据库存 naive UTC，展示转为北京时间。"""
-        return f"{naive_utc + timedelta(hours=8):%m-%d %H:%M:%S}"
 
     def _member_display(record: Any) -> str:
         name = _esc(getattr(record, "sender_name", "") or "")
@@ -525,26 +582,13 @@ async def shadow_page(request: Request, verdict: str = "") -> Response:
         return _esc(name) if name else f"<code>{_esc(openid[:10])}…</code>"
 
     def _feedback_form(record: Any) -> str:
-        category = _esc(record.category or "other")
-        return (
-            '<form method=post action="/admin/feedback" style="display:grid;gap:4px">'
-            f"{csrf}"
-            f'<input type=hidden name=message_id value="{_esc(record.message_id)}">'
-            f'<input type=hidden name=category value="{category}">'
-            "<select name=label>"
-            "<option value=confirmed_violation>确认违规</option>"
-            "<option value=confirmed_normal>确认正常</option>"
-            "<option value=false_positive>误判</option>"
-            "<option value=unknown_recall>未知原因撤回</option>"
-            "<option value=other_recall>其他原因撤回</option>"
-            "</select>"
-            '<input name=reason placeholder="原因，可选" style="width:140px">'
-            "<button class=btn>保存反馈</button></form>"
-        )
+        saved_label, saved_reason = saved_map.get(record.message_id, ("", ""))
+        return _feedback_form_html(record, csrf, saved_label, saved_reason)
 
     rows = "".join(
         "<tr>"
-        f"<td>{_esc(_beijing(r.created_at))}</td>"
+        f'<td><a href="/admin/shadow/detail?message_id={quote(r.message_id)}">'
+        f"{_esc(_beijing(r.created_at))}</a></td>"
         f"<td>{_group_display(r.group_openid)}</td>"
         f"<td>{_zh_kind(r.kind)}</td>"
         f"<td>{_zh_verdict(r.verdict)}</td>"
@@ -585,12 +629,182 @@ async def shadow_page(request: Request, verdict: str = "") -> Response:
         "把每个代码对应的群名填一次并保存，之后列表直接显示群名。</div>"
         "<table><tr><th>时间</th><th>群</th><th>类型</th><th>判定</th><th>置信度</th><th>成员（群昵称）</th><th>原因</th><th>人工反馈</th></tr>"
         f"{rows}</table>"
+        # 人工反馈原因预设（datalist：可下拉选择，也可自由填写）
+        "<datalist id=feedback-reasons>"
+        "<option value=广告/引流>"
+        "<option value=诈骗/钓鱼>"
+        "<option value=色情/低俗>"
+        "<option value=违禁品交易>"
+        "<option value=刷屏/灌水>"
+        "<option value=骚扰/辱骂>"
+        "<option value=泄露他人隐私>"
+        "<option value=白名单来源（校园墙等）>"
+        "<option value=正常聊天>"
+        "<option value=规则误判>"
+        "<option value=媒体无法自动判定>"
+        "</datalist>"
         '<div class=card style="margin-top:20px"><h3>群名称备注</h3>'
         "<p class=muted>官方接口只提供群加密OpenID。把下面各OpenID对应的群名填一次，"
         "之后列表将直接显示群名称。</p>"
         f"<table><tr><th>群OpenID</th><th>已备注</th><th>备注操作</th></tr>{group_forms}</table></div>"
     )
-    return _page("影子判定", body)
+    return _page("影子判定", body, refresh_seconds=30)
+
+
+@router.get("/shadow/detail", response_class=HTMLResponse)
+async def shadow_detail(request: Request, message_id: str = "") -> Response:
+    """单条影子判定详情：原文预览、消息段、媒体原件回看、AI取证。"""
+    token = await _require_login(request)
+    if not token:
+        return _login_redirect()
+    csrf = _csrf_field(token)
+    from app.models import GroupAlias
+    from app.runtime.models import ShadowDecision
+
+    back = '<p><a href="/admin/shadow">← 返回影子判定列表</a></p>'
+    async with SessionLocal() as session:
+        record = (
+            (
+                await session.execute(
+                    select(ShadowDecision).where(ShadowDecision.message_id == message_id)
+                )
+            )
+            .scalars()
+            .first()
+        )
+        if record is None:
+            return _page(
+                "影子判定详情",
+                back + "<div class=card><b>未找到该消息的影子记录。</b>"
+                "可能产生于本功能上线前，或已被保留期清理。</div>",
+            )
+        alias = await session.get(GroupAlias, record.group_openid)
+        from app.moderation.feedback import FeedbackRecord
+
+        fb = (
+            (
+                await session.execute(
+                    select(FeedbackRecord).where(FeedbackRecord.message_id == message_id)
+                )
+            )
+            .scalars()
+            .first()
+        )
+
+    try:
+        detail = json.loads(record.detail_json or "{}")
+    except json.JSONDecodeError:
+        detail = {}
+
+    group_name = alias.name if alias else ""
+    member = _esc(
+        getattr(record, "sender_name", "")
+        or record.external_user_id
+        or record.member_openid
+        or "（未知）"
+    )
+
+    # 媒体原件回看（图片直接展示；音视频播放；文件下载）
+    media_parts: list[str] = []
+    for m in detail.get("media_files") or []:
+        name = str(m.get("name") or "")
+        mtype = str(m.get("type") or "")
+        if not name:
+            continue
+        url = "/admin/media/" + quote(name)
+        if mtype.startswith("image/"):
+            media_parts.append(
+                f'<div><img src="{url}" alt="消息图片" style="max-width:480px;'
+                'max-height:480px;border:1px solid #ddd"></div>'
+            )
+        elif mtype.startswith("video/"):
+            media_parts.append(
+                f'<div><video controls src="{url}" style="max-width:480px"></video></div>'
+            )
+        elif mtype == "voice":
+            media_parts.append(f'<div><audio controls src="{url}"></audio></div>')
+        else:
+            media_parts.append(
+                f'<div><a class=btn href="{url}">下载文件（{_esc(name[:24])}）</a></div>'
+            )
+    if not media_parts:
+        media_parts.append(
+            '<p class=muted>本条无媒体，或该记录早于"媒体文件名存档"功能上线'
+            "（30天内原件仍在 data/media/，暂无法逐条对应）。</p>"
+        )
+
+    seg_items = (
+        "".join(
+            f"<li>类型={_esc(str(s.get('kind')))}　内容={_esc(str(s.get('text'))[:120])}</li>"
+            for s in detail.get("segments") or []
+        )
+        or "<li class=muted>无段摘要（早于该功能）</li>"
+    )
+
+    ai_items = (
+        "".join(
+            f"<li>模型={_esc(str(h.get('rule_name')))}　类别={_esc(str(h.get('category')))}　"
+            f"取证（脱敏）={_esc(str(h.get('evidence_masked'))[:200])}</li>"
+            for h in detail.get("rule_hits") or []
+            if str(h.get("rule_id", "")).startswith("AI_")
+        )
+        or "<li class=muted>本条无AI辅助记录</li>"
+    )
+
+    fb_line = (
+        f"<p>已保存反馈：{_esc(fb.label)}　原因：{_esc(fb.reason or '无')}</p>"
+        if fb is not None
+        else "<p class=muted>尚未保存反馈</p>"
+    )
+    text_preview = _esc(str(detail.get("text_preview") or ""))
+
+    body = (
+        f'<p><a href="/admin/shadow">← 返回影子判定列表</a></p><h2>判定详情</h2>'
+        "<div class=card><table>"
+        f"<tr><th>时间</th><td>{_esc(_beijing(record.created_at))}（北京时间）</td></tr>"
+        f"<tr><th>群</th><td>{_esc(group_name or '（未备注）')}　"
+        f"<code>{_esc(record.group_openid[:20])}…</code></td></tr>"
+        f"<tr><th>成员</th><td>{member}</td></tr>"
+        f"<tr><th>类型</th><td>{_zh_kind(record.kind)}</td></tr>"
+        f"<tr><th>判定</th><td><b>{_zh_verdict(record.verdict)}</b>　置信度 {record.confidence}</td></tr>"
+        f"<tr><th>判定原因</th><td>{_esc(record.reason)}</td></tr>"
+        f"</table>{fb_line}</div>"
+        "<div class=card><h3>文字内容</h3>"
+        f"<p>{text_preview or '<span class=muted>（无文字）</span>'}</p>"
+        "<p class=muted>隐私设计：文字仅保留前60字预览，完整原文不留存。</p></div>"
+        f"<div class=card><h3>消息段</h3><ul>{seg_items}</ul></div>"
+        "<div class=card><h3>媒体内容（原件保留30天）</h3>"
+        f"{''.join(media_parts)}</div>"
+        f"<div class=card><h3>AI 取证（脱敏，保留180天）</h3><ul>{ai_items}</ul></div>"
+        "<div class=card><h3>人工反馈</h3>"
+        + _feedback_form_html(
+            record,
+            csrf,
+            fb.label if fb is not None else "",
+            fb.reason if fb is not None else "",
+        )
+        + "</div>"
+    )
+    return _page("影子判定详情", body)
+
+
+@router.get("/media/{name}")
+async def media_file(name: str, request: Request) -> FileResponse:
+    """受保护的媒体原件查看（仅登录管理员；防路径穿越；仅限 data/media/ 内）。"""
+    token = await _require_login(request)
+    if not token:
+        raise HTTPException(status_code=401, detail="login required")
+    from pathlib import Path
+
+    from app.runtime.pipeline import MEDIA_DIR
+
+    safe = Path(name).name
+    if safe != name or not name:
+        raise HTTPException(status_code=404, detail="not found")
+    path = (MEDIA_DIR / safe).resolve()
+    if MEDIA_DIR.resolve() not in path.parents or not path.is_file():
+        raise HTTPException(status_code=404, detail="not found")
+    return FileResponse(path)
 
 
 @router.post("/groups/alias")
@@ -1003,7 +1217,9 @@ async def mine_feedback_submit(request: Request, csrf: str = Form("")) -> Respon
     from app.moderation.feedback import mine_rule_candidates
 
     async with SessionLocal() as session:
-        candidates = await mine_rule_candidates(session)
+        # T-303负责人确认：放宽成员数门槛至1（单成员反复刷屏是典型广告模式）；
+        # 仍要求 ≥3条消息 且 0负例冲突，候选仅是提案，发布前必须人工审核。
+        candidates = await mine_rule_candidates(session, min_members=1)
     await record_admin_audit(
         operator, "feedback_mine_candidates", "rule_candidate", "batch", {"count": len(candidates)}
     )

@@ -19,6 +19,7 @@ def main() -> None:
         host=settings.web_host,
         port=settings.web_port,
         reload=False,
+        ws_max_size=1_048_576,  # 1MB WS帧上限，防恶意超大帧OOM
     )
 
 

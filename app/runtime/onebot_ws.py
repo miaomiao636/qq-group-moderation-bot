@@ -222,7 +222,10 @@ _worker_loop: asyncio.AbstractEventLoop | None = None
 
 
 def _ensure_worker() -> asyncio.Queue[dict[str, Any]]:
-    """惰性启动影子处理worker；事件循环变化（测试/重启）时重建。"""
+    """惰性启动影子处理worker；事件循环变化（测试/重启）时重建。
+
+    重建前取消旧worker task，避免httpx连接/session泄漏。
+    """
     global _queue, _worker_task, _worker_loop
     loop = asyncio.get_running_loop()
     if (
@@ -232,6 +235,9 @@ def _ensure_worker() -> asyncio.Queue[dict[str, Any]]:
         and not _worker_task.done()
     ):
         return _queue
+    # ⑦ 重建前取消旧task（旧循环上的worker会泄漏httpx连接）
+    if _worker_task is not None and not _worker_task.done():
+        _worker_task.cancel()
     settings = get_settings()
     _queue = asyncio.Queue(maxsize=settings.onebot_queue_max)
     onebot_status.bind_queue(_queue)
@@ -244,12 +250,16 @@ def _ensure_worker() -> asyncio.Queue[dict[str, Any]]:
     return _queue
 
 
+_WORKER_CONCURRENCY = 3  # ⑥ 并发处理：AI 30-40s/调用时允许3条消息同时在途
+
+
 async def _worker_main(queue: asyncio.Queue[dict[str, Any]]) -> None:
-    """影子处理循环：从队列取事件 → 媒体下载 → 影子流水线（绝不处罚）。"""
-    text_engine = TextRuleEngine()
-    image_engine = ImageModerationEngine()
+    """影子处理循环：3个并发处理者共享队列，各自独立引擎实例（防频率状态竞争）。"""
     dl_client = httpx.AsyncClient(timeout=15, follow_redirects=True)
-    try:
+
+    async def _process_one() -> None:
+        text_engine = TextRuleEngine()
+        image_engine = ImageModerationEngine()
         while True:
             payload = await queue.get()
             try:
@@ -278,6 +288,9 @@ async def _worker_main(queue: asyncio.Queue[dict[str, Any]]) -> None:
                 onebot_status.last_error = f"{type(exc).__name__}: {exc}"[:200]
             finally:
                 queue.task_done()
+
+    try:
+        await asyncio.gather(*[_process_one() for _ in range(_WORKER_CONCURRENCY)])
     finally:
         await dl_client.aclose()
 
