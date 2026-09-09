@@ -92,15 +92,35 @@ class OneBotActionClient:
         retcode = resp.get("retcode")
         err_code = int(retcode) if isinstance(retcode, (int, float)) else None
         wording = str(resp.get("wording") or resp.get("message") or "")
-        if status in ("ok", "async"):
+        # P0-7: OneBot规范——status=ok+retcode=0 才是确定成功；
+        # status=async 仅表示排队，不代表最终成功 → UNKNOWN
+        if status == "ok" and retcode == 0:
             return ActionResult(action=action_name, ok=True, status_code=0, attempts=1)
-        return ActionResult(
-            action=action_name,
-            ok=False,
-            status_code=0,
-            err_code=err_code,
-            err_message=wording or f"OneBot动作失败 status={status}",
-            attempts=1,
+        if status == "ok" and retcode != 0:
+            # 矛盾响应：status=ok 但 retcode≠0 → 结果不确定
+            raise OneBotActionError(
+                "response_lost",
+                f"OneBot矛盾响应 status=ok 但 retcode={retcode}",
+            )
+        if status == "async":
+            # async 仅表示请求已排队，不代表最终执行成功 → UNKNOWN
+            raise OneBotActionError(
+                "response_lost",
+                "OneBot status=async（请求已排队，结果不确定）",
+            )
+        if status == "failed":
+            return ActionResult(
+                action=action_name,
+                ok=False,
+                status_code=0,
+                err_code=err_code,
+                err_message=wording or f"OneBot动作失败 status=failed retcode={retcode}",
+                attempts=1,
+            )
+        # 未知 status 值 → 结果不确定
+        raise OneBotActionError(
+            "response_lost",
+            f"OneBot未知 status={status!r}（结果不确定）",
         )
 
     async def recall(

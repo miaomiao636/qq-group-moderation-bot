@@ -124,7 +124,9 @@ def test_cookie_post_with_csrf_accepted(app):
             params={"moderation_enabled": "true"},
             headers={"X-CSRF-Token": csrf},
         )
-        assert resp.status_code in (200, 201), f"POST returned {resp.status_code}: {resp.text[:200]}"
+        assert resp.status_code in (200, 201), (
+            f"POST returned {resp.status_code}: {resp.text[:200]}"
+        )
 
 
 def test_bearer_post_no_csrf_needed(app_with_agent_token):
@@ -164,19 +166,23 @@ def test_api_write_audited(app_with_agent_token):
             headers={"Authorization": "Bearer test-agent-token-12345"},
         )
         assert resp.status_code == 200
+        import asyncio
+
         from app.db import SessionLocal
         from app.models import AdminAudit
         from sqlalchemy import select
 
-        import asyncio
-
         async def check():
             async with SessionLocal() as session:
                 rows = (
-                    await session.execute(
-                        select(AdminAudit).where(AdminAudit.target_id == "test-audit")
+                    (
+                        await session.execute(
+                            select(AdminAudit).where(AdminAudit.target_id == "test-audit")
+                        )
                     )
-                ).scalars().all()
+                    .scalars()
+                    .all()
+                )
                 return rows
 
         rows = asyncio.run(check())

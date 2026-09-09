@@ -427,64 +427,77 @@ def _safe_json(raw: str) -> dict[str, Any]:
     return data if isinstance(data, dict) else {}
 
 
-async def load_vision_feedback_context(session: AsyncSession) -> str:
+async def load_vision_feedback_context(
+    session: AsyncSession,
+    *,
+    provider: str = "",
+    external_group_id: str = "",
+) -> str:
     """加载人工确认的图片反馈，蒸馏成纠正上下文喂给视觉AI。
 
-    T-205增强：人工判定是真值。把"AI判错的人工纠正"和"AI判对的人工确认"
-    汇总成简洁指导，让模型从历史判定中学习（尤其校园墙白名单 vs 真广告）。
+    P0-4修复：
+    - 按 provider + external_group_id 隔离（不跨群跨通道汇总）；
+    - 使用传输中立复合身份 join（provider+external_group_id+message_id）；
+    - 不把管理员自由文本 reason 发给云端，只用结构化 label 映射。
     """
+    from sqlalchemy import and_
+
+    join_cond = and_(
+        FeedbackRecord.message_id == ShadowDecision.message_id,
+        FeedbackRecord.provider == ShadowDecision.provider,
+    )
+    where_conds = [
+        ShadowDecision.kind == "image",
+        FeedbackRecord.label.in_(tuple(POSITIVE_LABELS | NEGATIVE_LABELS)),
+    ]
+    if provider:
+        where_conds.append(FeedbackRecord.provider == provider)
+    if external_group_id:
+        where_conds.append(FeedbackRecord.external_group_id == external_group_id)
+
     rows = (
         await session.execute(
             select(FeedbackRecord, ShadowDecision)
-            .join(ShadowDecision, FeedbackRecord.message_id == ShadowDecision.message_id)
-            .where(
-                ShadowDecision.kind == "image",
-                FeedbackRecord.label.in_(tuple(POSITIVE_LABELS | NEGATIVE_LABELS)),
-            )
+            .join(ShadowDecision, join_cond)
+            .where(*where_conds)
             .order_by(FeedbackRecord.id.desc())
-            .limit(40)
+            .limit(20)
         )
     ).all()
 
+    # P0-4: 结构化映射——不发送管理员自由文本 reason
+    _LABEL_MAP = {
+        "confirmed_violation": "violation",
+        "confirmed_normal": "normal",
+        "false_positive": "normal",
+    }
     corrections: list[str] = []
     reinforcements: list[str] = []
     for fb, shadow in rows:
         detail = _safe_json(shadow.detail_json)
         ai_results = detail.get("ai_results") or []
         ai_cat = None
-        ai_conf = 0.0
         for r in ai_results:
             if isinstance(r, dict) and r.get("category"):
                 ai_cat = r.get("category")
-                ai_conf = float(r.get("confidence") or 0)
                 break
-        fb_reason = (fb.reason or "").strip()
-        if fb.label in NEGATIVE_LABELS and ai_cat in ("ad", "fraud"):
-            # AI判违规但人工确认正常 → 校园墙白名单纠正
-            corrections.append(
-                f"你之前判{ai_cat}({ai_conf:.1f})但人工确认正常"
-                f"（{fb_reason or '白名单来源'}）→应判null"
-            )
-        elif fb.label in POSITIVE_LABELS and ai_cat in (None, "other", "normal"):
-            # AI没判违规但人工确认违规 → 漏判纠正
-            corrections.append(
-                f"你之前判{ai_cat or 'null'}但人工确认违规（{fb_reason or '广告/引流'}）→应判ad"
-            )
-        elif fb.label in POSITIVE_LABELS and ai_cat in ("ad", "fraud"):
-            # AI判对且人工确认 → 强化
-            reinforcements.append(f"人工确认违规（{fb_reason or '广告/引流'}）→{ai_cat}正确")
+        human_label = _LABEL_MAP.get(fb.label, "unknown")
+        if human_label == "normal" and ai_cat in ("ad", "fraud"):
+            corrections.append("prev_ad_but_human_normal->null")
+        elif human_label == "violation" and ai_cat in (None, "other", "normal"):
+            corrections.append(f"prev_{ai_cat or 'null'}_but_human_violation->ad")
+        elif human_label == "violation" and ai_cat in ("ad", "fraud"):
+            reinforcements.append(f"human_confirmed_{ai_cat}")
 
     parts: list[str] = []
     if corrections:
-        # 去重（同一类纠正只保留代表性描述）
         seen = set()
         unique_corr = []
         for c in corrections:
-            key = c.split("但")[0]
-            if key not in seen:
-                seen.add(key)
+            if c not in seen:
+                seen.add(c)
                 unique_corr.append(c)
-        parts.append("人工纠正记录：" + "；".join(unique_corr[:5]))
+        parts.append("corrections:" + ",".join(unique_corr[:5]))
     if reinforcements:
-        parts.append("人工确认正确：" + "；".join(reinforcements[:3]))
-    return "；".join(parts) if parts else ""
+        parts.append("reinforcements:" + ",".join(reinforcements[:3]))
+    return " | ".join(parts) if parts else ""

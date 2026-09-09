@@ -1241,7 +1241,7 @@ async def mine_feedback_submit(request: Request, csrf: str = Form("")) -> Respon
 
     async with SessionLocal() as session:
         # 负责人确认：确认即真值，门槛降至1条即学（不再需要≥3条×≥2人）
-        candidates = await mine_rule_candidates(session, min_messages=1, min_members=1)
+        candidates = await mine_rule_candidates(session, min_messages=3, min_members=2)
     await record_admin_audit(
         operator, "feedback_mine_candidates", "rule_candidate", "batch", {"count": len(candidates)}
     )
@@ -1315,11 +1315,10 @@ async def cleanup_now(request: Request, csrf: str = Form("")) -> RedirectRespons
 
 
 async def _ensure_action_routes(session: AsyncSession, group_openid: str) -> list[str]:
-    """动作开启时按该群已见消息来源补齐同通道路由（T-307）。
+    """动作开启时按该群已见消息来源补齐同通道路由（T-307/P1-8）。
 
-    仅写入 ``message_provider == action_provider`` 的合法路由（跨通道被
-    ``upsert_group_route`` 拒绝）。未见过消息的群不写路由——没有消息来源
-    就没有动作出口可言，orchestrator 会以"未配置路由"SKIPPED。
+    P1-8修复：同群只能有一个动作出口。仅当该群只有一个消息来源 provider
+    时自动补齐路由；有多个候选 provider 时拒绝自动路由，要求管理员显式选择。
     """
     from app.core.routing import upsert_group_route
     from app.runtime.models import ShadowDecision
@@ -1335,16 +1334,22 @@ async def _ensure_action_routes(session: AsyncSession, group_openid: str) -> lis
         ).all()
         if r[0]
     }
-    routed: list[str] = []
-    for provider in sorted(providers):
-        await upsert_group_route(
-            session,
-            group_openid,
-            message_provider=provider,
-            action_provider=provider,
+    # P1-8: 多 provider 时拒绝自动路由，要求管理员显式选择唯一出口
+    if len(providers) > 1:
+        raise ValueError(
+            f"群 {group_openid} 有多个消息来源 provider：{','.join(sorted(providers))}"
+            "，请通过管理后台显式选择唯一的动作出口 provider"
         )
-        routed.append(provider)
-    return routed
+    if not providers:
+        return []
+    provider = sorted(providers)[0]
+    await upsert_group_route(
+        session,
+        group_openid,
+        message_provider=provider,
+        action_provider=provider,
+    )
+    return [provider]
 
 
 @router.get("/groups", response_class=HTMLResponse)
@@ -1732,7 +1737,5 @@ async def api_group_settings(
 async def api_ai_stats(request: Request) -> list[dict[str, Any]]:
     """每日AI调用统计（AI Agent 对接用）。"""
     _require_api_auth(request, scope="project:read")
-    if _require_api_token(request) is None:
-        return _api_unauthorized()  # type: ignore[return-value]
     async with SessionLocal() as session:
         return await _build_ai_daily_stats(session)

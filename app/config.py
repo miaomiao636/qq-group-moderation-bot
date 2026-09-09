@@ -135,6 +135,20 @@ class Settings(BaseSettings):
     ai_per_minute_limit: int = Field(default=30, ge=1, le=600, alias="AI_PER_MINUTE_LIMIT")
     ai_prompt_version: str = Field(default="t204-v3", alias="AI_PROMPT_VERSION")
 
+    # P0-3: 双模型条件复核（第二模型仅在灰区/冲突/疑难时调用，控制成本）
+    ai_review_model: str = Field(default="", alias="AI_REVIEW_MODEL")
+    ai_review_base_url: str = Field(default="", alias="AI_REVIEW_BASE_URL")
+    ai_review_api_key: str = Field(default="", alias="AI_REVIEW_API_KEY", repr=False)
+    ai_primary_direct_threshold: float = Field(
+        default=0.90, ge=0.0, le=1.0, alias="AI_PRIMARY_DIRECT_THRESHOLD"
+    )
+    ai_secondary_review_low: float = Field(
+        default=0.60, ge=0.0, le=1.0, alias="AI_SECONDARY_REVIEW_LOW"
+    )
+    ai_secondary_review_high: float = Field(
+        default=0.90, ge=0.0, le=1.0, alias="AI_SECONDARY_REVIEW_HIGH"
+    )
+
     # NapCat/OneBot 11 反向WebSocket入站（T-306）：默认关闭；访问令牌只从
     # 环境变量或系统凭据读取，绝不写入仓库。启用即强制要求令牌与本机/内网绑定。
     onebot_ws_enabled: bool = Field(default=False, alias="ONEBOT_WS_ENABLED")

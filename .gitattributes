@@ -1,0 +1,21 @@
+# 统一行尾为 LF（Python/Markdown/YAML/JSON/TOML/INI）
+* text=auto eol=lf
+
+# 二进制文件
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.ico binary
+*.woff binary
+*.woff2 binary
+*.ttf binary
+*.eot binary
+*.db binary
+*.db-shm binary
+*.db-wal binary
+*.pdf binary
+*.mp4 binary
+*.mp3 binary
+*.amr binary
+*.wav binary

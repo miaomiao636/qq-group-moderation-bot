@@ -34,6 +34,21 @@ from app.moderation.decision import ModerationDecision
 ActionMode = Literal["SHADOW", "OFFICIAL"]
 IntentStatus = Literal["PENDING", "EXECUTING", "SUCCEEDED", "FAILED", "UNKNOWN", "SKIPPED"]
 
+# P1-11: 运行时急停（不重启即时生效）
+_runtime_emergency_stop: bool = False
+
+
+def set_runtime_emergency_stop(value: bool) -> None:
+    """设置运行时急停状态。触发后下一次动作执行前立即阻断，不需要重启。"""
+    global _runtime_emergency_stop
+    _runtime_emergency_stop = value
+
+
+def is_runtime_emergency_stop() -> bool:
+    """读取运行时急停状态。读取失败时 fail-closed（返回 True）。"""
+    return _runtime_emergency_stop
+
+
 # 兼容别名：既有调用方（pipeline/tests）导入名保持不变。
 OfficialActionClient = ModerationActionClient
 
@@ -94,7 +109,8 @@ async def orchestrate_actions(
     existing = await _existing_message_intents(session, msg)
     if existing:
         return existing
-    if settings.emergency_stop:
+    # P1-11: 运行时急停即时生效（不重启），检查在配置急停之后、动作执行之前
+    if settings.emergency_stop or is_runtime_emergency_stop():
         return [await _record_skipped(session, msg, "recall", actor, "急停开关开启，禁止外部动作")]
     if decision.verdict != "violation_high":
         return []

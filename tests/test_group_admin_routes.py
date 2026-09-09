@@ -94,14 +94,11 @@ async def test_disable_action_does_not_delete_route() -> None:
 
 
 @pytest.mark.asyncio
-async def test_multi_provider_group_gets_route_per_provider() -> None:
-    """同一群若被多通道见过消息，各补齐同通道路由（跨通道仍被禁止）。"""
+async def test_multi_provider_group_rejects_auto_route() -> None:
+    """P1-8: 多 provider 群拒绝自动路由，要求管理员显式选择唯一出口。"""
     group = f"G{uuid.uuid4().hex[:8]}"
     async with SessionLocal() as session:
         await _add_shadow(session, group, "onebot")
         await _add_shadow(session, group, "qq_official")
-        routed = await _ensure_action_routes(session, group)
-    assert set(routed) == {"onebot", "qq_official"}
-    async with SessionLocal() as session:
-        assert await resolve_action_provider(session, "onebot", group) == "onebot"
-        assert await resolve_action_provider(session, "qq_official", group) == "qq_official"
+        with pytest.raises(ValueError, match="多个消息来源"):
+            await _ensure_action_routes(session, group)

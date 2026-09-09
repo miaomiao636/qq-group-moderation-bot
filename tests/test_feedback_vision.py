@@ -71,10 +71,11 @@ async def test_corrections_appear_in_vision_feedback_context() -> None:
             ai_cat="ad",
             ai_conf=0.9,
         )
-        ctx = await load_vision_feedback_context(session)
-    assert "人工纠正" in ctx
-    assert "应判null" in ctx
-    assert "校园墙" in ctx
+        ctx = await load_vision_feedback_context(
+            session, provider="onebot", external_group_id="G_FB"
+        )
+    assert "corrections" in ctx
+    assert "prev_ad_but_human_normal->null" in ctx
 
 
 @pytest.mark.asyncio
@@ -88,9 +89,11 @@ async def test_missed_violation_corrections_appear() -> None:
             ai_cat="other",
             ai_conf=0.9,
         )
-        ctx = await load_vision_feedback_context(session)
-    assert "人工纠正" in ctx
-    assert "应判ad" in ctx
+        ctx = await load_vision_feedback_context(
+            session, provider="onebot", external_group_id="G_FB"
+        )
+    assert "corrections" in ctx
+    assert "human_violation->ad" in ctx
 
 
 @pytest.mark.asyncio
@@ -104,9 +107,11 @@ async def test_reinforcements_appear_for_correct_ai() -> None:
             ai_cat="ad",
             ai_conf=0.95,
         )
-        ctx = await load_vision_feedback_context(session)
-    assert "人工确认正确" in ctx
-    assert "ad正确" in ctx
+        ctx = await load_vision_feedback_context(
+            session, provider="onebot", external_group_id="G_FB"
+        )
+    assert "reinforcements" in ctx
+    assert "human_confirmed_ad" in ctx
 
 
 @pytest.mark.asyncio

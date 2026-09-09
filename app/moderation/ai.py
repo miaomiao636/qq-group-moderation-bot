@@ -420,9 +420,14 @@ class AIReviewService:
     enabled_groups: set[str]
     text_moderator: TextModerator | None = None
     vision_moderator: VisionModerator | None = None
+    review_vision_moderator: VisionModerator | None = None  # P0-3: 第二复核模型
     quota: AIQuota = field(default_factory=AIQuota)
     config_problem: str = ""
     cache_ttl_seconds: int = 86_400
+    # P0-3: 双模型条件复核阈值
+    primary_direct_threshold: float = 0.90
+    secondary_review_low: float = 0.60
+    secondary_review_high: float = 0.90
 
     def enabled_for_group(self, group_openid: str) -> bool:
         return self.enabled and ("*" in self.enabled_groups or group_openid in self.enabled_groups)
@@ -459,7 +464,11 @@ class AIReviewService:
         for path in media_paths or []:
             if self.vision_moderator is None:
                 continue
-            results.append(await self._call_vision_path(session, msg, path, rule_version_ids))
+            vision_results = await self._call_vision_path(session, msg, path, rule_version_ids)
+            if isinstance(vision_results, list):
+                results.extend(vision_results)
+            else:
+                results.append(vision_results)
 
         return merge_ai_evidence(decision, results), results
 
@@ -503,11 +512,48 @@ class AIReviewService:
             media_mime=_mime_from_path(path),
             rule_version_ids=list(rule_version_ids),
         )
-        # T-205增强：加载人工确认反馈作为纠正上下文，让模型从人工判定中学习
+        # P0-4: 按 provider+group 隔离的反馈上下文
         from app.moderation.feedback import load_vision_feedback_context
 
-        request.feedback_context = await load_vision_feedback_context(session)
-        return await self._call_with_cache(session, request, self.vision_moderator, "vision")
+        request.feedback_context = await load_vision_feedback_context(
+            session,
+            provider=msg.provider,
+            external_group_id=msg.external_group_id,
+        )
+        primary = await self._call_with_cache(session, request, self.vision_moderator, "vision")
+
+        # P0-3: 条件调用第二复核模型（仅在灰区/冲突/疑难时，控制成本）
+        if self._needs_secondary_review(primary) and self.review_vision_moderator is not None:
+            try:
+                review_req = AIModerationRequest(
+                    message_id=msg.message_id,
+                    group_openid=msg.external_group_id,
+                    content_kind="gif" if path.suffix.lower() == ".gif" else "image",
+                    text=_ai_text_from_message(msg),
+                    media_bytes=media_bytes,
+                    media_mime=_mime_from_path(path),
+                    rule_version_ids=list(rule_version_ids),
+                    feedback_context=request.feedback_context,
+                )
+                secondary = await self._call_with_cache(
+                    session, review_req, self.review_vision_moderator, "vision"
+                )
+                return [primary, secondary]  # type: ignore[return-value]
+            except Exception:  # noqa: BLE001 - 第二模型失败 → 只用主模型结果
+                pass
+        return [primary]  # type: ignore[return-value]
+
+    def _needs_secondary_review(self, primary: AIModerationResult) -> bool:
+        """P0-3: 判定是否需要调用第二复核模型。"""
+        if primary.degraded_reason:
+            return True  # 主模型降级 → 需要复核
+        if primary.category in (None, "normal", "other"):
+            return True  # 未知类别 → 需要复核
+        if primary.needs_review:
+            return True  # 主模型标记需要复核
+        if primary.confidence < self.secondary_review_low:
+            return False  # 低置信 → 不浪费第二模型
+        return primary.confidence < self.primary_direct_threshold  # 灰区→复核，高置信→不复核
 
     async def _call_with_cache(
         self,
@@ -608,26 +654,42 @@ def merge_ai_evidence(
                 "reason": "AI主模型与独立复核模型均高置信，进入高置信违规",
             }
         )
-    # 方案B：单个视觉模型对明确广告/诈骗类高置信直接升级（图片无确定性规则兜底）
-    # 阈值0.80：实测模型对真实广告图常返回0.85，0.90会漏放大量违规
+    # 方案B→P0-3: 视觉模型条件升级
     if not local.is_protected_sender:
-        vision_high = [
-            r
-            for r in usable
-            if r.source == "vision" and r.category in ("ad", "fraud") and r.confidence >= 0.80
+        vision_results = [
+            r for r in usable if r.source == "vision" and r.category in ("ad", "fraud")
         ]
-        if vision_high:
-            best = max(vision_high, key=lambda r: r.confidence)
-            return local.model_copy(
-                update={
-                    "verdict": "violation_high",
-                    "category": best.category,
-                    "confidence": min(best.confidence, 0.95),
-                    "rule_hits": local.rule_hits + hits,
-                    "recommended_actions": ["recall", "mute", "warn"],
-                    "reason": f"视觉AI高置信识别{best.category}（conf={best.confidence:.2f}），直接升级违规",
-                }
-            )
+        if vision_results:
+            # 双模型一致：两个不同 model_id 都判 ad/fraud 且 >= secondary_review_high
+            model_ids = {r.model_id for r in vision_results}
+            high_vision = [r for r in vision_results if r.confidence >= 0.90]
+            if len(model_ids) >= 2 and len(high_vision) >= 2:
+                best = max(high_vision, key=lambda r: r.confidence)
+                return local.model_copy(
+                    update={
+                        "verdict": "violation_high",
+                        "category": best.category,
+                        "confidence": min(best.confidence, 0.95),
+                        "rule_hits": local.rule_hits + hits,
+                        "recommended_actions": ["recall", "mute", "warn"],
+                        "reason": f"双模型一致识别{best.category}（conf={best.confidence:.2f}），升级违规",
+                    }
+                )
+            # 单模型高置信直接升级（无第二模型或第二模型未调用）
+            single_high = [r for r in high_vision if len(model_ids) == 1]
+            if single_high:
+                best = max(single_high, key=lambda r: r.confidence)
+                return local.model_copy(
+                    update={
+                        "verdict": "violation_high",
+                        "category": best.category,
+                        "confidence": min(best.confidence, 0.95),
+                        "rule_hits": local.rule_hits + hits,
+                        "recommended_actions": ["recall", "mute", "warn"],
+                        "reason": f"视觉AI高置信识别{best.category}（conf={best.confidence:.2f}），直接升级违规",
+                    }
+                )
+            # 双模型分歧 → record_only（不处罚）
     # 只在AI给出有意义（非正常类+足够置信）信号时才升级record_only，
     # 避免正常消息被AI泛泛"可能有广告"的软证据洪泛到人工队列。
     meaningful = [r for r in usable if r.category not in (None, "normal") and r.confidence >= 0.60]
