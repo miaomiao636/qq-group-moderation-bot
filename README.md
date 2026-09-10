@@ -2,11 +2,11 @@
 
 24×7 识别 QQ 群中的垃圾广告、诈骗及自定义违规内容，支持文字、图片、GIF、表情、视频、语音、文件和卡片；自动执行高置信消息的撤回和分级禁言，整理两次违规证据并交由人工决定是否踢人。
 
-> 当前阶段（2026-09-08）：生产大群主通道已确定为NapCat/OneBot，QQ官方机器人只用于实际可进入的小群/测试群。T-306 OneBot入站与影子运行器已完成独立主审整改；修复提交 `444b368` 的远程Ubuntu、Windows与干净运行时CI全部通过。下一步是Windows隔离群T-303/W1影子验证。在T-307前，任何OneBot撤回/禁言/警告都会被拒绝。
+> 当前阶段（2026-09-10）：PR #5实现T-307与R-105安全整改；默认SHADOW、OneBot真实动作关闭。代码合并不表示Windows验收通过。部署人员先读[Windows实测与交付清单](docs/windows-delivery-checklist.md)，按W1→W2→隔离群W3→恢复W4→小规模W5执行；实际本轮门禁见PROGRESS/PR。
 
 ## 架构概览
 
-- **NapCatQQ + OneBot 11**：目标大群的主通道；反向WebSocket影子入站已实现，真实撤回/禁言/警告仍待T-307。
+- **NapCatQQ + OneBot 11**：主通道；持久接收箱、账号绑定、撤回/禁言/警告Adapter已实现，真实效果待Windows验证。
 - **QQ 官方机器人**：已实现的可选/测试Adapter，只能用于它实际可进入的群。
 - **审核服务**：规则、行为、多模态识别、独立复核、违规累计、案件、证据、审批和报告。
 - **人工 QQ 客户端 / NapCat**：互斥的踢人执行出口，踢人必须人工批准；首版可仅使用人工QQ客户端踢人。
@@ -87,7 +87,7 @@ uv run mypy app
 
 CI（`.github/workflows/ci.yml`）会在每次 push/PR 时，在 Linux 与 Windows 上自动运行以上全部检查。
 
-> 当前基线提醒（2026-09-08）：T-306主审整改的本地门禁为291项收集、290通过/1个本机真实样本跳过，mypy检查61个源文件，ruff检查106个文件；迁移head为 `f6a2c7e91b40`。提交 `444b368` 的CI运行 `34219858155` 在Ubuntu、Windows和干净运行时三项全绿。
+> 质量记录按提交核对：T-306历史CI不能替代R-105。本轮结果见PROGRESS与PR #5；真实模型、QQ操作、Windows恢复不由mock单测证明。新增迁移head为 `c2e4f6a8b010`，升级后历史按群动作位安全关闭，不能自动恢复。
 
 ## 目录结构
 
@@ -95,7 +95,7 @@ CI（`.github/workflows/ci.yml`）会在每次 push/PR 时，在 Linux 与 Windo
 
 ```text
 app/            # 应用包
-  actions/      # 官方撤回/禁言/警告动作编排（默认SHADOW）
+  actions/      # provider中立撤回/禁言/警告编排（默认SHADOW）
   config.py     # 应用配置（环境变量，含校验）
   db.py         # 数据库引擎与会话（SQLite WAL）
   models.py     # 系统、事件去重与动作审计模型
@@ -110,26 +110,36 @@ docs/           # 运行手册、隐私告知、架构决策记录
 ### 已有业务目录与待补能力
 
 ```text
-app/adapters/     # 已有QQ官方、OneBot入站与OpenAI-compatible AI适配；NapCat动作待T-307
+app/adapters/     # QQ官方、OneBot入站/动作与供应商兼容AI适配
 app/core/         # 传输中立消息、动作、路由和去重契约
 app/moderation/   # 已有文字、图片/GIF、视频/语音/文件、动态规则、AI软证据与反馈学习
 app/cases/        # 已有违规历史、案件和审批状态机
 app/reports/      # 已有日报、周报和数据清理构建器
-app/runtime/      # WebSocket影子运行器与处理流水线
+app/runtime/      # WebSocket、持久接收箱与处理流水线
 app/web/          # 已有服务端管理后台、CSRF、动态规则和反馈学习页面
 tests/fixtures/   # 脱敏QQ事件和媒体/模型固定样本
 ```
 
 ## 关键配置开关
 
-- `ACTION_MODE=SHADOW`：默认，只记录；`OFFICIAL` 才会调用QQ官方撤回/禁言/警告，且必须满足生产校验。
-- 上述 `OFFICIAL` 只能启用QQ官方Adapter。OneBot路由已会安全拒绝跨通道调用；NapCat按群影子/真实动作开关待T-307实现。
+- `ACTION_MODE=SHADOW`：默认不执行真实动作；`OFFICIAL`为兼容保留的全局真实动作门禁名，实际Adapter由provider路由选择。OneBot-only无需官方凭据，官方出口仍需凭据。
+- OneBot真实动作另需 `ONEBOT_ACTIONS_ENABLED=true`、`ONEBOT_SELF_ID`专用数字账号、就绪连接、明确路由与真人批准按群动作。`ONEBOT_ACTION_STAGE=recall_only`默认仅撤回，负责人在本机改为full并重启才进入禁言/警告阶梯。所有开关全开就可能处罚真实成员，程序不会自动判断你的验收报告是否通过。
 - `EMERGENCY_STOP=false`：急停开关；为 `true` 时禁止进入 `OFFICIAL`。
 - `AI_ENABLED=false`：远程AI默认关闭。
 - `AI_ENABLED_GROUPS=`：远程AI必须按群显式启用，例如填 `GROUP_OPENID_A,GROUP_OPENID_B`，或在测试环境用 `*`。
 - `AI_BASE_URL` / `AI_API_KEY` / `AI_TEXT_MODEL` / `AI_VISION_MODEL`：OpenAI-compatible/MiMo类接口配置；真实密钥只写本地 `.env` 或系统凭据。
 - `ONEBOT_WS_ENABLED=false`：OneBot反向WS默认关闭；启用时必须设置 `ONEBOT_ACCESS_TOKEN`，并只绑定回环或明确的私有网段地址（通配地址 `0.0.0.0`/`::` 会被拒绝）。
 - `ONEBOT_WS_PATH=/onebot/ws`：NapCat连接使用Bearer请求头；URL查询参数令牌被拒绝，避免令牌进入访问日志。
+- `AI_REVIEW_MODEL`：必须不同于主视觉模型；只有灰区/冲突/疑难才调用。缺复核或失败只记录，默认不为正常消息调用第二模型。
+- `AI_DAILY_CALL_LIMIT=1000`：调用上限不含缓存，主/次分别可查；价格未接入时“未核算”，不要把0当免费。完整配置见 `.env.example`。
+- `AGENT_API_READ_TOKEN` / `AGENT_API_TOKEN`：分离只读/有限写令牌，不能复用ADMIN_PASSWORD；`AGENT_API_WRITE_SCOPES=project:read`默认只读。高风险操作保存计划后由真人后台会话+CSRF预览批准，Agent不能自行批准、跨目标执行或重放。
+- `ADMIN_SESSION_TTL_SECONDS=3600`：管理员会话有限期；本机HTTP只用回环，非本机访问需TLS或安全隧道，不能靠“内网”代替传输加密。
+
+## AI学习与验收
+
+这不是在线训练系统。人工标注→本地候选（自动挖掘至少3条消息、2名成员）→草稿回放→真人发布→版本回滚；负责人明确指定群规可以直接建规则草稿，不必凑样本数。单条标签不立即变成所有消息的prompt背景，未标注也不当正常。候选只取每条消息最新标签，撤销真值会使未发布候选重新计算/失效，复制前再核验；不擅自回滚已发布规则。
+
+管理后台的“已标注样本一致率”不是独立精确率。离线报告使用 `uv run python -m app.reports.evaluation --input <脱敏JSONL> --output <新的报告JSON>`，样本字段、指标与Windows证据要求见交付清单；此工具只统计，不自动宣告通过。
 
 ## 安全与隐私
 
@@ -151,8 +161,10 @@ tests/fixtures/   # 脱敏QQ事件和媒体/模型固定样本
 
 ## Windows 24×7运行
 
-当前仓库尚未完成Windows Service、自启动和重启恢复实现。部署前必须完成 `NEXT_TASKS.md` 的 `T-404`，并按照 [`docs/windows-operations.md`](docs/windows-operations.md) 验证电源、启动、更新、状态恢复、监控和备份流程。
+历史实施报告已描述NSSM服务化，但本轮主审未核验Windows原件；按T-404和[交付清单](docs/windows-delivery-checklist.md)重验锁屏/开机登录依赖/断网/进程崩溃/备份恢复。必须单Web/OneBot实例，禁止多worker；SQLite是本轮支持的数据方案。
 
 屏幕可以关闭并锁屏，但主机不能进入睡眠或休眠。开发命令 `uv run uvicorn app.main:app --reload` 只用于开发，不得作为生产运行方式；生产运行使用 `uv run python -m app` 或由 Windows Service 管理。
 
 项目已确定使用一台空白Windows电脑进行正式整机测试。W0基础兼容性已通过；新路线为：R-104/T-305/T-306后进入W1 NapCat影子接收，W2验证完整影子闭环，T-307后进入W3隔离群管理动作，T-404后执行W4无人值守恢复，最后才进入W5目标群分阶段上线。详细进入条件见 [`docs/windows-operations.md`](docs/windows-operations.md) 的“分阶段测试计划”。
+
+现有告警仅后台展示，不是主动推送；无人值守交付还需客户确定接管人及独立通知渠道并实测到达。无法完成时明确按有人值班的辅助工具交付。Windows 10安全支持与补丁也需复核，不擅自更改正式电脑系统。
