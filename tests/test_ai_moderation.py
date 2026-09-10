@@ -95,7 +95,7 @@ def test_single_text_ai_result_is_soft_evidence_only() -> None:
 
 
 def test_single_vision_ai_high_confidence_ad_upgrades_to_violation() -> None:
-    """方案B：视觉模型对广告类高置信直接升级 violation_high（图片无确定性规则兜底）。"""
+    """A confident primary without uncertainty or local conflicts may act."""
     result = AIModerationResult(
         category="ad",
         confidence=0.95,
@@ -103,6 +103,7 @@ def test_single_vision_ai_high_confidence_ad_upgrades_to_violation() -> None:
         model_id="mimo-v2.5",
         prompt_version="v1",
         source="vision",
+        needs_review=False,
     )
     decision = merge_ai_evidence(_allow_decision(), [result])
     assert decision.verdict == "violation_high"
@@ -118,13 +119,14 @@ def test_single_vision_ai_fraud_high_confidence_upgrades() -> None:
         model_id="mimo-v2.5",
         prompt_version="v1",
         source="vision",
+        needs_review=False,
     )
     decision = merge_ai_evidence(_allow_decision(), [result])
     assert decision.verdict == "violation_high"
 
 
 def test_vision_ai_below_threshold_stays_record_only() -> None:
-    """视觉模型置信度不足0.80时仍只升 record_only。"""
+    """Without an independent reviewer, gray-zone evidence remains record_only."""
     result = AIModerationResult(
         category="ad",
         confidence=0.75,
@@ -224,7 +226,8 @@ async def test_ai_cache_reuses_result_and_records_usage() -> None:
     assert second.verdict == "record_only"
     assert fake.calls == 1
     assert first_results[0].source == "text"
-    assert second_results[0].source == "cache"
+    assert second_results[0].source == "text"
+    assert second_results[0].cache_hit is True
     assert usage_count == 2
 
 
@@ -240,7 +243,7 @@ async def test_provider_failure_degrades_without_blocking_chain() -> None:
         decision, results = await service.review_message(
             session, _msg("需要AI但供应商失败", group=group), _allow_decision()
         )
-    assert decision.verdict == "allow"
+    assert decision.verdict == "record_only"
     assert results[0].degraded_reason == "provider_invalid_model_json"
 
 

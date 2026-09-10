@@ -96,7 +96,7 @@ async def test_download_enforces_quota_during_stream(
     # P1-6: bypass SSRF check for this unit test (tests quota logic, not SSRF)
     from app.adapters.qq_official import media as media_mod
 
-    monkeypatch.setattr(media_mod, "_is_safe_media_url", _always_safe)
+    monkeypatch.setattr(media_mod, "_pin_media_url", _fixed_test_destination)
 
     name, _ext, reason = await download_attachment(
         client,  # type: ignore[arg-type]
@@ -113,8 +113,10 @@ async def test_download_enforces_quota_during_stream(
     assert total_media_size(tmp_path) == 8
 
 
-async def _always_safe(url: str) -> bool:
-    return True
+async def _fixed_test_destination(url: str):
+    import httpx
+
+    return httpx.URL("https://93.184.216.34/a"), "example.invalid", "example.invalid"
 
 
 @pytest.mark.asyncio
@@ -135,7 +137,7 @@ async def test_download_reads_only_magic_header_for_sniffing(
         monkeypatch.setattr(Path, "read_bytes", forbidden_read_bytes)
         from app.adapters.qq_official import media as media_mod
 
-        monkeypatch.setattr(media_mod, "_is_safe_media_url", _always_safe)
+        monkeypatch.setattr(media_mod, "_pin_media_url", _fixed_test_destination)
         name, _ext, reason = await download_attachment(
             client,
             "https://example.invalid/a",

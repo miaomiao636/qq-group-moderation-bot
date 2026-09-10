@@ -80,13 +80,17 @@ def _high_decision(msg: StandardMessage) -> ModerationDecision:
     )
 
 
-async def _enable_actions(session: AsyncSession, group_openid: str) -> None:
+async def _enable_actions(
+    session: AsyncSession, group_openid: str, provider: str = "onebot"
+) -> None:
     """T-303 UX：OFFICIAL 模式测试需显式为测试群启用动作。"""
-    from app.models import GroupSettings
+    from app.models import ProviderGroupSettings
 
-    gs = await session.get(GroupSettings, group_openid)
+    gs = await session.get(ProviderGroupSettings, (provider, group_openid))
     if gs is None:
-        gs = GroupSettings(group_openid=group_openid, action_enabled=True)
+        gs = ProviderGroupSettings(
+            provider=provider, external_group_id=group_openid, action_enabled=True
+        )
         session.add(gs)
     else:
         gs.action_enabled = True
@@ -194,7 +198,7 @@ async def test_official_mode_never_enables_injected_onebot_client() -> None:
 
 
 @pytest.mark.asyncio
-async def test_same_external_group_id_can_have_independent_provider_routes() -> None:
+async def test_same_external_group_id_retains_routes_but_only_latest_owner_executes() -> None:
     group = f"SAME_{uuid.uuid4().hex[:8]}"
     async with SessionLocal() as session:
         await upsert_group_route(
@@ -203,7 +207,7 @@ async def test_same_external_group_id_can_have_independent_provider_routes() -> 
         await upsert_group_route(
             session, group, message_provider="onebot", action_provider="onebot"
         )
-        assert await resolve_action_provider(session, "qq_official", group) == "qq_official"
+        assert await resolve_action_provider(session, "qq_official", group) is None
         assert await resolve_action_provider(session, "onebot", group) == "onebot"
 
 
@@ -219,7 +223,7 @@ async def test_unrouted_group_keeps_official_behavior() -> None:
         text="违规测试内容",
     )
     async with SessionLocal() as session:
-        await _enable_actions(session, group)
+        await _enable_actions(session, group, provider="qq_official")
         intents = await orchestrate_actions(
             session,
             msg,

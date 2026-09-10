@@ -57,10 +57,21 @@ async def purge_expired(session: AsyncSession, now: datetime | None = None) -> d
 
     deleted_media = purge_media(MEDIA_DIR, settings.raw_retention_days)
 
+    # 5) OneBot durable inbox also contains original message content.
+    from app.runtime.inbox import purge_inbox
+
+    inbox_counts = await purge_inbox(
+        session,
+        now=now,
+        raw_retention_days=settings.raw_retention_days,
+        decision_retention_days=settings.decision_retention_days,
+    )
+
     await session.commit()
     return {
         "processed_events_deleted": deleted_events,
         "violation_snapshots_purged": purged_snapshots,
         "action_logs_deleted": deleted_logs,
         "media_files_deleted": deleted_media,
+        **inbox_counts,
     }

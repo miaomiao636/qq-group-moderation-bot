@@ -67,11 +67,13 @@ def _official_settings() -> Settings:
 
 async def _enable_actions(session: AsyncSession, group_openid: str) -> None:
     """T-303 UX：OFFICIAL 模式测试需显式为测试群启用动作。"""
-    from app.models import GroupSettings
+    from app.models import ProviderGroupSettings
 
-    gs = await session.get(GroupSettings, group_openid)
+    gs = await session.get(ProviderGroupSettings, ("qq_official", group_openid))
     if gs is None:
-        gs = GroupSettings(group_openid=group_openid, action_enabled=True)
+        gs = ProviderGroupSettings(
+            provider="qq_official", external_group_id=group_openid, action_enabled=True
+        )
         session.add(gs)
     else:
         gs.action_enabled = True

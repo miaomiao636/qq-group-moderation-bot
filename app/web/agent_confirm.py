@@ -1,80 +1,110 @@
-"""P0-2: Agent 高风险操作二阶段确认。
-
-自然语言 Agent 的写操作（开启动作/切OFFICIAL/改路由/发规则/急停）
-必须经过"预览计划 → 用户明确确认 → 执行"三步。确认凭据短时有效、
-单次使用、绑定具体变更摘要（不能确认A后执行B）。
-
-进程内存存储——重启后待确认项自动失效（安全侧合理，需重新发起）。
-"""
+"""Human-approved immutable plans; the Agent credential is never approval authority."""
 
 from __future__ import annotations
 
+import json
 import secrets
-import time
-from dataclasses import dataclass
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
-_CONFIRM_TTL_SECONDS = 300  # 5分钟有效
-_PENDING: dict[str, PendingConfirmation] = {}
+from sqlalchemy import update
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.models import AdminAudit, AdminChangePlan
+
+CONFIRM_TTL_SECONDS = 300
+HIGH_RISK_ACTIONS = {"group_settings", "rule_publish", "rule_rollback", "emergency_resume"}
 
 
-@dataclass
-class PendingConfirmation:
-    token: str
-    action: str
-    summary: str
-    params: dict[str, Any]
-    created_at: float
-    expires_at: float
-    used: bool = False
+def canonical(value: dict[str, Any]) -> str:
+    return json.dumps(value, sort_keys=True, ensure_ascii=False, separators=(",", ":"))
 
 
-# 需要二阶段确认的高风险操作类型
-HIGH_RISK_ACTIONS = {
-    "group_action_enable",
-    "group_route_change",
-    "action_mode_change",
-    "emergency_stop_toggle",
-    "rule_publish",
-    "rule_rollback",
-    "threshold_expand",
-}
-
-
-def create_confirmation(action: str, summary: str, params: dict[str, Any]) -> str:
-    """创建待确认操作，返回确认令牌。"""
-    token = secrets.token_urlsafe(32)
-    now = time.monotonic()
-    _PENDING[token] = PendingConfirmation(
-        token=token,
+async def create_confirmation(
+    session: AsyncSession,
+    *,
+    action: str,
+    params: dict[str, Any],
+    expected_state: dict[str, Any],
+    requestor: str,
+) -> AdminChangePlan:
+    if action not in HIGH_RISK_ACTIONS:
+        raise ValueError("不支持的管理计划")
+    plan = AdminChangePlan(
+        id=secrets.token_urlsafe(32),
         action=action,
-        summary=summary,
-        params=dict(params),
-        created_at=now,
-        expires_at=now + _CONFIRM_TTL_SECONDS,
+        requestor=requestor,
+        params_json=canonical(params),
+        expected_state_json=canonical(expected_state),
+        expires_at=datetime.now(UTC) + timedelta(seconds=CONFIRM_TTL_SECONDS),
     )
-    return token
+    session.add(plan)
+    await session.flush()
+    session.add(
+        AdminAudit(
+            operator=requestor,
+            action="plan_create",
+            target_type="admin_plan",
+            target_id=plan.id,
+            detail_json=canonical(
+                {"action": action, "params": params, "expected_state": expected_state}
+            ),
+        )
+    )
+    await session.commit()
+    return plan
 
 
-def validate_and_consume(token: str, action: str, summary: str) -> PendingConfirmation | None:
-    """验证并消费确认令牌。令牌必须匹配 action + summary 且未过期未使用。"""
-    pending = _PENDING.get(token)
-    if pending is None or pending.used:
+async def approve_confirmation(session: AsyncSession, plan_id: str, *, human: str) -> bool:
+    """Only an authenticated human route may call this function."""
+    if not human.startswith("human:"):
+        return False
+    result = await session.execute(
+        update(AdminChangePlan)
+        .where(
+            AdminChangePlan.id == plan_id,
+            AdminChangePlan.status == "PENDING",
+            AdminChangePlan.expires_at > datetime.now(UTC),
+        )
+        .values(status="APPROVED", approved_by=human)
+    )
+    if result.rowcount != 1:  # type: ignore[attr-defined]
+        await session.rollback()
+        return False
+    session.add(
+        AdminAudit(
+            operator=human, action="plan_approve", target_type="admin_plan", target_id=plan_id
+        )
+    )
+    await session.commit()
+    return True
+
+
+async def claim_confirmation(
+    session: AsyncSession,
+    plan_id: str,
+    *,
+    requestor: str,
+    action: str | None = None,
+    params: dict[str, Any] | None = None,
+) -> AdminChangePlan | None:
+    """Atomic single consumer; a stolen plan ID is not sufficient authority."""
+    predicates = [
+        AdminChangePlan.id == plan_id,
+        AdminChangePlan.requestor == requestor,
+        AdminChangePlan.status == "APPROVED",
+        AdminChangePlan.approved_by != "",
+        AdminChangePlan.expires_at > datetime.now(UTC),
+    ]
+    if action is not None:
+        predicates.append(AdminChangePlan.action == action)
+    if params is not None:
+        predicates.append(AdminChangePlan.params_json == canonical(params))
+    result = await session.execute(
+        update(AdminChangePlan).where(*predicates).values(status="EXECUTING")
+    )
+    if result.rowcount != 1:  # type: ignore[attr-defined]
+        await session.rollback()
         return None
-    if time.monotonic() > pending.expires_at:
-        _PENDING.pop(token, None)
-        return None
-    if pending.action != action or pending.summary != summary:
-        return None  # 令牌绑定了不同的变更内容
-    pending.used = True
-    _PENDING.pop(token, None)
-    return pending
-
-
-def cleanup_expired() -> int:
-    """清理过期确认，返回清理数量。"""
-    now = time.monotonic()
-    expired = [t for t, p in _PENDING.items() if now > p.expires_at]
-    for t in expired:
-        _PENDING.pop(t, None)
-    return len(expired)
+    await session.commit()
+    return await session.get(AdminChangePlan, plan_id, populate_existing=True)

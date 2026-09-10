@@ -15,6 +15,7 @@ from app.moderation import (
     dynamic_rules,  # noqa: F401
     feedback,  # noqa: F401
 )
+from app.runtime import inbox  # noqa: F401  持久接收箱模型
 from sqlalchemy import event, pool
 from sqlalchemy.engine import Connection
 from sqlalchemy.ext.asyncio import async_engine_from_config

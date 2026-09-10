@@ -19,17 +19,19 @@ import json
 import logging
 import secrets
 import time
-from datetime import UTC, datetime
-from typing import Any
+from contextlib import suppress
+from datetime import UTC, datetime, timedelta
+from typing import Any, BinaryIO
 
 import httpx
+from anyio import CancelScope
 from fastapi import APIRouter, HTTPException, Request, WebSocket, WebSocketDisconnect
 
 from app.config import get_settings
 from app.db import SessionLocal
 from app.moderation.image_engine import ImageModerationEngine
-from app.moderation.rules import TextRuleEngine
-from app.runtime import onebot_wiring
+from app.moderation.rules import FrequencyTracker, TextRuleEngine
+from app.runtime import inbox, onebot_wiring
 from app.runtime.onebot_actions import onebot_action_hub
 
 logger = logging.getLogger(__name__)
@@ -66,7 +68,9 @@ class OneBotRuntimeStatus:
         self.invalid_total = 0
         self.ignored_total = 0
         self.last_error = ""
-        self._queue: asyncio.Queue[dict[str, Any]] | None = None
+        self._queue: asyncio.Queue[str] | None = None
+        self.storage_available = True
+        self.durable_backlog = 0
         self._queue_max = 0
         self._heartbeat_timeout = 90.0
 
@@ -75,7 +79,7 @@ class OneBotRuntimeStatus:
         self._heartbeat_timeout = heartbeat_timeout
         self.enabled = True
 
-    def bind_queue(self, queue: asyncio.Queue[dict[str, Any]]) -> None:
+    def bind_queue(self, queue: asyncio.Queue[str]) -> None:
         self._queue = queue
 
     # ---- 连接生命周期 ----
@@ -84,6 +88,8 @@ class OneBotRuntimeStatus:
         self.connected = True
         self.connect_count += 1
         self.last_connect_at = _utcnow_iso()
+        self.login_state = "unknown"
+        self._last_heartbeat_mono = None
 
     def register_disconnect(self, error: str = "") -> None:
         self.connected = False
@@ -144,13 +150,13 @@ class OneBotRuntimeStatus:
     # ---- 就绪状态 ----
 
     def backlog(self) -> int:
-        return self._queue.qsize() if self._queue is not None else 0
+        return max(self.durable_backlog, self._queue.qsize() if self._queue is not None else 0)
 
     def state(self) -> str:
         """``ready`` / ``degraded``：任一必要条件不满足即降级。"""
         if not self.enabled:
             return "disabled"
-        if not self.connected or self.login_state != "online":
+        if not self.storage_available or not self.connected or self.login_state != "online":
             return "degraded"
         if self._last_heartbeat_mono is not None:
             if time.monotonic() - self._last_heartbeat_mono > self._heartbeat_timeout:
@@ -180,6 +186,7 @@ class OneBotRuntimeStatus:
             "last_event_at": self.last_event_at,
             "queue_backlog": self.backlog(),
             "queue_max": self._queue_max,
+            "storage_available": self.storage_available,
             "processed_total": self.processed_total,
             "skipped_total": self.skipped_total,
             "failed_total": self.failed_total,
@@ -217,17 +224,20 @@ def _request_bearer_token(request: Request) -> str:
 
 # ---- 队列与影子处理worker ----
 
-_queue: asyncio.Queue[dict[str, Any]] | None = None
+_queue: asyncio.Queue[str] | None = None
 _worker_task: asyncio.Task[None] | None = None
 _worker_loop: asyncio.AbstractEventLoop | None = None
+_worker_wake: asyncio.Event | None = None
+_worker_stop: asyncio.Event | None = None
+_runtime_lock: BinaryIO | None = None
 
 
-def _ensure_worker() -> asyncio.Queue[dict[str, Any]]:
+def _ensure_worker() -> asyncio.Queue[str]:
     """惰性启动影子处理worker；事件循环变化（测试/重启）时重建。
 
     重建前取消旧worker task，避免httpx连接/session泄漏。
     """
-    global _queue, _worker_task, _worker_loop
+    global _queue, _worker_task, _worker_loop, _worker_wake, _worker_stop
     loop = asyncio.get_running_loop()
     if (
         _queue is not None
@@ -241,6 +251,8 @@ def _ensure_worker() -> asyncio.Queue[dict[str, Any]]:
         _worker_task.cancel()
     settings = get_settings()
     _queue = asyncio.Queue(maxsize=settings.onebot_queue_max)
+    _worker_wake = asyncio.Event()
+    _worker_stop = asyncio.Event()
     onebot_status.bind_queue(_queue)
     onebot_status.configure(
         queue_max=settings.onebot_queue_max,
@@ -254,46 +266,195 @@ def _ensure_worker() -> asyncio.Queue[dict[str, Any]]:
 _WORKER_CONCURRENCY = 3  # ⑥ 并发处理：AI 30-40s/调用时允许3条消息同时在途
 
 
-async def _worker_main(queue: asyncio.Queue[dict[str, Any]]) -> None:
-    """影子处理循环：3个并发处理者共享队列，各自独立引擎实例（防频率状态竞争）。"""
-    dl_client = httpx.AsyncClient(timeout=15, follow_redirects=True)
+async def _worker_main(queue: asyncio.Queue[str]) -> None:
+    """Dispatch committed inbox keys; the DB is authoritative across process restarts."""
+    from sqlalchemy import func, select
 
-    async def _process_one() -> None:
-        text_engine = TextRuleEngine()
-        image_engine = ImageModerationEngine()
-        while True:
-            payload = await queue.get()
+    from app.models import ProcessedEvent
+
+    dl_client = httpx.AsyncClient(timeout=15, follow_redirects=False, trust_env=False)
+    scheduled: set[str] = set()
+    # This runtime accepts OneBot only. Share its synchronous same-group/member
+    # counter, but keep rule snapshots isolated per worker to avoid cross-group
+    # mutation if the processing pipeline awaits between stages.
+    frequency_tracker = FrequencyTracker()
+    wake = _worker_wake
+    stopping = _worker_stop
+    assert wake is not None
+    assert stopping is not None
+
+    async def _dispatch() -> None:
+        last_cleanup = 0.0
+        while not stopping.is_set():
+            wake.clear()
             try:
                 async with SessionLocal() as session:
-                    record = await onebot_wiring.process_onebot_event(
-                        payload,
-                        session,
-                        text_engine=text_engine,
-                        image_engine=image_engine,
-                        dl_client=dl_client,
+                    settings = get_settings()
+                    if time.monotonic() - last_cleanup >= 60:
+                        await inbox.purge_inbox(
+                            session,
+                            raw_retention_days=settings.raw_retention_days,
+                            decision_retention_days=settings.decision_retention_days,
+                        )
+                        last_cleanup = time.monotonic()
+                    keys = await inbox.due_keys(session, limit=settings.onebot_queue_max)
+                    onebot_status.durable_backlog = int(
+                        (
+                            await session.execute(
+                                select(func.count())
+                                .select_from(inbox.InboxEvent)
+                                .where(inbox.InboxEvent.status.in_(("PENDING", "PROCESSING")))
+                            )
+                        ).scalar_one()
                     )
-                if record is None:
-                    onebot_status.count_skipped()
-                else:
-                    onebot_status.count_processed()
-                    logger.info(
-                        "[onebot-shadow] %s verdict=%s conf=%s %s",
-                        record.kind,
-                        record.verdict,
-                        record.confidence,
-                        record.reason[:60],
-                    )
-            except Exception as exc:  # noqa: BLE001 - 单事件失败不终止worker
-                logger.exception("OneBot 事件影子处理失败")
-                onebot_status.count_failed()
-                onebot_status.last_error = f"{type(exc).__name__}: {exc}"[:200]
-            finally:
-                queue.task_done()
+                onebot_status.storage_available = True
+                for key in keys:
+                    if key not in scheduled and not queue.full():
+                        scheduled.add(key)
+                        queue.put_nowait(key)
+            except Exception as exc:  # noqa: BLE001 - DB errors must degrade, with bounded polling
+                onebot_status.storage_available = False
+                onebot_status.last_error = f"durable_inbox:{type(exc).__name__}"
+                logger.warning("OneBot durable inbox unavailable (%s)", type(exc).__name__)
+            if not stopping.is_set():
+                with suppress(TimeoutError):
+                    await asyncio.wait_for(wake.wait(), timeout=1.0)
 
+    async def _renew_while_running(claim: inbox.InboxClaim, task: asyncio.Task[Any]) -> Any:
+        try:
+            while True:
+                try:
+                    return await asyncio.wait_for(asyncio.shield(task), timeout=60)
+                except TimeoutError:
+                    async with SessionLocal() as session:
+                        if not await inbox.renew_event(session, claim):
+                            raise RuntimeError("inbox lease lost") from None
+        finally:
+            if not task.done() and not task.cancelling():
+                task.cancel()
+            await asyncio.gather(task, return_exceptions=True)
+
+    async def _process_one() -> None:
+        text_engine = TextRuleEngine(frequency_tracker=frequency_tracker)
+        image_engine = ImageModerationEngine()
+        while not stopping.is_set():
+            try:
+                async with asyncio.timeout(1.0):
+                    key = await queue.get()
+            except TimeoutError:
+                continue
+            claim = None
+            try:
+                async with SessionLocal() as session:
+                    claim = await inbox.claim_event(session, key)
+                if claim is None:
+                    continue
+
+                async def _process(current_claim: inbox.InboxClaim = claim) -> Any:
+                    async with SessionLocal() as session:
+                        return await onebot_wiring.process_onebot_event(
+                            current_claim.payload,
+                            session,
+                            text_engine=text_engine,
+                            image_engine=image_engine,
+                            dl_client=dl_client,
+                        )
+
+                record = await _renew_while_running(claim, asyncio.create_task(_process()))
+                async with SessionLocal() as session:
+                    processed = await session.get(ProcessedEvent, key)
+                    if record is not None or (
+                        processed is not None and processed.status == "PROCESSED"
+                    ):
+                        await inbox.finish_event(session, claim)
+                        onebot_status.count_processed()
+                    elif processed is not None and processed.status == "DEAD":
+                        await inbox.finish_event(session, claim, dead=True)
+                        onebot_status.count_skipped()
+                    elif processed is not None and processed.status == "PROCESSING":
+                        await inbox.defer_event(
+                            session,
+                            claim,
+                            until=processed.lease_expires_at
+                            or datetime.now(UTC) + timedelta(seconds=30),
+                        )
+                    else:
+                        await inbox.retry_event(session, claim, "processing_failed")
+                        onebot_status.count_failed()
+            except Exception as exc:  # noqa: BLE001 - 单事件失败不终止worker
+                logger.warning("OneBot inbox processing failed (%s)", type(exc).__name__)
+                onebot_status.count_failed()
+                onebot_status.last_error = f"inbox_processing:{type(exc).__name__}"
+                if claim is not None:
+                    try:
+                        async with SessionLocal() as session:
+                            await inbox.retry_event(session, claim, type(exc).__name__)
+                    except Exception:  # noqa: BLE001 - lease remains recoverable after DB returns
+                        onebot_status.storage_available = False
+            finally:
+                scheduled.discard(key)
+                queue.task_done()
+                wake.set()
+
+    tasks = [asyncio.create_task(_dispatch())] + [
+        asyncio.create_task(_process_one()) for _ in range(_WORKER_CONCURRENCY)
+    ]
     try:
-        await asyncio.gather(*[_process_one() for _ in range(_WORKER_CONCURRENCY)])
+        await asyncio.gather(*tasks)
     finally:
+        for task in tasks:
+            if not task.done() and not task.cancelling():
+                task.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
         await dl_client.aclose()
+
+
+async def start_onebot_runtime() -> None:
+    global _runtime_lock
+    if _runtime_lock is not None:
+        raise RuntimeError("OneBot runtime is already owned by another process")
+    settings = get_settings()
+    _runtime_lock = inbox.acquire_runtime_lock(settings.database_url)
+    try:
+        async with SessionLocal() as session:
+            recovered = await inbox.recover_abandoned_actions(session)
+        if recovered:
+            logger.warning("OneBot recovered %d abandoned actions as UNKNOWN", recovered)
+    except BaseException:
+        _runtime_lock.close()
+        _runtime_lock = None
+        raise
+    onebot_action_hub.configure(
+        timeout_seconds=float(settings.onebot_action_timeout_seconds),
+        readiness=onebot_status.state,
+        expected_self_id=settings.onebot_self_id,
+    )
+    _ensure_worker()
+
+
+async def stop_onebot_runtime() -> None:
+    global _queue, _worker_task, _worker_loop, _worker_wake, _worker_stop, _runtime_lock
+    if _worker_stop is not None:
+        _worker_stop.set()
+    if _worker_wake is not None:
+        _worker_wake.set()
+    if _worker_task is not None:
+        # Let SQLite transactions/session cleanup finish before cancellation. This
+        # also avoids double cancellation while the driver's connection opens.
+        _, pending = await asyncio.wait([_worker_task], timeout=2.0)
+        if pending:
+            _worker_task.cancel()
+        await asyncio.gather(_worker_task, return_exceptions=True)
+    _queue = None
+    _worker_task = None
+    _worker_loop = None
+    _worker_wake = None
+    _worker_stop = None
+    if _runtime_lock is not None:
+        _runtime_lock.close()
+        _runtime_lock = None
+    onebot_action_hub.reset()
+    onebot_status.register_disconnect()
 
 
 def build_onebot_router(ws_path: str) -> APIRouter:
@@ -311,6 +472,7 @@ def build_onebot_router(ws_path: str) -> APIRouter:
     onebot_action_hub.configure(
         timeout_seconds=float(settings.onebot_action_timeout_seconds),
         readiness=onebot_status.state,
+        expected_self_id=settings.onebot_self_id,
     )
     router = APIRouter()
 
@@ -341,13 +503,20 @@ def build_onebot_router(ws_path: str) -> APIRouter:
             await websocket.close(code=1008)
             return
 
-        await websocket.accept()
-        onebot_status.register_connect()
-        onebot_action_hub.bind(websocket)
+        header_self_id = websocket.headers.get("x-self-id") or ""
+        if not onebot_action_hub.bind(websocket, self_id=header_self_id):
+            await websocket.close(code=1008)
+            return
         invalid_streak = 0
         try:
+            await websocket.accept()
+            onebot_status.register_connect()
             while True:
                 raw = await websocket.receive_text()
+                if len(raw.encode("utf-8")) > inbox.MAX_PAYLOAD_BYTES:
+                    onebot_status.count_invalid()
+                    await websocket.close(code=1009)
+                    break
                 try:
                     event = json.loads(raw)
                 except json.JSONDecodeError:
@@ -363,12 +532,18 @@ def build_onebot_router(ws_path: str) -> APIRouter:
                     continue
 
                 # T-307：NapCat 对动作调用的 echo 响应优先匹配出站通道
-                if onebot_action_hub.handle_response(event):
+                if onebot_action_hub.handle_response(event, websocket=websocket):
                     continue
 
                 self_id = event.get("self_id")
-                if self_id:
-                    onebot_status.see_self_id(str(self_id))
+                if not self_id:
+                    onebot_status.count_invalid()
+                    continue
+                if not onebot_action_hub.bind(websocket, self_id=str(self_id)):
+                    onebot_status.count_invalid()
+                    await websocket.close(code=1008)
+                    break
+                onebot_status.see_self_id(str(self_id))
 
                 post = event.get("post_type")
                 if post == "meta_event":
@@ -386,10 +561,34 @@ def build_onebot_router(ws_path: str) -> APIRouter:
                     ):
                         onebot_status.count_invalid()
                         continue
+                    try:
+                        inbox.validate_event(event)
+                    except ValueError:
+                        onebot_status.count_invalid()
+                        continue
                     onebot_status.count_group_event(str(event.get("group_id") or ""))
-                    queue = _ensure_worker()
-                    # 队列满时阻塞接收（对NapCat形成TCP背压），不丢事件
-                    await queue.put(event)
+                    _ensure_worker()
+                    try:
+                        # A disconnect must not interrupt a half-finished durable
+                        # admission or its SQLite connection cleanup.
+                        with CancelScope(shield=True):
+                            async with SessionLocal() as session:
+                                await inbox.enqueue_event(
+                                    session, event, max_pending=settings.onebot_queue_max
+                                )
+                    except (inbox.InboxFull, ValueError) as exc:
+                        onebot_status.count_failed()
+                        onebot_status.last_error = f"inbox_admission:{type(exc).__name__}"
+                        await websocket.close(code=1013)
+                        break
+                    except Exception as exc:  # noqa: BLE001 - uncommitted events are never scheduled
+                        onebot_status.storage_available = False
+                        onebot_status.count_failed()
+                        onebot_status.last_error = f"inbox_storage:{type(exc).__name__}"
+                        await websocket.close(code=1011)
+                        break
+                    if _worker_wake is not None:
+                        _worker_wake.set()
                     continue
                 # notice（含群撤回通知，T-205待标注事件）/请求/私聊等：仅计数
                 onebot_status.count_ignored()

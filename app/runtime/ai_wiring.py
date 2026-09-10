@@ -80,5 +80,6 @@ def build_default_ai_review_service() -> AIReviewService:
         quota=AIQuota(
             daily_budget_cents=settings.ai_daily_budget_cents,
             per_minute_limit=settings.ai_per_minute_limit,
+            daily_call_limit=settings.ai_daily_call_limit,
         ),
     )

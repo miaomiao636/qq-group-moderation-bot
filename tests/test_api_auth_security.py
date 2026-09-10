@@ -35,7 +35,10 @@ def app():
 
 @pytest.fixture
 def app_with_agent_token():
-    yield from _app_with_settings(AGENT_API_TOKEN="test-agent-token-12345")
+    yield from _app_with_settings(
+        AGENT_API_TOKEN="test-agent-token-12345",
+        AGENT_API_WRITE_SCOPES="project:read,settings:write,actions:enable,routing:write",
+    )
 
 
 def _extract_csrf(html: str) -> str:
@@ -107,7 +110,7 @@ def test_cookie_post_requires_csrf(app):
         _login(client)
         resp = client.post(
             "/admin/api/groups/test-group/settings",
-            params={"action_enabled": "true"},
+            params={"provider": "qq_official", "action_enabled": "true"},
         )
         assert resp.status_code == 403
 
@@ -121,7 +124,7 @@ def test_cookie_post_with_csrf_accepted(app):
         csrf = _extract_csrf(page.text)
         resp = client.post(
             "/admin/api/groups/test-group-csrf/settings",
-            params={"moderation_enabled": "true"},
+            params={"provider": "qq_official", "moderation_enabled": "true"},
             headers={"X-CSRF-Token": csrf},
         )
         assert resp.status_code in (200, 201), (
@@ -134,7 +137,7 @@ def test_bearer_post_no_csrf_needed(app_with_agent_token):
     with TestClient(app_with_agent_token) as client:
         resp = client.post(
             "/admin/api/groups/test-bearer/settings",
-            params={"moderation_enabled": "true"},
+            params={"provider": "qq_official", "moderation_enabled": "true"},
             headers={"Authorization": "Bearer test-agent-token-12345"},
         )
         assert resp.status_code == 200
@@ -162,7 +165,7 @@ def test_api_write_audited(app_with_agent_token):
     with TestClient(app_with_agent_token) as client:
         resp = client.post(
             "/admin/api/groups/test-audit/settings",
-            params={"moderation_enabled": "true"},
+            params={"provider": "qq_official", "moderation_enabled": "true"},
             headers={"Authorization": "Bearer test-agent-token-12345"},
         )
         assert resp.status_code == 200

@@ -33,7 +33,15 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
         logging.getLogger(__name__).warning(
             "启动清理：%d条过期租约已标记FAILED，%d条PENDING待重放", reaped, pending
         )
-    yield
+    from app.runtime.onebot_ws import start_onebot_runtime, stop_onebot_runtime
+
+    if get_settings().onebot_ws_enabled:
+        await start_onebot_runtime()
+    try:
+        yield
+    finally:
+        if get_settings().onebot_ws_enabled:
+            await stop_onebot_runtime()
 
 
 def create_app() -> FastAPI:

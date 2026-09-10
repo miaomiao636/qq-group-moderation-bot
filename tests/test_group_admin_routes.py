@@ -45,8 +45,8 @@ async def test_enable_action_creates_same_provider_route() -> None:
 async def test_enable_action_no_messages_creates_no_route() -> None:
     group = f"G{uuid.uuid4().hex[:8]}"
     async with SessionLocal() as session:
-        routed = await _ensure_action_routes(session, group)
-    assert routed == []
+        with pytest.raises(ValueError, match="明确选择 provider"):
+            await _ensure_action_routes(session, group)
     async with SessionLocal() as session:
         assert await resolve_action_provider(session, "onebot", group) is None
 

@@ -176,9 +176,9 @@ async def run_pipeline(
         return None
 
     # 按群审核开关：禁用群的消息仅记录为allow，不进入规则/AI/媒体审核
-    from app.core.group_settings import is_moderation_enabled
+    from app.core.group_settings import ambiguous_legacy_rule_scope, is_moderation_enabled
 
-    if not await is_moderation_enabled(session, msg.external_group_id):
+    if not await is_moderation_enabled(session, msg.external_group_id, provider=msg.provider):
         record = await upsert_shadow_decision(
             session,
             message_id=claim_key,
@@ -200,7 +200,13 @@ async def run_pipeline(
     try:
         rule_version_ids: tuple[int, ...] = ()
         local_ai_media_paths: list[Path] = []
-        rule_snapshot = await load_cached_active_snapshot(session, msg.external_group_id)
+        evidence_vetoes: list[str] = []
+        ambiguous_scope = await ambiguous_legacy_rule_scope(
+            session, msg.external_group_id, msg.provider
+        )
+        rule_snapshot = await load_cached_active_snapshot(
+            session, None if ambiguous_scope else msg.external_group_id
+        )
         rule_version_ids = rule_snapshot.version_ids
         if text_engine is None:
             text_engine = TextRuleEngine(rule_snapshot=rule_snapshot)
@@ -212,6 +218,7 @@ async def run_pipeline(
         # T-306：无法解析的内容（未知消息段/合并转发骨架）绝不判正常，
         # 也绝不作为处罚依据——强制降级人工复核。
         if _contains_unreviewable_content(msg):
+            evidence_vetoes.append("包含无法解析的内容（未知消息段/合并转发）")
             decision = decision.model_copy(
                 update={
                     "verdict": "record_only",
@@ -266,6 +273,13 @@ async def run_pipeline(
                     # image/gif/其他 → 图片引擎
                     m = image_engine.analyze(local)
                     media_decisions.append(_media_decision_from(m, message_id, msg))
+                if not _is_image(att.content_type) and media_decisions[-1].verdict == "record_only":
+                    # A vision call on another image cannot review this voice,
+                    # video or document. Preserve the incomplete-evidence gate.
+                    evidence_vetoes.append("包含尚未完成审核的语音/视频/文件")
+
+            if media_missing:
+                evidence_vetoes.append("媒体缺失/下载失败")
 
             if any(d.verdict == "violation_high" for d in media_decisions):
                 decision = merge_decisions(
@@ -317,6 +331,16 @@ async def run_pipeline(
             media_paths=local_ai_media_paths,
             rule_version_ids=rule_version_ids,
         )
+        if ambiguous_scope:
+            evidence_vetoes.append("同群 ID 存在不同 provider，旧群级规则适用范围有歧义")
+        if evidence_vetoes:
+            decision = decision.model_copy(
+                update={
+                    "verdict": "record_only",
+                    "recommended_actions": [],
+                    "reason": "；".join(dict.fromkeys(evidence_vetoes)) + "，转人工",
+                }
+            )
         detail = {
             "external_message_id": msg.external_message_id,
             "rule_hits": [h.model_dump() for h in decision.rule_hits],
@@ -328,6 +352,7 @@ async def run_pipeline(
             "media_files": [{"name": a.filename, "type": a.content_type} for a in msg.attachments],
             "rule_version_ids": list(rule_version_ids),
             "ai_results": [r.model_dump() for r in ai_results],
+            "evidence_vetoes": list(dict.fromkeys(evidence_vetoes)),
         }
         if msg.segments:
             # T-306：中立段摘要（含未知段元数据），供人工复核追溯

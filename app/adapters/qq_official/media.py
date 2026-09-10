@@ -13,8 +13,10 @@ import asyncio
 import hashlib
 import ipaddress
 import logging
+import socket
 import time
 import urllib.parse
+from contextlib import suppress
 from datetime import datetime
 from pathlib import Path
 
@@ -74,6 +76,7 @@ def sniff_file_head(path: Path, limit: int = 16) -> bytes:
 
 
 _MAX_REDIRECT_HOPS = 3
+_DOWNLOAD_TOTAL_SECONDS = 120.0
 
 
 async def stream_download(
@@ -85,26 +88,61 @@ async def stream_download(
     media_dir: Path | None = None,
     quota_bytes: int = MEDIA_QUOTA_BYTES,
 ) -> tuple[bool, str, int]:
+    """Bound the entire redirect/stream operation, including slow-drip responses."""
+    try:
+        async with asyncio.timeout(_DOWNLOAD_TOTAL_SECONDS):
+            return await _stream_download(
+                client,
+                url,
+                dest,
+                size_limit=size_limit,
+                media_dir=media_dir,
+                quota_bytes=quota_bytes,
+            )
+    except TimeoutError:
+        return False, "下载总时长超时", 0
+    finally:
+        # A failed/cancelled stream is never a retained media artifact.
+        with suppress(OSError):
+            dest.with_suffix(dest.suffix + ".part").unlink(missing_ok=True)
+
+
+async def _stream_download(
+    client: httpx.AsyncClient,
+    url: str,
+    dest: Path,
+    *,
+    size_limit: int,
+    media_dir: Path | None,
+    quota_bytes: int,
+) -> tuple[bool, str, int]:
     """流式下载到 dest，超限时中止。返回 (ok, reason, bytes)。
 
-    P1-6: 禁自动重定向，每跳重定向重新执行SSRF校验（防重定向绕过）。
+    P1-6: 每跳校验并固定 IP，保留逻辑 Host / TLS SNI。
+    调用方须提供专用 HTTP/1.1 client（http2=False、trust_env=False）。
     """
     current_url = url
     try:
         for _hop in range(_MAX_REDIRECT_HOPS + 1):
-            if not await _is_safe_media_url(current_url):
-                return False, f"URL被SSRF防护拦截: {current_url[:100]}", 0
+            pinned = await _pin_media_url(current_url)
+            if pinned is None:
+                return False, "URL被SSRF防护拦截", 0
+            target, host_header, server_hostname = pinned
             async with client.stream(
-                "GET", current_url, timeout=30, follow_redirects=False
+                "GET",
+                target,
+                timeout=30,
+                follow_redirects=False,
+                # Do not pool one IP's TLS connection across different logical
+                # hosts: each request must verify its own original hostname.
+                headers={"Host": host_header, "Connection": "close"},
+                extensions={"sni_hostname": server_hostname},
             ) as resp:
                 if resp.status_code in (301, 302, 303, 307, 308):
                     location = resp.headers.get("location", "")
                     if not location:
                         return False, "重定向缺少Location头", 0
-                    if location.startswith("/"):
-                        parsed = urllib.parse.urlparse(current_url)
-                        location = f"{parsed.scheme}://{parsed.hostname}{location}"
-                    current_url = location
+                    current_url = urllib.parse.urljoin(current_url, location)
                     continue
                 resp.raise_for_status()
                 bytes_written = 0
@@ -172,19 +210,36 @@ _ALLOWED_PORTS = {80, 443}  # P1-6: 仅允许标准HTTP/HTTPS端口
 
 def _is_safe_ip(ip: ipaddress.IPv4Address | ipaddress.IPv6Address) -> bool:
     """检查IP是否安全（不在被封锁的网络段内）。"""
-    return not any(ip in net for net in _BLOCKED_NETWORKS)
+    return (
+        ip.is_global
+        and not ip.is_multicast
+        and not ip.is_reserved
+        and not ip.is_loopback
+        and not ip.is_link_local
+        and not ip.is_unspecified
+        and not any(ip in net for net in _BLOCKED_NETWORKS)
+    )
 
 
 def _is_safe_media_url_sync(url: str) -> bool:
     """同步检查：scheme/端口/字面IP。域名需另行DNS解析检查。"""
-    parsed = urllib.parse.urlparse(url)
+    try:
+        parsed = urllib.parse.urlparse(url)
+        port = parsed.port
+    except ValueError:
+        return False
     if parsed.scheme not in ("http", "https"):
         return False
     host = (parsed.hostname or "").lower()
-    if not host or host == "localhost":
+    if (
+        not host
+        or host == "localhost"
+        or "%" in host
+        or parsed.username is not None
+        or parsed.password is not None
+    ):
         return False
     # P1-6: 端口白名单
-    port = parsed.port
     if port is not None and port not in _ALLOWED_PORTS:
         return False
     try:
@@ -196,35 +251,57 @@ def _is_safe_media_url_sync(url: str) -> bool:
 
 async def _check_dns_resolution(host: str) -> bool:
     """P1-6: DNS解析后检查所有地址，拒绝解析到内网/回环的域名。"""
-    import socket
+    return bool(await _resolve_public_addresses(host))
 
+
+async def _resolve_public_addresses(host: str) -> list[str]:
+    """Resolve all addresses once, reject the whole answer if any address is unsafe."""
     loop = asyncio.get_event_loop()
     try:
-        infos = await loop.getaddrinfo(host, None)
-    except (socket.gaierror, OSError):
-        return False  # 解析失败 → fail-closed拒绝
+        infos = await asyncio.wait_for(loop.getaddrinfo(host, None, type=socket.SOCK_STREAM), 5)
+    except (socket.gaierror, OSError, TimeoutError):
+        return []
+    addresses: list[str] = []
     for info in infos:
         ip_str = info[4][0]
         try:
             ip = ipaddress.ip_address(ip_str)
         except ValueError:
-            return False
+            return []
         if not _is_safe_ip(ip):
-            return False
-    return True
+            return []
+        if str(ip) not in addresses:
+            addresses.append(str(ip))
+    return addresses
 
 
 async def _is_safe_media_url(url: str) -> bool:
     """P1-6: 完整SSRF检查——scheme/端口/字面IP/DNS解析后全地址。"""
+    return await _pin_media_url(url) is not None
+
+
+async def _pin_media_url(url: str) -> tuple[httpx.URL, str, str] | None:
+    """Connect to a checked literal IP, while retaining Host and TLS verification identity.
+
+    HTTPX forwards ``sni_hostname`` to httpcore's TLS ``server_hostname``; both SNI
+    and certificate checking use the original hostname. DNS is never repeated by
+    the transport. Callers construct the dedicated media client with trust_env=False.
+    """
     if not _is_safe_media_url_sync(url):
-        return False
-    parsed = urllib.parse.urlparse(url)
-    host = (parsed.hostname or "").lower()
+        return None
     try:
-        ipaddress.ip_address(host)
-        return True  # 字面IP已在sync检查中验证
-    except ValueError:
-        return await _check_dns_resolution(host)
+        original = httpx.URL(url)
+        host = original.host
+        try:
+            addresses = [str(ipaddress.ip_address(host))]
+        except ValueError:
+            addresses = await _resolve_public_addresses(host)
+        if not addresses:
+            return None
+        host_header = original.netloc.decode("ascii")
+        return original.copy_with(host=addresses[0]), host_header, host
+    except (ValueError, httpx.InvalidURL):
+        return None
 
 
 async def download_attachment(
@@ -245,7 +322,7 @@ async def download_attachment(
         return None, "", "无URL"
     if url.startswith("//"):
         url = "https:" + url
-    if not await _is_safe_media_url(url):
+    if not _is_safe_media_url_sync(url):
         return None, "", "URL被SSRF防护拦截（内网/回环/DNS解析到内网）"
 
     ensure_media_dir(media_dir)

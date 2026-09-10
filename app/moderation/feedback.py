@@ -13,7 +13,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any, Literal, cast
 
-from sqlalchemy import DateTime, Integer, String, Text, select
+from sqlalchemy import DateTime, Integer, String, Text, delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -143,8 +143,62 @@ async def record_feedback(
         sample_text_masked=sanitize_text(text)[:1_000],
     )
     session.add(record)
+    await session.flush()
+    if record.label in NEGATIVE_LABELS:
+        await _revoke_mapped_strikes(session, record)
     await session.commit()
     return record
+
+
+async def _revoke_mapped_strikes(session: AsyncSession, feedback: FeedbackRecord) -> None:
+    """Retract counting eligibility, never undo external actions or close a case."""
+    shadow = await session.scalar(
+        select(ShadowDecision).where(ShadowDecision.message_id == feedback.message_id)
+    )
+    if (
+        shadow is None
+        or shadow.provider not in {"onebot", "qq_official"}
+        or not shadow.external_group_id
+        or not shadow.external_user_id
+        or not shadow.external_message_id
+    ):
+        return  # No verified internal-to-external mapping: do not guess a target.
+    violations = (
+        await session.scalars(
+            select(ViolationRecord).where(
+                ViolationRecord.provider == shadow.provider,
+                ViolationRecord.external_group_id == shadow.external_group_id,
+                ViolationRecord.external_user_id == shadow.external_user_id,
+                ViolationRecord.message_id == shadow.external_message_id,
+                ViolationRecord.revoked.is_(False),
+            )
+        )
+    ).all()
+    from app.models import AdminAudit
+
+    for violation in violations:
+        violation.revoked = True
+        violation.revoke_reason = (
+            f"反馈#{feedback.id} {feedback.label}；操作人:{feedback.operator}；"
+            f"原因:{feedback.reason[:120]}"
+        )[:255]
+        session.add(
+            AdminAudit(
+                operator=feedback.operator,
+                action="feedback_revoke_strike",
+                target_type="violation",
+                target_id=str(violation.id),
+                detail_json=json.dumps(
+                    {
+                        "feedback_id": feedback.id,
+                        "label": feedback.label,
+                        "case_id": violation.case_id,
+                        "external_actions_undone": False,
+                    },
+                    ensure_ascii=False,
+                ),
+            )
+        )
 
 
 async def record_recall_notice(
@@ -194,88 +248,177 @@ async def mine_rule_candidates(
     min_messages: int = 3,
     min_members: int = 2,
 ) -> list[RuleCandidate]:
-    """Mine structured rule candidates from confirmed positive feedback only."""
-    positives = (
-        (
-            await session.execute(
-                select(FeedbackRecord)
-                .where(FeedbackRecord.label.in_(POSITIVE_LABELS))
-                .order_by(FeedbackRecord.created_at.asc(), FeedbackRecord.id.asc())
-            )
-        )
+    """Reconcile unhandled proposals against each message's latest human label."""
+    if min_messages < 3 or min_members < 2:
+        raise ValueError("自动候选至少需要3条独立消息、2个成员；明确政策请人工创建规则")
+    group_providers = await _feedback_group_providers(session)
+    latest = await _latest_feedback(session)
+    negatives = [feedback for feedback in latest if feedback.label in NEGATIVE_LABELS]
+    grouped = _group_candidate_support(latest, group_providers)
+    proposed = (
+        (await session.execute(select(RuleCandidate).where(RuleCandidate.status == "PROPOSED")))
         .scalars()
         .all()
     )
-    negatives = (
-        (
-            await session.execute(
-                select(FeedbackRecord).where(FeedbackRecord.label.in_(NEGATIVE_LABELS))
-            )
+    existing_keys: set[tuple[str, str, str, str, str]] = set()
+    mined: list[RuleCandidate] = []
+    for candidate in proposed:
+        provider = str(_safe_json(candidate.replay_report_json).get("provider") or "")
+        key = (
+            provider,
+            candidate.scope_key,
+            candidate.item_type,
+            candidate.pattern,
+            candidate.category,
         )
-        .scalars()
-        .all()
-    )
+        existing_keys.add(key)
+        if await _refresh_proposed_candidate(
+            session,
+            candidate,
+            provider,
+            grouped.get(key, []) if candidate.scope == "group" else [],
+            negatives,
+            min_messages=min_messages,
+            min_members=min_members,
+        ):
+            mined.append(candidate)
+
+    for key, examples in grouped.items():
+        if key in existing_keys:
+            continue
+        provider, scope_key, item_type, pattern, category = key
+        messages, members = _support_identity_counts(examples)
+        if messages < min_messages or members < min_members:
+            continue
+        candidate = RuleCandidate(
+            scope="group",
+            scope_key=scope_key,
+            item_type=item_type,
+            pattern=pattern,
+            category=category,
+            weight=0.95,
+            status="PROPOSED",
+        )
+        session.add(candidate)
+        await session.flush()
+        await _refresh_proposed_candidate(
+            session,
+            candidate,
+            provider,
+            examples,
+            negatives,
+            min_messages=min_messages,
+            min_members=min_members,
+        )
+        mined.append(candidate)
+    await session.commit()
+    return mined
+
+
+async def _latest_feedback(session: AsyncSession) -> list[FeedbackRecord]:
+    # The append-only row ID orders actual writes even when timestamps tie or
+    # clocks move backwards. Filter labels only AFTER selecting the last write:
+    # an unknown recall explicitly retracts an earlier positive/negative truth.
+    records = (await session.execute(select(FeedbackRecord).order_by(FeedbackRecord.id))).scalars()
+    latest = {
+        (
+            record.provider,
+            record.external_group_id or record.group_openid,
+            record.message_id,
+        ): record
+        for record in records
+    }
+    return list(latest.values())
+
+
+def _group_candidate_support(
+    latest: list[FeedbackRecord], group_providers: dict[str, set[str]]
+) -> dict[tuple[str, str, str, str, str], list[FeedbackRecord]]:
     grouped: dict[tuple[str, str, str, str, str], list[FeedbackRecord]] = defaultdict(list)
-    for feedback in positives:
+    for feedback in latest:
+        if feedback.label not in POSITIVE_LABELS:
+            continue
+        scope_key = feedback.external_group_id or feedback.group_openid
+        if not scope_key or len(group_providers.get(scope_key, set())) != 1:
+            continue  # Missing or ambiguous legacy rule scope cannot be published safely.
         for extracted in extract_candidates_from_text(
             feedback.sample_text_masked, category=feedback.category
         ):
-            scope_key = feedback.group_openid or "*"
             grouped[
                 (
-                    "group" if feedback.group_openid else "global",
+                    feedback.provider,
                     scope_key,
                     extracted.item_type,
                     extracted.pattern,
                     extracted.category,
                 )
             ].append(feedback)
+    return dict(grouped)
 
-    created: list[RuleCandidate] = []
-    for (scope, scope_key, item_type, pattern, category), examples in grouped.items():
-        message_ids = {example.message_id for example in examples}
-        member_ids = {example.member_openid for example in examples if example.member_openid}
-        if len(message_ids) < min_messages or len(member_ids) < min_members:
-            continue
-        conflict_count = sum(
-            1
-            for negative in negatives
-            if negative.group_openid in (scope_key, "")
-            and _candidate_matches_text(item_type, pattern, negative.sample_text_masked)
+
+def _support_identity_counts(examples: list[FeedbackRecord]) -> tuple[int, int]:
+    return len({example.message_id for example in examples}), len(
+        {
+            example.external_user_id or example.member_openid
+            for example in examples
+            if example.external_user_id or example.member_openid
+        }
+    )
+
+
+async def _refresh_proposed_candidate(
+    session: AsyncSession,
+    candidate: RuleCandidate,
+    provider: str,
+    examples: list[FeedbackRecord],
+    negatives: list[FeedbackRecord],
+    *,
+    min_messages: int = 3,
+    min_members: int = 2,
+) -> bool:
+    """Update only the mutable proposal/index; feedback and copied history stay intact."""
+    support_count, member_count = _support_identity_counts(examples)
+    conflict_count = sum(
+        1
+        for negative in negatives
+        if negative.provider == provider
+        and (negative.external_group_id or negative.group_openid) == candidate.scope_key
+        and _candidate_matches_text(
+            candidate.item_type, candidate.pattern, negative.sample_text_masked
         )
-        report = {
-            "positive_coverage": len(message_ids),
+    )
+    supported = support_count >= min_messages and member_count >= min_members
+    candidate.support_count = support_count
+    candidate.member_count = member_count
+    candidate.conflict_count = conflict_count
+    candidate.status = "PROPOSED" if supported else "DISMISSED"
+    candidate.replay_report_json = json.dumps(
+        {
+            "provider": provider,
+            "positive_coverage": support_count,
             "confirmed_negative_conflicts": conflict_count,
             "unlabeled_impact": 0,
             "support_feedback_ids": [example.id for example in examples[:20]],
-        }
-        candidate = RuleCandidate(
-            scope=scope,
-            scope_key=scope_key,
-            item_type=item_type,
-            pattern=pattern,
-            category=category,
-            weight=0.95,
-            support_count=len(message_ids),
-            member_count=len(member_ids),
-            conflict_count=conflict_count,
-            replay_report_json=json.dumps(report, ensure_ascii=False),
-        )
-        session.add(candidate)
-        await session.flush()
-        for example in examples[:20]:
-            session.add(
-                RuleCandidateExample(
-                    candidate_id=candidate.id,
-                    feedback_id=example.id,
-                    message_id=example.message_id,
-                    member_openid=example.member_openid,
-                    label=example.label,
-                )
+            "invalidation_reason": "" if supported else "latest_feedback_support_insufficient",
+        },
+        ensure_ascii=False,
+    )
+    # This is a current support index, not the append-only feedback audit. Never
+    # touch these rows for copied proposals or published rule versions.
+    await session.execute(
+        delete(RuleCandidateExample).where(RuleCandidateExample.candidate_id == candidate.id)
+    )
+    for example in examples[:20]:
+        session.add(
+            RuleCandidateExample(
+                candidate_id=candidate.id,
+                feedback_id=example.id,
+                message_id=example.message_id,
+                member_openid=example.member_openid,
+                label=example.label,
             )
-        created.append(candidate)
-    await session.commit()
-    return created
+        )
+    return supported
 
 
 async def copy_candidate_to_draft(
@@ -291,6 +434,34 @@ async def copy_candidate_to_draft(
         raise ValueError("候选规则不存在")
     if candidate.status == "DISMISSED":
         raise ValueError("已忽略的候选规则不能复制")
+    providers = (await _feedback_group_providers(session)).get(candidate.scope_key, set())
+    candidate_provider = _safe_json(candidate.replay_report_json).get("provider")
+    if candidate.scope != "group" or not candidate_provider or providers != {candidate_provider}:
+        raise ValueError("候选规则来源provider缺失或群来源有歧义，请重新挖掘并确认来源")
+    latest = await _latest_feedback(session)
+    grouped = _group_candidate_support(latest, {candidate.scope_key: providers})
+    examples = grouped.get(
+        (
+            str(candidate_provider),
+            candidate.scope_key,
+            candidate.item_type,
+            candidate.pattern,
+            candidate.category,
+        ),
+        [],
+    )
+    messages, members = _support_identity_counts(examples)
+    if candidate.status == "PROPOSED":
+        await _refresh_proposed_candidate(
+            session,
+            candidate,
+            str(candidate_provider),
+            examples,
+            [feedback for feedback in latest if feedback.label in NEGATIVE_LABELS],
+        )
+        await session.commit()
+    if messages < 3 or members < 2:
+        raise ValueError("最新人工标签的候选支持不足，请重新挖掘后审核")
 
     from app.moderation.dynamic_rules import add_rule_item, create_rule_draft
 
@@ -315,6 +486,18 @@ async def copy_candidate_to_draft(
     candidate.copied_version_id = draft.id
     await session.commit()
     return draft.id
+
+
+async def _feedback_group_providers(session: AsyncSession) -> dict[str, set[str]]:
+    """Legacy dynamic-rule scopes have no provider column: reject collisions."""
+    providers: dict[str, set[str]] = defaultdict(set)
+    for model in (FeedbackRecord, ShadowDecision, ViolationRecord):
+        group_id = func.coalesce(func.nullif(model.external_group_id, ""), model.group_openid)
+        rows = (await session.execute(select(group_id, model.provider).distinct())).all()
+        for group, provider in rows:
+            if group and provider:
+                providers[str(group)].add(str(provider))
+    return dict(providers)
 
 
 def extract_candidates_from_text(text: str, *, category: str) -> list[ExtractedCandidate]:
@@ -433,71 +616,11 @@ async def load_vision_feedback_context(
     provider: str = "",
     external_group_id: str = "",
 ) -> str:
-    """加载人工确认的图片反馈，蒸馏成纠正上下文喂给视觉AI。
+    """Compatibility no-op: unreviewed sample labels never become cloud prompts.
 
-    P0-4修复：
-    - 按 provider + external_group_id 隔离（不跨群跨通道汇总）；
-    - 使用传输中立复合身份 join（provider+external_group_id+message_id）；
-    - 不把管理员自由文本 reason 发给云端，只用结构化 label 映射。
+    Retaining this entry point keeps older callers safe. Structured feedback is
+    still stored and mined into candidates; general rules require explicit
+    replay, draft publication and versioning. Neither labels nor free-text
+    reasons are uploaded by this former immediate-learning path.
     """
-    from sqlalchemy import and_
-
-    join_cond = and_(
-        FeedbackRecord.message_id == ShadowDecision.message_id,
-        FeedbackRecord.provider == ShadowDecision.provider,
-    )
-    where_conds = [
-        ShadowDecision.kind == "image",
-        FeedbackRecord.label.in_(tuple(POSITIVE_LABELS | NEGATIVE_LABELS)),
-    ]
-    if provider:
-        where_conds.append(FeedbackRecord.provider == provider)
-    if external_group_id:
-        where_conds.append(FeedbackRecord.external_group_id == external_group_id)
-
-    rows = (
-        await session.execute(
-            select(FeedbackRecord, ShadowDecision)
-            .join(ShadowDecision, join_cond)
-            .where(*where_conds)
-            .order_by(FeedbackRecord.id.desc())
-            .limit(20)
-        )
-    ).all()
-
-    # P0-4: 结构化映射——不发送管理员自由文本 reason
-    _LABEL_MAP = {
-        "confirmed_violation": "violation",
-        "confirmed_normal": "normal",
-        "false_positive": "normal",
-    }
-    corrections: list[str] = []
-    reinforcements: list[str] = []
-    for fb, shadow in rows:
-        detail = _safe_json(shadow.detail_json)
-        ai_results = detail.get("ai_results") or []
-        ai_cat = None
-        for r in ai_results:
-            if isinstance(r, dict) and r.get("category"):
-                ai_cat = r.get("category")
-                break
-        human_label = _LABEL_MAP.get(fb.label, "unknown")
-        if human_label == "normal" and ai_cat in ("ad", "fraud"):
-            corrections.append("prev_ad_but_human_normal->null")
-        elif human_label == "violation" and ai_cat in (None, "other", "normal"):
-            corrections.append(f"prev_{ai_cat or 'null'}_but_human_violation->ad")
-        elif human_label == "violation" and ai_cat in ("ad", "fraud"):
-            reinforcements.append(f"human_confirmed_{ai_cat}")
-
-    parts: list[str] = []
-    if corrections:
-        seen = set()
-        unique_corr = []
-        for c in corrections:
-            if c not in seen:
-                seen.add(c)
-                unique_corr.append(c)
-        parts.append("corrections:" + ",".join(unique_corr[:5]))
-    if reinforcements:
-        parts.append("reinforcements:" + ",".join(reinforcements[:3]))
-    return " | ".join(parts) if parts else ""
+    return ""

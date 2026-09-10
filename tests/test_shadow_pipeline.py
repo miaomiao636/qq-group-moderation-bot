@@ -77,18 +77,11 @@ async def test_missing_id_returns_none() -> None:
 
 @pytest.mark.asyncio
 async def test_decision_page_renders(logged_in_web) -> None:
-    from app.main import app
-    from fastapi.testclient import TestClient
-
-    with TestClient(app) as client:
-        client.post(
-            "/admin/login",
-            data={"username": "admin", "password": "test-admin-pass"},
-            follow_redirects=False,
-        )
-        resp = client.get("/admin/shadow")
-        assert resp.status_code == 200
-        assert "影子模式判定" in resp.text
+    # The fixture already owns the single runtime; this is another request, not
+    # a second server process against the same database.
+    resp = logged_in_web.get("/admin/shadow")
+    assert resp.status_code == 200
+    assert "影子模式判定" in resp.text
 
 
 @pytest.fixture()

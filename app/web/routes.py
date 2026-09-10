@@ -11,13 +11,13 @@ import html
 import json
 import secrets
 from datetime import timedelta
-from pathlib import Path
+from hashlib import sha256
 from typing import Any
 from urllib.parse import quote
 
 from fastapi import APIRouter, Form, HTTPException, Request, Response
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse
-from sqlalchemy import select
+from sqlalchemy import select, text, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.cases.case_sm import IllegalTransitionError
@@ -116,7 +116,7 @@ def _ai_model_table(models: list[dict[str, Any]]) -> str:
         return "<div class=card><h3>AI 调用（按模型）</h3><p class=muted>暂无调用</p></div>"
     rows = "".join(
         f"<tr><td>{_esc(m['model'])}</td><td>{m['calls']}</td><td>{m['ok']}</td>"
-        f"<td>{m['fail']}</td><td>{m['avg_ms']}ms</td><td>{m['cost_cents']}分</td></tr>"
+        f"<td>{m['fail']}</td><td>{m['avg_ms']}ms</td><td>未核算（以供应商账单为准）</td></tr>"
         for m in models
     )
     return (
@@ -131,14 +131,17 @@ def _ai_daily_table(daily: list[dict[str, Any]]) -> str:
     if not daily:
         return "<div class=card><h3>AI 每日消耗</h3><p class=muted>暂无AI调用记录</p></div>"
     rows = "".join(
-        f"<tr><td>{_esc(d['day'])}</td><td>{d['calls']}</td><td>{d['ok']}</td>"
-        f"<td>{d['fail']}</td><td>{d['avg_latency_ms']}ms</td><td>¥{d['cost_yuan']}</td></tr>"
+        f"<tr><td>{_esc(d['day'])}</td><td>{d['calls']}</td>"
+        f"<td>{d['primary_calls']}</td><td>{d['secondary_calls']}</td>"
+        f"<td>{d['cache_hits']}</td><td>{d['blocked_calls']}</td>"
+        f"<td>{d['fail']}</td><td>{d['avg_latency_ms']}ms</td><td>未核算</td></tr>"
         for d in daily
     )
-    total_cost = sum(d["cost_yuan"] for d in daily)
     return (
-        f"<div class=card><h3>AI 每日消耗（累计 ¥{total_cost:.2f}）</h3>"
-        "<table><tr><th>日期</th><th>调用</th><th>成功</th><th>失败</th>"
+        "<div class=card><h3>AI 每日消耗（UTC，金额未核算）</h3>"
+        "<p class=muted>实际调用不含缓存和本地额度拒绝；旧记录未区分主/次模型时不猜测补齐。供应商账单为准。</p>"
+        "<table><tr><th>日期</th><th>实际调用</th><th>主模型</th><th>次模型</th>"
+        "<th>缓存</th><th>额度阻断</th><th>失败</th>"
         "<th>平均延迟</th><th>费用</th></tr>" + rows + "</table></div>"
     )
 
@@ -155,8 +158,12 @@ def _stats_body(stats: dict[str, Any]) -> str:
             ("待审案件", t["pending_cases"]),
             ("已标注反馈", t["feedback"]),
             ("AI 调用", t["ai_calls"]),
+            ("主模型调用", stats["ai_usage"]["primary_calls"]),
+            ("次模型调用", stats["ai_usage"]["secondary_calls"]),
+            ("缓存命中", stats["ai_usage"]["cache_hits"]),
+            ("额度阻断", stats["ai_usage"]["blocked_calls"]),
             ("AI 失败率", f"{ai_fail_rate:.1f}%"),
-            ("AI/人工一致率", agree_label),
+            ("已标注样本一致率（非验收）", agree_label),
         ]
     )
     return (
@@ -240,7 +247,9 @@ async def login_page(error: str = "") -> Response:
 
 
 @router.post("/login")
-async def login_submit(username: str = Form(""), password: str = Form("")) -> RedirectResponse:
+async def login_submit(
+    request: Request, username: str = Form(""), password: str = Form("")
+) -> RedirectResponse:
     try:
         token = auth.login(username, password)
     except auth.AuthError as exc:
@@ -252,8 +261,8 @@ async def login_submit(username: str = Form(""), password: str = Form("")) -> Re
         token,
         httponly=True,
         samesite="lax",
-        secure=settings.app_env == "prod",
-        max_age=12 * 3600,
+        secure=request.url.scheme == "https",
+        max_age=settings.admin_session_ttl_seconds,
     )
     return resp
 
@@ -1073,46 +1082,77 @@ async def add_rule_item_submit(
     return _rules_notice_redirect(f"已添加规则项#{item.id}")
 
 
+async def _rule_plan_state(session: AsyncSession, version_id: int) -> dict[str, Any]:
+    from app.moderation.dynamic_rules import RuleItem, RuleSet, RuleVersion
+
+    version = await session.get(RuleVersion, version_id, populate_existing=True)
+    if version is None:
+        raise HTTPException(404, "规则版本不存在")
+    rule_set = await session.get(RuleSet, version.rule_set_id)
+    items = (
+        await session.scalars(
+            select(RuleItem).where(RuleItem.version_id == version_id).order_by(RuleItem.id)
+        )
+    ).all()
+    active = (
+        await session.scalars(
+            select(RuleVersion.id)
+            .where(RuleVersion.rule_set_id == version.rule_set_id, RuleVersion.status == "ACTIVE")
+            .order_by(RuleVersion.id)
+        )
+    ).all()
+    return {
+        "version_id": version_id,
+        "version": version.version,
+        "status": version.status,
+        "scope": rule_set.scope if rule_set else "",
+        "scope_key": rule_set.scope_key if rule_set else "",
+        "active_versions": list(active),
+        "items": [
+            {
+                column.name: getattr(item, column.name)
+                for column in RuleItem.__table__.columns
+                if column.name != "created_at"
+            }
+            for item in items
+        ],
+    }
+
+
+async def _preview_rule_change(
+    request: Request, version_id: int, csrf: str, action: str
+) -> Response:
+    token = await _require_admin_post(request, csrf)
+    from app.web.agent_confirm import create_confirmation
+
+    async with SessionLocal() as session:
+        state = await _rule_plan_state(session, version_id)
+        if action == "rule_publish" and state["status"] != "DRAFT":
+            raise HTTPException(409, "只能预览发布草稿规则")
+        if action == "rule_rollback" and state["status"] not in ("ACTIVE", "ARCHIVED"):
+            raise HTTPException(409, "只能回滚到已发布的历史规则")
+        plan = await create_confirmation(
+            session,
+            action=action,
+            params={"version_id": version_id},
+            expected_state=state,
+            requestor=_human_actor(token),
+        )
+    return RedirectResponse(f"/admin/plans/{plan.id}", status_code=303)
+
+
 @router.post("/rules/versions/{version_id}/publish")
 async def publish_rule_version_submit(
     request: Request, version_id: int, csrf: str = Form("")
 ) -> Response:
-    await _require_admin_post(request, csrf)
-    operator = await _operator(request)
-    from app.moderation.dynamic_rules import publish_rule_version
-
-    try:
-        async with SessionLocal() as session:
-            version = await publish_rule_version(session, version_id, operator=operator)
-        await record_admin_audit(
-            operator, "rule_publish", "rule_version", str(version.id), {"version": version.version}
-        )
-    except ValueError as exc:
-        return _rules_notice_redirect(str(exc))
-    return _rules_notice_redirect(f"已发布规则版本#{version.id}")
+    return await _preview_rule_change(request, version_id, csrf, "rule_publish")
 
 
 @router.post("/rules/versions/{version_id}/rollback")
 async def rollback_rule_version_submit(
     request: Request, version_id: int, csrf: str = Form("")
 ) -> Response:
-    await _require_admin_post(request, csrf)
-    operator = await _operator(request)
-    from app.moderation.dynamic_rules import rollback_to_version
-
-    try:
-        async with SessionLocal() as session:
-            version = await rollback_to_version(session, version_id, operator=operator)
-        await record_admin_audit(
-            operator,
-            "rule_rollback",
-            "rule_version",
-            str(version.id),
-            {"version": version.version},
-        )
-    except ValueError as exc:
-        return _rules_notice_redirect(str(exc))
-    return _rules_notice_redirect(f"已回滚到规则版本#{version.id}")
+    return await _preview_rule_change(request, version_id, csrf, "rule_rollback")
 
 
 # ---------- 反馈学习 ----------
@@ -1314,151 +1354,123 @@ async def cleanup_now(request: Request, csrf: str = Form("")) -> RedirectRespons
 # ---------- 群管理（P0：按群审核/动作开关） ----------
 
 
-async def _ensure_action_routes(session: AsyncSession, group_openid: str) -> list[str]:
+async def _ensure_action_routes(
+    session: AsyncSession, group_openid: str, provider: str = "", *, commit: bool = True
+) -> list[str]:
     """动作开启时按该群已见消息来源补齐同通道路由（T-307/P1-8）。
 
     P1-8修复：同群只能有一个动作出口。仅当该群只有一个消息来源 provider
     时自动补齐路由；有多个候选 provider 时拒绝自动路由，要求管理员显式选择。
     """
+    from app.core.group_settings import resolve_group_identity
     from app.core.routing import upsert_group_route
-    from app.runtime.models import ShadowDecision
 
-    providers = {
-        r[0]
-        for r in (
-            await session.execute(
-                select(ShadowDecision.provider)
-                .where(ShadowDecision.external_group_id == group_openid)
-                .distinct()
-            )
-        ).all()
-        if r[0]
-    }
-    # P1-8: 多 provider 时拒绝自动路由，要求管理员显式选择唯一出口
-    if len(providers) > 1:
-        raise ValueError(
-            f"群 {group_openid} 有多个消息来源 provider：{','.join(sorted(providers))}"
-            "，请通过管理后台显式选择唯一的动作出口 provider"
-        )
-    if not providers:
-        return []
-    provider = sorted(providers)[0]
+    provider = await resolve_group_identity(session, group_openid, provider)
     await upsert_group_route(
         session,
         group_openid,
         message_provider=provider,
         action_provider=provider,
+        commit=commit,
     )
     return [provider]
 
 
 @router.get("/groups", response_class=HTMLResponse)
 async def groups_page(request: Request, notice: str = "") -> Response:
-    """群管理面板：列出所有被监测的群，按群开关审核与动作。"""
+    """Provider-qualified controls with an explicit, human-approved action owner."""
     token = await _require_login(request)
     if not token:
         return _login_redirect()
     csrf = _csrf_field(token)
-    from app.models import GroupAlias, GroupSettings
+    from app.core.emergency_stop import emergency_stop_active
+    from app.models import GroupActionOwner, ProviderGroupSettings
     from app.runtime.models import ShadowDecision
 
     async with SessionLocal() as session:
-        # 所有出现过的群（影子判定+去重记录+别名）
-        seen = set()
-        for row in (
-            await session.execute(select(ShadowDecision.external_group_id).distinct())
-        ).all():
-            if row[0]:
-                seen.add(row[0])
-        gs_rows = (await session.execute(select(GroupSettings))).scalars().all()
-        settings_map = {g.group_openid: g for g in gs_rows}
-        alias_rows = (await session.execute(select(GroupAlias))).scalars().all()
-        alias_map = {a.group_openid: a.name for a in alias_rows}
-        seen.update(settings_map.keys())
-        seen.update(alias_map.keys())
-        # 动作出口路由（T-307）：显示每群已配置的 provider→action_provider
-        from app.core.routing import GroupProviderRoute
-
-        route_rows = (await session.execute(select(GroupProviderRoute))).scalars().all()
-        route_map: dict[str, list[str]] = {}
-        for r in route_rows:
-            route_map.setdefault(r.external_group_id, []).append(
-                f"{r.message_provider}→{r.action_provider}"
-            )
-
-    groups = sorted(seen)
-    rows = "".join(
-        "<tr>"
-        f"<td><code>{_esc(g[:20])}{'…' if len(g) > 20 else ''}</code></td>"
-        f"<td class=muted>{_esc(' / '.join(route_map.get(g, [])) or '—')}</td>"
-        f"<td>"
-        f'<form method=post action="/admin/groups/settings" style="display:flex;gap:6px;align-items:center">'
-        f"{csrf}"
-        f'<input type=hidden name=group_openid value="{_esc(g)}">'
-        f'<input name=name value="{_esc(settings_map.get(g, GroupSettings(group_openid=g)).name or alias_map.get(g, ""))}" placeholder="群名称" style="width:140px">'
-        f'<label style="margin-right:12px"><input type=checkbox name=moderation_enabled value=1 {"checked" if (settings_map.get(g) is None or settings_map[g].moderation_enabled) else ""}>审核</label>'
-        f"<label><input type=checkbox name=action_enabled value=1 {'checked' if (settings_map.get(g) is not None and settings_map[g].action_enabled) else ''}>动作</label>"
-        f"<button class=btn>保存</button>"
-        f"</form>"
-        f"</td>"
-        f"</tr>"
-        for g in groups
-    )
-    notice_html = (
-        f'<div class=card style="border-color:#16804b">{_esc(notice)}</div>' if notice else ""
-    )
+        seen = {
+            tuple(row)
+            for row in (
+                await session.execute(
+                    select(ShadowDecision.provider, ShadowDecision.external_group_id).distinct()
+                )
+            ).all()
+        }
+        settings_rows = (await session.scalars(select(ProviderGroupSettings))).all()
+        settings_map = {(row.provider, row.external_group_id): row for row in settings_rows}
+        seen.update(settings_map)
+        owners = {
+            row.external_group_id: row.provider
+            for row in (await session.scalars(select(GroupActionOwner))).all()
+        }
+        stopped = await emergency_stop_active(session)
+    rows = []
+    for provider, group in sorted(seen):
+        if not group:
+            continue
+        gs = settings_map.get((provider, group))
+        rows.append(
+            f"<tr><td>{_esc(provider)}<br><code>{_esc(group)}</code></td>"
+            f"<td>{_esc(owners.get(group) or '未选择 / 有歧义')}</td><td>"
+            f'<form method=post action="/admin/groups/settings">{csrf}'
+            f'<input type=hidden name=provider value="{_esc(provider)}">'
+            f'<input type=hidden name=group_openid value="{_esc(group)}">'
+            f'<label>群备注 <input name=name maxlength=64 value="{_esc(gs.name if gs else "")}"></label> '
+            f"<label><input type=checkbox name=moderation_enabled value=1 {'checked' if gs is None or gs.moderation_enabled else ''}>审核</label> "
+            f"<label><input type=checkbox name=action_enabled value=1 {'checked' if gs and gs.action_enabled else ''}>真实动作</label> "
+            "<button class=btn>保存 / 预览高风险变更</button></form></td></tr>"
+        )
     body = (
-        "<h2>群管理</h2>"
-        "<p>列出所有被 NapCat 监测到的群。<b>审核</b>=消息是否进入规则/AI审核；"
-        "<b>动作</b>=OFFICIAL模式下是否执行撤回/禁言（安全默认关闭，须显式开启）。"
-        "勾选动作保存时会自动补齐同通道路由（出口列）；未开动作的群即使判违规也只记录。</p>"
-        f"{notice_html}"
-        "<table><tr><th>群ID</th><th>动作出口</th><th>设置</th></tr>"
-        f"{rows or '<tr><td colspan=3 class=muted>暂无群消息记录</td></tr>'}</table>"
+        "<h2>群管理</h2><p>群设置按来源和群 ID 隔离。开启真实动作或改变出口需预览并由登录管理员确认；"
+        "选择出口会关闭同 ID 其他来源的动作。不同通道 ID 不做猜测映射。</p>"
+        f"<div role=status>{_esc(notice)}</div>"
+        f"<div class=card><strong>急停：{'已开启，禁止外部动作' if stopped else '未开启'}</strong>"
+        f'<form method=post action="/admin/emergency-stop">{csrf}'
+        '<button class="btn danger">立即停止全部外部动作</button></form>'
+        f'<form method=post action="/admin/emergency-resume">{csrf}'
+        "<button class=btn>预览解除急停</button></form></div>"
+        "<table><tr><th>群身份</th><th>唯一动作出口</th><th>设置</th></tr>"
+        + ("".join(rows) or "<tr><td colspan=3>暂无群消息。可在下方明确添加群来源。</td></tr>")
+        + f'</table><div class=card><h3>添加明确的群身份</h3><form method=post action="/admin/groups/settings">{csrf}'
+        "<label>来源 <select name=provider><option value=onebot>onebot</option>"
+        "<option value=qq_official>qq_official</option></select></label> "
+        "<label>群 ID <input name=group_openid required maxlength=128></label> "
+        "<label>群备注 <input name=name maxlength=64></label> "
+        "<input type=hidden name=moderation_enabled value=1>"
+        "<button class=btn>添加（仅审核，动作关闭）</button></form></div>"
     )
-    return _page("群管理", body, refresh_seconds=15)
+    return _page("群管理", body)
 
 
 @router.post("/groups/settings")
 async def save_group_settings(
     request: Request,
     group_openid: str = Form(""),
+    provider: str = Form(""),
     name: str = Form(""),
     moderation_enabled: str = Form(""),
     action_enabled: str = Form(""),
     csrf: str = Form(""),
-) -> RedirectResponse:
-    await _require_admin_post(request, csrf)
-    if not group_openid:
-        return RedirectResponse("/admin/groups", status_code=303)
-    from app.core.group_settings import get_or_create_group_settings
-
-    async with SessionLocal() as session:
-        gs = await get_or_create_group_settings(session, group_openid)
-        gs.name = name.strip()[:64]
-        gs.moderation_enabled = moderation_enabled == "1"
-        gs.action_enabled = action_enabled == "1"
-        routed: list[str] = []
-        if gs.action_enabled:
-            routed = await _ensure_action_routes(session, group_openid)
-        await session.commit()
-    await record_admin_audit(
-        await _operator(request),
-        "group_settings_save",
-        "group",
-        group_openid,
-        {
-            "name": name[:64],
-            "moderation_enabled": moderation_enabled == "1",
-            "action_enabled": action_enabled == "1",
-            "auto_routed_providers": routed,
-        },
-    )
-    return RedirectResponse(
-        f"/admin/groups?notice=已保存：{_esc(name[:20] or group_openid[:20])}"
-        + (f"（自动配置动作出口：{','.join(routed)}）" if routed else ""),
-        status_code=303,
-    )
+) -> Response:
+    session_token = await _require_admin_post(request, csrf)
+    actor = _human_actor(session_token)
+    try:
+        result = await _save_or_plan_group(
+            group_openid,
+            provider=provider,
+            name=name,
+            moderation_enabled=moderation_enabled == "1",
+            action_enabled=action_enabled == "1",
+            actor=actor,
+        )
+    except HTTPException as exc:
+        return _page(
+            "无法保存群设置",
+            f'<p role=alert>{_esc(str(exc.detail))}</p><a href="/admin/groups">返回群管理</a>',
+        )
+    if result.get("confirmation_required"):
+        return RedirectResponse(str(result["approval_url"]), status_code=303)
+    return RedirectResponse("/admin/groups?notice=" + quote("设置已保存"), status_code=303)
 
 
 # ---------- 系统设置（保留期/清理/备份） ----------
@@ -1478,7 +1490,11 @@ async def settings_page(request: Request, notice: str = "") -> Response:
         from app.models import SystemSetting
 
         auto_cleanup = await session.get(SystemSetting, "auto_cleanup_enabled")
+        last_cleanup = await session.get(SystemSetting, "last_cleanup_at")
+        cleanup_status = await session.get(SystemSetting, "last_cleanup_status")
     auto_on = (auto_cleanup.value if auto_cleanup else "0") == "1"
+    last_cleanup_text = last_cleanup.value if last_cleanup else "无执行记录"
+    cleanup_status_text = cleanup_status.value if cleanup_status else "未验证任务计划"
 
     notice_html = (
         f'<div class=card style="border-color:#16804b">{_esc(notice)}</div>' if notice else ""
@@ -1490,17 +1506,19 @@ async def settings_page(request: Request, notice: str = "") -> Response:
         f"<p>原始消息/媒体：<b>{settings.raw_retention_days}</b> 天　"
         f"判定/反馈/动作记录：<b>{settings.decision_retention_days}</b> 天</p></div>"
         "<div class=card><h3>存储路径</h3>"
-        f"<p>媒体目录：<code>{_esc(str(settings.database_url)[:80])}</code></p>"
-        f"<p>数据库：<code>data/moderation.db</code></p></div>"
+        "<p>数据库位置由本机DATABASE_URL配置决定；备份存放在数据库同级backups目录。</p></div>"
         "<div class=card><h3>数据清理</h3>"
-        f"<p>自动清理：{'<b style=color:green>已开启</b>' if auto_on else '<b style=color:gray>已关闭</b>'}（每6小时按保留期清理过期数据）</p>"
+        f"<p>计划清理许可：{'已允许' if auto_on else '未允许'}。此开关不会创建Windows计划任务。</p>"
+        "<p class=muted>需在本机配置每6小时执行 uv run python -m app.reports.maintenance cleanup，并核对最近结果；程序未内置定时线程。</p>"
+        f"<p>最近尝试（UTC）：{_esc(last_cleanup_text)}；结果：{_esc(cleanup_status_text)}</p>"
         f'<form method=post action="/admin/settings/auto-cleanup" style="display:inline">{csrf}'
         f"<button class=btn>{'关闭自动清理' if auto_on else '开启自动清理'}</button></form>"
-        '<form method=post action="/admin/cleanup" style="display:inline;margin-left:12px">{csrf}'
+        f'<form method=post action="/admin/cleanup" style="display:inline;margin-left:12px">{csrf}'
         "<button class=btn>立即执行清理</button></form></div>"
         "<div class=card><h3>数据库备份</h3>"
-        '<form method=post action="/admin/settings/backup">{csrf}'
-        "<button class=btn>立即备份（复制到 data/backups/）</button></form></div>"
+        f'<form method=post action="/admin/settings/backup">{csrf}'
+        "<button class=btn>创建一致性数据库备份</button></form>"
+        "<p class=muted>包含已提交WAL记录；不包含媒体文件和本机凭据。备份含私密数据，请限制访问并另外保管异机副本。</p></div>"
     )
     return _page("系统设置", body)
 
@@ -1534,24 +1552,28 @@ async def toggle_auto_cleanup(request: Request, csrf: str = Form("")) -> Redirec
 @router.post("/settings/backup")
 async def backup_db(request: Request, csrf: str = Form("")) -> RedirectResponse:
     await _require_admin_post(request, csrf)
-    import shutil
-    from datetime import datetime as dt
+    import asyncio
 
-    backup_dir = Path("data/backups")
-    backup_dir.mkdir(parents=True, exist_ok=True)  # noqa: ASYNC240
-    src = Path("data/moderation.db")
-    if src.exists():  # noqa: ASYNC240
-        dest = backup_dir / f"moderation_backup_{dt.now():%Y%m%d_%H%M%S}.db"
-        shutil.copy2(src, dest)  # noqa: ASYNC240
-        msg = f"已备份到 {dest.name}"
-    else:
-        msg = "数据库文件不存在"
+    from app.reports.backup import backup_sqlite
+
+    try:
+        dest = await asyncio.to_thread(backup_sqlite, get_settings().database_url)
+    except Exception as exc:
+        await record_admin_audit(
+            await _operator(request),
+            "db_backup_failed",
+            "system",
+            "backup",
+            {"error_kind": type(exc).__name__},
+        )
+        raise HTTPException(503, "备份未完成，请检查数据库、磁盘和权限；不能用此结果交付") from exc
+    msg = f"已完成一致性备份：{dest.name}（未包含媒体文件）"
     await record_admin_audit(
         await _operator(request),
         "db_backup",
         "system",
         "backup",
-        {"dest": str(dest) if src.exists() else ""},  # noqa: ASYNC240
+        {"filename": dest.name, "integrity_check": "ok", "includes_media": False},
     )
     return RedirectResponse(f"/admin/settings?notice={_esc(msg)}", status_code=303)
 
@@ -1560,25 +1582,42 @@ async def backup_db(request: Request, csrf: str = Form("")) -> RedirectResponse:
 
 
 async def _build_ai_daily_stats(session: AsyncSession, days: int = 7) -> list[dict[str, Any]]:
-    """每日AI调用统计（按天聚合）。"""
-    from app.moderation.ai import AIUsageLog
+    """UTC日窗口：实际外呼、缓存和本地拒绝分开，未定价不能显示免费。"""
+    from datetime import UTC, datetime, timedelta
+
+    from app.moderation.ai import AIUsageLog, summarize_ai_usage
+
+    today = datetime.now(UTC).replace(hour=0, minute=0, second=0, microsecond=0)
+    cutoff = today - timedelta(days=max(1, days) - 1)
 
     rows = (
-        (await session.execute(select(AIUsageLog).order_by(AIUsageLog.created_at.desc())))
+        (
+            await session.execute(
+                select(AIUsageLog)
+                .where(
+                    AIUsageLog.created_at >= cutoff,
+                    AIUsageLog.created_at < today + timedelta(days=1),
+                )
+                .order_by(AIUsageLog.created_at.desc())
+            )
+        )
         .scalars()
         .all()
     )
     per_day: dict[str, dict[str, Any]] = {}
     for r in rows:
-        day = r.created_at.strftime("%m-%d")
-        d = per_day.setdefault(day, {"calls": 0, "ok": 0, "cost": 0, "latency": []})
+        day = r.created_at.strftime("%Y-%m-%d")
+        d = per_day.setdefault(day, {"calls": 0, "ok": 0, "latency": []})
+        if r.source.startswith("cache") or r.error_kind == "ai_rate_or_budget_limited":
+            continue
         d["calls"] += 1
         d["ok"] += 1 if r.ok else 0
-        d["cost"] += r.cost_cents or 0
         d["latency"].append(r.latency_ms or 0)
     result = []
     for day in sorted(per_day, reverse=True)[:days]:
         d = per_day[day]
+        start = datetime.strptime(day, "%Y-%m-%d").replace(tzinfo=UTC)
+        usage = await summarize_ai_usage(session, since=start, until=start + timedelta(days=1))
         avg = sum(d["latency"]) / len(d["latency"]) if d["latency"] else 0
         result.append(
             {
@@ -1586,7 +1625,9 @@ async def _build_ai_daily_stats(session: AsyncSession, days: int = 7) -> list[di
                 "calls": d["calls"],
                 "ok": d["ok"],
                 "fail": d["calls"] - d["ok"],
-                "cost_yuan": round(d["cost"] / 100, 2),
+                "cost_yuan": None,
+                "cost_known": False,
+                **usage,
                 "avg_latency_ms": round(avg, 0),
             }
         )
@@ -1596,7 +1637,15 @@ async def _build_ai_daily_stats(session: AsyncSession, days: int = 7) -> list[di
 # ---------- 管理 REST API（AI Agent 对接） ----------
 
 # P0-1: REST API 权限范围
-_API_SCOPES = {"project:read", "settings:write", "rules:publish", "actions:enable"}
+_API_SCOPES = {
+    "project:read",
+    "settings:write",
+    "rules:publish",
+    "rules:rollback",
+    "actions:enable",
+    "routing:write",
+    "emergency:stop",
+}
 
 
 def _require_api_token(request: Request, *, scope: str = "project:read") -> str | None:
@@ -1608,6 +1657,8 @@ def _require_api_token(request: Request, *, scope: str = "project:read") -> str 
     - 未授权返回 None（调用方返回 HTTP 401/403）。
     """
     settings = get_settings()
+    if scope not in _API_SCOPES:
+        raise HTTPException(403, "unknown permission scope")
     cookie_token = request.cookies.get(auth.SESSION_COOKIE)
     if cookie_token:
         # P0-1 修复：必须验证 session 有效性，不接受任意非空字符串
@@ -1626,14 +1677,31 @@ def _require_api_token(request: Request, *, scope: str = "project:read") -> str 
                     pass
             if not auth.validate_csrf(cookie_token, submitted):
                 raise HTTPException(403, "CSRF token required for cookie-originated write")
-        return cookie_token
+        return _human_actor(cookie_token)
     # Bearer token: 独立 AGENT_API_TOKEN，常量时间比较
     auth_header = request.headers.get("authorization") or ""
     if auth_header.lower().startswith("bearer "):
         token = auth_header[7:].strip()
+        if settings.agent_api_read_token and secrets.compare_digest(
+            token, settings.agent_api_read_token
+        ):
+            if scope != "project:read":
+                raise HTTPException(403, "read-only credential cannot write")
+            return "agent:read:" + sha256(token.encode()).hexdigest()[:16]
         if settings.agent_api_token and secrets.compare_digest(token, settings.agent_api_token):
-            return f"bearer:{scope}"
+            if scope not in {value.strip() for value in settings.agent_api_write_scopes.split(",")}:
+                raise HTTPException(403, "credential lacks required scope")
+            return "agent:write:" + sha256(token.encode()).hexdigest()[:16]
     return None
+
+
+def _human_actor(session_token: str) -> str:
+    return (
+        "human:"
+        + get_settings().admin_username[:20]
+        + ":"
+        + sha256(session_token.encode()).hexdigest()[:16]
+    )
 
 
 def _api_unauthorized_response() -> dict[str, object]:
@@ -1668,100 +1736,379 @@ async def api_status(request: Request) -> dict[str, object]:
 
 @router.get("/api/groups")
 async def api_groups(request: Request) -> list[dict[str, Any]]:
-    """群设置列表（AI Agent 对接用）。"""
     _require_api_auth(request, scope="project:read")
-    from app.models import GroupSettings
+    from app.models import ProviderGroupSettings
 
     async with SessionLocal() as session:
-        rows = (await session.execute(select(GroupSettings))).scalars().all()
-    return [
-        {
-            "group_openid": g.group_openid,
-            "name": g.name,
-            "moderation_enabled": g.moderation_enabled,
-            "action_enabled": g.action_enabled,
-            "updated_at": g.updated_at.isoformat(),
+        rows = (await session.scalars(select(ProviderGroupSettings))).all()
+        return [_group_response(row) for row in rows]
+
+
+def _group_response(gs: Any) -> dict[str, Any]:
+    return {
+        "provider": gs.provider,
+        "external_group_id": gs.external_group_id,
+        "group_openid": gs.external_group_id,
+        "name": gs.name,
+        "moderation_enabled": gs.moderation_enabled,
+        "action_enabled": gs.action_enabled,
+        "version": gs.version,
+    }
+
+
+async def _group_state(session: AsyncSession, provider: str, group_id: str) -> dict[str, Any]:
+    from app.core.routing import GroupProviderRoute
+    from app.models import GroupActionOwner, ProviderGroupSettings
+
+    gs = await session.get(ProviderGroupSettings, (provider, group_id), populate_existing=True)
+    owner = await session.get(GroupActionOwner, group_id, populate_existing=True)
+    routes = (
+        await session.execute(
+            select(
+                GroupProviderRoute.message_provider,
+                GroupProviderRoute.action_provider,
+            )
+            .where(GroupProviderRoute.external_group_id == group_id)
+            .order_by(GroupProviderRoute.message_provider)
+        )
+    ).all()
+    return {
+        "settings": _group_response(gs) if gs else None,
+        "owner": owner.provider if owner else None,
+        "routes": [list(row) for row in routes],
+    }
+
+
+async def _apply_group_change(
+    session: AsyncSession,
+    params: dict[str, Any],
+    *,
+    actor: str,
+    expected: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    from app.core.group_settings import get_or_create_group_settings
+    from app.models import ProviderGroupSettings
+    from app.web.agent_confirm import canonical
+
+    provider, group = params["provider"], params["external_group_id"]
+    before = await _group_state(session, provider, group)
+    if expected is not None and canonical(before) != canonical(expected):
+        raise HTTPException(409, "设置或出口已改变，请重新预览和批准")
+    gs = await get_or_create_group_settings(session, group, provider=provider)
+    version = gs.version
+    values: dict[str, Any] = {"version": version + 1}
+    for name in ("name", "moderation_enabled", "action_enabled"):
+        if params[name] is not None:
+            values[name] = params[name]
+    changed = await session.execute(
+        update(ProviderGroupSettings)
+        .where(
+            ProviderGroupSettings.provider == provider,
+            ProviderGroupSettings.external_group_id == group,
+            ProviderGroupSettings.version == version,
+        )
+        .values(**values)
+    )
+    if changed.rowcount != 1:  # type: ignore[attr-defined]
+        raise HTTPException(409, "并发修改冲突，请重新预览")
+    routed: list[str] = []
+    if _needs_action_confirmation(before, params):
+        routed = await _ensure_action_routes(session, group, provider, commit=False)
+    # Legacy table is rollback-only. Disable its action bit even for a new write,
+    # so reverting binaries never resurrects an old provider-ambiguous approval.
+    from app.models import GroupSettings
+
+    await session.execute(
+        update(GroupSettings)
+        .where(GroupSettings.group_openid == group)
+        .values(action_enabled=False)
+    )
+    session.add(
+        AdminAudit(
+            operator=actor,
+            action="group_settings_save",
+            target_type="group",
+            target_id=group,
+            detail_json=canonical(
+                {"params": params, "before": before, "auto_routed_providers": routed}
+            ),
+        )
+    )
+    await session.flush()
+    await session.refresh(gs)
+    return {**_group_response(gs), "auto_routed_providers": routed}
+
+
+def _plan_response(plan: Any) -> dict[str, Any]:
+    return {
+        "confirmation_required": True,
+        "confirmation_token": plan.id,
+        "plan_id": plan.id,
+        "summary": plan.action,
+        "params": json.loads(plan.params_json),
+        "expected_state": json.loads(plan.expected_state_json),
+        "status": plan.status,
+        "approval_url": f"/admin/plans/{plan.id}",
+        "expires_at": plan.expires_at.isoformat(),
+        "expires_in_seconds": 300,
+        "message": "请由真人登录管理后台检查并批准；Agent 自己重发令牌不能批准。",
+    }
+
+
+def _needs_action_confirmation(before: dict[str, Any], params: dict[str, Any]) -> bool:
+    settings = before.get("settings") or {"moderation_enabled": True, "action_enabled": False}
+    action_after = (
+        settings["action_enabled"] if params["action_enabled"] is None else params["action_enabled"]
+    )
+    moderation_after = (
+        settings["moderation_enabled"]
+        if params["moderation_enabled"] is None
+        else params["moderation_enabled"]
+    )
+    was_active = settings["action_enabled"] and settings["moderation_enabled"]
+    return params["action_enabled"] is True or (
+        not was_active and action_after and moderation_after
+    )
+
+
+async def _save_or_plan_group(
+    group_id: str,
+    *,
+    provider: str,
+    name: str | None,
+    moderation_enabled: bool | None,
+    action_enabled: bool | None,
+    actor: str,
+    confirm_token: str = "",
+    api_request: Request | None = None,
+) -> dict[str, Any]:
+    from app.core.group_settings import resolve_group_identity
+    from app.web.agent_confirm import create_confirmation
+
+    async with SessionLocal() as session:
+        # Authorization and transition detection share the write transaction;
+        # an enabled flag cannot change between the scope check and this write.
+        await session.execute(text("BEGIN IMMEDIATE"))
+        try:
+            provider = await resolve_group_identity(session, group_id, provider)
+        except ValueError as exc:
+            raise HTTPException(422 if provider else 409, str(exc)) from exc
+        params = {
+            "provider": provider,
+            "external_group_id": group_id,
+            "name": name.strip()[:64] if name is not None else None,
+            "moderation_enabled": moderation_enabled,
+            "action_enabled": action_enabled,
         }
-        for g in rows
-    ]
+        before = await _group_state(session, provider, group_id)
+        needs_confirmation = _needs_action_confirmation(before, params)
+        if needs_confirmation and api_request is not None:
+            _require_api_auth(api_request, scope="actions:enable")
+            _require_api_auth(api_request, scope="routing:write")
+        if confirm_token:
+            return await _execute_plan(
+                session, confirm_token, actor=actor, action="group_settings", params=params
+            )
+        if needs_confirmation:
+            plan = await create_confirmation(
+                session,
+                action="group_settings",
+                params=params,
+                expected_state=before,
+                requestor=actor,
+            )
+            return _plan_response(plan)
+        result = await _apply_group_change(session, params, actor=actor)
+        await session.commit()
+        return result
 
 
 @router.post("/api/groups/{group_openid}/settings", response_model=None)
 async def api_group_settings(
     request: Request,
     group_openid: str,
+    provider: str = "",
     moderation_enabled: bool | None = None,
     action_enabled: bool | None = None,
     name: str | None = None,
     confirm_token: str = "",
 ) -> dict[str, Any] | JSONResponse:
-    """更新群设置（AI Agent 对接用）。
+    actor = _require_api_auth(request, scope="settings:write")
+    if action_enabled is True:
+        _require_api_auth(request, scope="actions:enable")
+        _require_api_auth(request, scope="routing:write")
+    result = await _save_or_plan_group(
+        group_openid,
+        provider=provider,
+        name=name,
+        moderation_enabled=moderation_enabled,
+        action_enabled=action_enabled,
+        actor=actor,
+        confirm_token=confirm_token,
+        api_request=request,
+    )
+    return JSONResponse(result, status_code=202) if result.get("confirmation_required") else result
 
-    P0-2: 开启 action_enabled 属于高风险操作，必须二阶段确认：
-    第一次调用（无 confirm_token）→ 返回 202 + 确认令牌 + 变更摘要；
-    第二次调用（带 confirm_token）→ 验证并执行。
-    """
-    _require_api_auth(request, scope="settings:write")
-    from app.core.group_settings import get_or_create_group_settings
-    from app.web.agent_confirm import create_confirmation, validate_and_consume
 
-    # P0-2: 高风险操作——开启动作需要二阶段确认
-    if action_enabled:
-        summary = f"group_action_enable:{group_openid}"
-        if not confirm_token:
-            token = create_confirmation(
-                "group_action_enable", summary, {"group_openid": group_openid}
+async def _execute_plan(
+    session: AsyncSession,
+    plan_id: str,
+    *,
+    actor: str,
+    action: str | None = None,
+    params: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    from app.web.agent_confirm import canonical, claim_confirmation
+
+    plan = await claim_confirmation(session, plan_id, requestor=actor, action=action, params=params)
+    if plan is None:
+        raise HTTPException(403, "计划未经真人批准、已过期、已消费或身份/参数不匹配")
+    actual = json.loads(plan.params_json)
+    expected = json.loads(plan.expected_state_json)
+    try:
+        # SQLite is the supported deployment store. Lock before comparing the
+        # preview and applying it, so a concurrent draft edit/route switch cannot
+        # slip between the human-approved snapshot and the mutation.
+        await session.execute(text("BEGIN IMMEDIATE"))
+        if plan.action == "group_settings":
+            result = await _apply_group_change(session, actual, actor=actor, expected=expected)
+        elif plan.action == "emergency_resume":
+            from app.core.emergency_stop import emergency_stop_state, set_emergency_stop
+
+            if await emergency_stop_state(session) != expected:
+                raise HTTPException(409, "急停状态已改变，请重新预览")
+            if get_settings().emergency_stop:
+                raise HTTPException(409, "环境 EMERGENCY_STOP 仍开启，不能通过后台解除")
+            await set_emergency_stop(session, False, actor=actor)
+            result = {"emergency_stop": False}
+        elif plan.action in ("rule_publish", "rule_rollback"):
+            current = await _rule_plan_state(session, actual["version_id"])
+            if canonical(current) != canonical(expected):
+                raise HTTPException(409, "规则或生效版本已改变，请重新预览")
+            from app.moderation.dynamic_rules import publish_rule_version, rollback_to_version
+
+            operation = (
+                publish_rule_version if plan.action == "rule_publish" else rollback_to_version
             )
-            from fastapi.responses import JSONResponse
-
-            return JSONResponse(
-                content={
-                    "confirmation_required": True,
-                    "confirmation_token": token,
-                    "summary": summary,
-                    "expires_in_seconds": 300,
-                    "message": "This is a high-risk operation. Re-send with confirm_token to execute.",
-                },
-                status_code=202,
+            version = await operation(session, actual["version_id"], operator=actor)
+            result = {"version_id": version.id, "status": version.status}
+        else:
+            raise HTTPException(422, "不支持的计划")
+        plan.status = "EXECUTED"
+        session.add(
+            AdminAudit(
+                operator=actor,
+                action="plan_execute",
+                target_type="admin_plan",
+                target_id=plan.id,
+                detail_json=canonical({"approved_by": plan.approved_by, "action": plan.action}),
             )
-        confirmed = validate_and_consume(confirm_token, "group_action_enable", summary)
-        if confirmed is None:
-            raise HTTPException(403, "Invalid, expired, or replayed confirmation token")
+        )
+        await session.commit()
+        return result
+    except Exception as exc:
+        await session.rollback()
+        plan = await session.get(type(plan), plan_id, populate_existing=True)
+        if plan is not None:
+            plan.status = "FAILED"
+            await session.commit()
+        if isinstance(exc, ValueError):
+            raise HTTPException(409, str(exc)) from exc
+        raise
+
+
+@router.get("/plans/{plan_id}", response_class=HTMLResponse)
+async def plan_page(request: Request, plan_id: str) -> Response:
+    token = await _require_login(request)
+    if not token:
+        return _login_redirect()
+    from app.models import AdminChangePlan
 
     async with SessionLocal() as session:
-        gs = await get_or_create_group_settings(session, group_openid)
-        if moderation_enabled is not None:
-            gs.moderation_enabled = moderation_enabled
-        routed: list[str] = []
-        if action_enabled is True:
-            gs.action_enabled = True
-            routed = await _ensure_action_routes(session, group_openid)
-        elif action_enabled is not None:
-            gs.action_enabled = action_enabled
-        if name is not None:
-            gs.name = name.strip()[:64]
-        await session.commit()
-    # P0-1: Agent 写操作必须审计
-    await record_admin_audit(
-        "api_token",
-        "group_settings_save",
-        "group",
-        group_openid,
-        {
-            "moderation_enabled": moderation_enabled,
-            "action_enabled": action_enabled,
-            "name": name[:64] if name else None,
-            "auto_routed_providers": routed,
-            "two_phase_confirmed": action_enabled is True,
-        },
+        plan = await session.get(AdminChangePlan, plan_id)
+        if plan is None:
+            raise HTTPException(404, "计划不存在")
+    body = (
+        "<h2>确认具体管理变更</h2><p>请人工核对来源、群 ID、完整参数及当前版本。确认后不能改变参数；5 分钟内仅执行一次。</p>"
+        f"<p>发起身份：{_esc(plan.requestor)}；状态：{_esc(plan.status)}；操作：{_esc(plan.action)}</p>"
+        f"<h3>完整计划</h3><pre>{_esc(plan.params_json)}</pre>"
+        f"<h3>预览时状态 / 版本</h3><pre>{_esc(plan.expected_state_json)}</pre>"
     )
-    return {
-        "group_openid": gs.group_openid,
-        "name": gs.name,
-        "moderation_enabled": gs.moderation_enabled,
-        "action_enabled": gs.action_enabled,
-        "auto_routed_providers": routed,
-    }
+    if plan.status == "PENDING":
+        body += f'<form method=post action="/admin/plans/{_esc(plan.id)}/approve">{_csrf_field(token)}<button class="btn danger">我已人工核对，批准此计划</button></form>'
+    elif plan.status == "APPROVED" and plan.requestor == _human_actor(token):
+        body += f'<form method=post action="/admin/plans/{_esc(plan.id)}/execute">{_csrf_field(token)}<button class="btn danger">执行已批准的完整计划</button></form>'
+    elif plan.status == "APPROVED":
+        body += "<p>已批准。由发起该计划的 Agent 在有效期内执行。</p>"
+    return _page("管理计划", body)
+
+
+@router.post("/plans/{plan_id}/approve")
+async def approve_plan(request: Request, plan_id: str, csrf: str = Form("")) -> Response:
+    token = await _require_admin_post(request, csrf)
+    from app.web.agent_confirm import approve_confirmation
+
+    async with SessionLocal() as session:
+        if not await approve_confirmation(session, plan_id, human=_human_actor(token)):
+            raise HTTPException(409, "计划已过期或已处理，请重新预览")
+    return RedirectResponse(f"/admin/plans/{plan_id}", status_code=303)
+
+
+@router.post("/plans/{plan_id}/execute")
+async def execute_human_plan(request: Request, plan_id: str, csrf: str = Form("")) -> Response:
+    token = await _require_admin_post(request, csrf)
+    async with SessionLocal() as session:
+        await _execute_plan(session, plan_id, actor=_human_actor(token))
+    return RedirectResponse(f"/admin/plans/{plan_id}", status_code=303)
+
+
+@router.get("/api/plans/{plan_id}")
+async def api_plan(request: Request, plan_id: str) -> dict[str, Any]:
+    actor = _require_api_auth(request)
+    from app.models import AdminChangePlan
+
+    async with SessionLocal() as session:
+        plan = await session.get(AdminChangePlan, plan_id)
+        if plan is None or plan.requestor != actor:
+            raise HTTPException(404, "计划不存在")
+        return _plan_response(plan)
+
+
+@router.post("/api/emergency-stop")
+async def api_emergency_stop(request: Request) -> dict[str, bool]:
+    actor = _require_api_auth(request, scope="emergency:stop")
+    from app.core.emergency_stop import set_emergency_stop
+
+    async with SessionLocal() as session:
+        await set_emergency_stop(session, True, actor=actor)
+    return {"emergency_stop": True}
+
+
+@router.post("/emergency-stop")
+async def human_emergency_stop(request: Request, csrf: str = Form("")) -> Response:
+    token = await _require_admin_post(request, csrf)
+    from app.core.emergency_stop import set_emergency_stop
+
+    async with SessionLocal() as session:
+        await set_emergency_stop(session, True, actor=_human_actor(token))
+    return RedirectResponse("/admin/groups", status_code=303)
+
+
+@router.post("/emergency-resume")
+async def human_emergency_resume(request: Request, csrf: str = Form("")) -> Response:
+    token = await _require_admin_post(request, csrf)
+    from app.core.emergency_stop import emergency_stop_state
+    from app.web.agent_confirm import create_confirmation
+
+    async with SessionLocal() as session:
+        plan = await create_confirmation(
+            session,
+            action="emergency_resume",
+            params={"active": False},
+            expected_state=await emergency_stop_state(session),
+            requestor=_human_actor(token),
+        )
+    return RedirectResponse(f"/admin/plans/{plan.id}", status_code=303)
 
 
 @router.get("/api/stats/ai")

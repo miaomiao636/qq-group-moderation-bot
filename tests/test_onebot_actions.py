@@ -15,7 +15,7 @@ from app.adapters.qq_official.contract import Sender, StandardMessage
 from app.config import Settings
 from app.core.routing import upsert_group_route
 from app.db import SessionLocal
-from app.models import GroupSettings
+from app.models import ProviderGroupSettings
 from app.moderation.decision import ModerationDecision
 from app.runtime.onebot_actions import OneBotActionHub
 from sqlalchemy import select
@@ -63,6 +63,21 @@ def test_explicit_failure_returned_as_failed() -> None:
     caller = _FakeCaller(response={"status": "failed", "retcode": 100, "wording": "no perm"})
     result = asyncio.run(OneBotActionClient(caller).recall("100", "999"))
     assert not result.ok and result.err_code == 100 and "no perm" in result.err_message
+
+
+@pytest.mark.parametrize(
+    "response",
+    [
+        {"status": "failed"},
+        {"status": "failed", "retcode": 0},
+        {"status": "ok", "retcode": False},
+        {"status": "ok", "retcode": 0.0},
+        {"status": "failed", "retcode": "100"},
+    ],
+)
+def test_malformed_onebot_response_is_unknown(response: dict) -> None:
+    with pytest.raises(OneBotActionError, match="响应"):
+        asyncio.run(OneBotActionClient(_FakeCaller(response=response)).recall("100", "999"))
 
 
 def test_pre_send_not_ready_is_failed_not_unknown() -> None:
@@ -142,10 +157,41 @@ class _FakeWS:
 
 def _ready_hub(ws: _FakeWS | None, *, ready: bool = True) -> OneBotActionHub:
     hub = OneBotActionHub()
-    hub.configure(timeout_seconds=0.2, readiness=lambda: "ready" if ready else "degraded")
+    hub.configure(
+        timeout_seconds=0.2,
+        readiness=lambda: "ready" if ready else "degraded",
+        expected_self_id="10000001",
+    )
     if ws is not None:
-        hub.bind(ws)
+        hub.bind(ws, self_id="10000001")
     return hub
+
+
+def test_hub_rejects_second_connection_and_foreign_identity() -> None:
+    first, second = _FakeWS(), _FakeWS()
+    hub = _ready_hub(first)
+    assert hub.bind(second, self_id="10000002") is False
+    assert hub.bind(second, self_id="10000001") is False
+    assert hub.is_current(first)
+    hub.unbind(first)
+    assert hub.bind(second, self_id="10000002") is False
+    assert hub.bind(second, self_id="10000001") is True
+
+
+def test_response_from_other_socket_or_identity_cannot_resolve_pending() -> None:
+    async def run() -> None:
+        ws, other = _FakeWS(), _FakeWS()
+        hub = _ready_hub(ws)
+        task = asyncio.create_task(hub.call("delete_msg", {"message_id": 1}))
+        await asyncio.sleep(0)
+        frame = json.loads(ws.sent[0])
+        response = {"echo": frame["echo"], "status": "ok", "retcode": 0}
+        assert not hub.handle_response(response, websocket=other)
+        assert not hub.handle_response(dict(response, self_id=10000002), websocket=ws)
+        assert hub.handle_response(response, websocket=ws)
+        assert (await task)["retcode"] == 0
+
+    asyncio.run(run())
 
 
 def test_hub_call_roundtrip_resolves_by_echo() -> None:
@@ -159,7 +205,7 @@ def test_hub_call_roundtrip_resolves_by_echo() -> None:
             await asyncio.sleep(0.05)
             frame = json.loads(ws.sent[0])
             consumed = hub.handle_response(
-                {"status": "ok", "retcode": 0, "echo": frame["echo"], "data": {}}
+                {"status": "ok", "retcode": 0, "echo": frame["echo"], "data": {}}, websocket=ws
             )
             assert consumed
 
@@ -180,6 +226,35 @@ def test_hub_call_timeout_when_no_response() -> None:
         with pytest.raises(OneBotActionError) as exc:
             await hub.call("delete_msg", {"message_id": 1})
         assert exc.value.kind == "timeout"
+
+    asyncio.run(main())
+
+
+def test_hub_send_deadline_is_unknown_and_lock_wait_deadline_is_not_sent() -> None:
+    class BlockedWS(_FakeWS):
+        async def send_text(self, data: str) -> None:
+            self.sent.append(json.loads(data))
+            await asyncio.Event().wait()
+
+    async def main() -> None:
+        ws = BlockedWS()
+        hub = _ready_hub(ws)
+        hub.configure(timeout_seconds=0.02, readiness=lambda: "ready", expected_self_id="10000001")
+        with pytest.raises(OneBotActionError) as exc:
+            await asyncio.wait_for(hub.call("delete_msg", {"message_id": 1}), timeout=0.2)
+        assert exc.value.kind == "timeout"
+        assert len(ws.sent) == 1
+        assert not hub._pending
+        assert hub._send_lock is not None
+        await hub._send_lock.acquire()
+        try:
+            with pytest.raises(OneBotActionError) as exc:
+                await asyncio.wait_for(hub.call("delete_msg", {"message_id": 2}), timeout=0.2)
+            assert exc.value.kind == "not_ready"
+            assert len(ws.sent) == 1
+            assert not hub._pending
+        finally:
+            hub._send_lock.release()
 
     asyncio.run(main())
 
@@ -220,17 +295,23 @@ def test_hub_call_not_ready_when_degraded() -> None:
 
 
 def test_hub_handle_response_ignores_events_and_unknown_echo() -> None:
-    hub = _ready_hub(_FakeWS())
-    assert hub.handle_response({"post_type": "message", "echo": "x"}) is False
-    assert hub.handle_response({"echo": "never-sent"}) is False
-    assert hub.handle_response({"status": "ok", "retcode": 0}) is False
+    ws = _FakeWS()
+    hub = _ready_hub(ws)
+    assert hub.handle_response({"post_type": "message", "echo": "x"}, websocket=ws) is False
+    assert hub.handle_response({"echo": "never-sent"}, websocket=ws) is False
+    assert hub.handle_response({"status": "ok", "retcode": 0}, websocket=ws) is False
 
 
 def test_onebot_actions_enabled_requires_ws() -> None:
     from app.config import Settings
 
     with pytest.raises(ValueError, match="ONEBOT_WS_ENABLED"):
-        Settings(onebot_ws_enabled=False, onebot_actions_enabled=True, _env_file=None)
+        Settings(
+            onebot_ws_enabled=False,
+            onebot_actions_enabled=True,
+            onebot_self_id="10000001",
+            _env_file=None,
+        )
 
 
 class _FakeOneBotClient:
@@ -266,6 +347,8 @@ def _official_onebot_settings() -> Settings:
         qq_app_secret="SECRET",
         action_mode="OFFICIAL",
         onebot_actions_enabled=True,
+        onebot_action_stage="full",
+        onebot_self_id="10000001",
         _env_file=None,
     )
 
@@ -302,9 +385,11 @@ def _high_decision(msg: StandardMessage) -> ModerationDecision:
 
 async def _setup_onebot_group(session: AsyncSession, group: str, *, enabled: bool = True) -> None:
     await upsert_group_route(session, group, message_provider="onebot", action_provider="onebot")
-    gs = await session.get(GroupSettings, group)
+    gs = await session.get(ProviderGroupSettings, ("onebot", group))
     if gs is None:
-        gs = GroupSettings(group_openid=group, action_enabled=enabled)
+        gs = ProviderGroupSettings(
+            provider="onebot", external_group_id=group, action_enabled=enabled
+        )
         session.add(gs)
     else:
         gs.action_enabled = enabled
@@ -463,9 +548,13 @@ async def test_no_route_fail_closed() -> None:
     group = f"OB_NR_{uuid.uuid4().hex[:6]}"
     msg = _ob_msg(group, "1001")
     async with SessionLocal() as session:
-        gs = await session.get(GroupSettings, group)
+        gs = await session.get(ProviderGroupSettings, ("onebot", group))
         if gs is None:
-            session.add(GroupSettings(group_openid=group, action_enabled=True))
+            session.add(
+                ProviderGroupSettings(
+                    provider="onebot", external_group_id=group, action_enabled=True
+                )
+            )
             await session.commit()
         intents = await orchestrate_actions(
             session,

@@ -13,8 +13,8 @@ from sqlalchemy import case, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.cases.models import Case, ViolationRecord
-from app.moderation.ai import AIUsageLog
-from app.moderation.feedback import POSITIVE_LABELS, FeedbackRecord
+from app.moderation.ai import AIUsageLog, summarize_ai_usage
+from app.moderation.feedback import NEGATIVE_LABELS, POSITIVE_LABELS, FeedbackRecord
 from app.runtime.models import ShadowDecision
 
 
@@ -41,9 +41,15 @@ async def build_stats(session: AsyncSession) -> dict[str, Any]:
         session, select(func.count()).select_from(Case).where(Case.status == "PENDING_REVIEW")
     )
     total_feedback = await _count(session, select(func.count()).select_from(FeedbackRecord))
-    total_ai = await _count(session, select(func.count()).select_from(AIUsageLog))
+    provider_call = ~AIUsageLog.source.startswith("cache") & (
+        AIUsageLog.error_kind != "ai_rate_or_budget_limited"
+    )
+    total_ai = await _count(
+        session, select(func.count()).select_from(AIUsageLog).where(provider_call)
+    )
     ai_failed = await _count(
-        session, select(func.count()).select_from(AIUsageLog).where(AIUsageLog.ok.is_(False))
+        session,
+        select(func.count()).select_from(AIUsageLog).where(provider_call, AIUsageLog.ok.is_(False)),
     )
 
     verdicts = await _group_counts(session, ShadowDecision.verdict)
@@ -76,7 +82,9 @@ async def build_stats(session: AsyncSession) -> dict[str, Any]:
                 func.sum(case((AIUsageLog.ok.is_(True), 1), else_=0)),
                 func.avg(AIUsageLog.latency_ms),
                 func.sum(AIUsageLog.cost_cents),
-            ).group_by(AIUsageLog.model_id)
+            )
+            .where(provider_call)
+            .group_by(AIUsageLog.model_id)
         )
     ).all()
     ai_by_model: list[dict[str, Any]] = []
@@ -89,6 +97,7 @@ async def build_stats(session: AsyncSession) -> dict[str, Any]:
                 "fail": int(total) - int(ok_count or 0),
                 "avg_ms": round(float(avg_ms or 0), 1),
                 "cost_cents": int(cost or 0),
+                "cost_known": False,
             }
         )
     ai_by_model.sort(key=lambda x: x["calls"], reverse=True)
@@ -111,6 +120,7 @@ async def build_stats(session: AsyncSession) -> dict[str, Any]:
         "candidate_status": candidate_status,
         "last7": last7,
         "ai_by_model": ai_by_model,
+        "ai_usage": await summarize_ai_usage(session, since=datetime.min.replace(tzinfo=UTC)),
         "agreement": agreement,
         "generated_at": datetime.now(UTC).isoformat(),
     }
@@ -124,10 +134,17 @@ def RuleCandidate_status() -> Any:
 
 
 async def _agreement(session: AsyncSession) -> dict[str, Any]:
-    """以人工反馈为临时真值，计算影子判定与其一致率（仅统计能匹配到影子记录的消息）。"""
-    feedbacks = (await session.execute(select(FeedbackRecord))).scalars().all()
-    if not feedbacks:
-        return {"total": 0, "agree": 0, "rate": 0.0}
+    """已标注样本上的运行统计，不是随机留出集上的交付精确率。
+
+    先取每个中立消息身份的最后人工标签，再排除未知标签；修改为未知会撤销
+    旧真值，不能把同一消息多次标注当成多个独立样本。
+    """
+    feedbacks = (
+        (await session.execute(select(FeedbackRecord).order_by(FeedbackRecord.id))).scalars().all()
+    )
+    latest = {
+        (f.provider, f.external_group_id or f.group_openid, f.message_id): f for f in feedbacks
+    }
     message_ids = {f.message_id for f in feedbacks}
     shadows = (
         (
@@ -138,11 +155,16 @@ async def _agreement(session: AsyncSession) -> dict[str, Any]:
         .scalars()
         .all()
     )
-    shadow_by_msg = {s.message_id: s for s in shadows}
+    shadow_by_msg = {
+        (s.provider, s.external_group_id or s.group_openid, s.message_id): s for s in shadows
+    }
     total = 0
     agree = 0
-    for f in feedbacks:
-        shadow = shadow_by_msg.get(f.message_id)
+    tp = fp = fn = tn = 0
+    for identity, f in latest.items():
+        if f.label not in POSITIVE_LABELS | NEGATIVE_LABELS:
+            continue
+        shadow = shadow_by_msg.get(identity)
         if shadow is None:
             continue
         total += 1
@@ -150,5 +172,24 @@ async def _agreement(session: AsyncSession) -> dict[str, Any]:
         ai_positive = shadow.verdict == "violation_high"
         if truth_positive == ai_positive:
             agree += 1
+        if truth_positive and ai_positive:
+            tp += 1
+        elif ai_positive:
+            fp += 1
+        elif truth_positive:
+            fn += 1
+        else:
+            tn += 1
     rate = round(agree / total, 3) if total else 0.0
-    return {"total": total, "agree": agree, "rate": rate}
+    return {
+        "total": total,
+        "agree": agree,
+        "rate": rate,
+        "true_positive": tp,
+        "false_positive": fp,
+        "false_negative": fn,
+        "true_negative": tn,
+        "precision": tp / (tp + fp) if tp + fp else None,
+        "recall": tp / (tp + fn) if tp + fn else None,
+        "labeled_sample_only": True,
+    }

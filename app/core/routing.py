@@ -13,12 +13,14 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 
-from sqlalchemy import DateTime, String, select
+from sqlalchemy import DateTime, String, select, update
+from sqlalchemy.dialects.sqlite import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.core.contracts import PROVIDERS, Provider
 from app.db import Base
+from app.models import GroupActionOwner, ProviderGroupSettings
 
 
 def _utcnow() -> datetime:
@@ -46,6 +48,21 @@ async def resolve_action_provider(
     session: AsyncSession, message_provider: Provider, external_group_id: str
 ) -> Provider | None:
     """按消息来源和群身份解析出口；不可确定时 fail-closed。"""
+    owner = await session.get(GroupActionOwner, external_group_id, populate_existing=True)
+    if owner is not None and owner.provider != message_provider:
+        return None
+    if owner is None:
+        routes = (
+            await session.scalars(
+                select(GroupProviderRoute.message_provider).where(
+                    GroupProviderRoute.external_group_id == external_group_id
+                )
+            )
+        ).all()
+        if len(set(routes)) > 1:
+            return None
+        if routes and message_provider not in routes:
+            return None
     route = await session.get(GroupProviderRoute, (message_provider, external_group_id))
     if route is None:
         return "qq_official" if message_provider == "qq_official" else None
@@ -64,6 +81,7 @@ async def upsert_group_route(
     *,
     message_provider: str = "qq_official",
     action_provider: str = "qq_official",
+    commit: bool = True,
 ) -> GroupProviderRoute:
     """显式设置群路由（管理后台/运维入口）；非法 provider 拒绝。"""
     for name, value in (
@@ -74,6 +92,24 @@ async def upsert_group_route(
             raise ValueError(f"非法 provider {value!r}（{name}），允许值: {PROVIDERS}")
     if action_provider != message_provider:
         raise ValueError("未建立可验证的跨通道身份映射，禁止配置交叉动作出口")
+    # A single primary key serializes competing assignments; keep old routes as
+    # topology history, but only the selected owner can resolve to an action client.
+    owner = insert(GroupActionOwner).values(
+        external_group_id=external_group_id, provider=message_provider
+    )
+    await session.execute(
+        owner.on_conflict_do_update(
+            index_elements=[GroupActionOwner.external_group_id], set_={"provider": message_provider}
+        )
+    )
+    await session.execute(
+        update(ProviderGroupSettings)
+        .where(
+            ProviderGroupSettings.external_group_id == external_group_id,
+            ProviderGroupSettings.provider != message_provider,
+        )
+        .values(action_enabled=False, version=ProviderGroupSettings.version + 1)
+    )
     route = await session.get(GroupProviderRoute, (message_provider, external_group_id))
     if route is None:
         route = GroupProviderRoute(
@@ -81,7 +117,10 @@ async def upsert_group_route(
         )
         session.add(route)
     route.action_provider = action_provider
-    await session.commit()
+    if commit:
+        await session.commit()
+    else:
+        await session.flush()
     return route
 
 
