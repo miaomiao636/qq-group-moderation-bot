@@ -4,10 +4,12 @@ import asyncio
 import smtplib
 import ssl
 import threading
+from contextlib import suppress
 
 import pytest
 from app.adapters.onebot.actions import OneBotActionError
 from app.config import Settings
+from app.notifications import senders
 from app.notifications.config import NotificationSettings
 from app.notifications.contracts import DeliveryMessage
 from app.notifications.senders import EmailSender, QQSender
@@ -159,9 +161,10 @@ async def test_qq_outer_timeout_is_unknown_and_does_not_repeat():
 
 
 class FakeSMTP:
-    def __init__(self, *, error_stage="", error=None, refused=None, gate=None):
+    def __init__(self, *, error_stage="", error=None, refused=None, gate=None, on_send=None):
         self.events = []
         self.error_stage, self.error, self.refused, self.gate = error_stage, error, refused, gate
+        self.on_send = on_send
         self.kwargs = None
 
     def factory(self, **kwargs):
@@ -189,8 +192,10 @@ class FakeSMTP:
     def send_message(self, message, *, from_addr, to_addrs):
         self._event("send")
         self.message, self.from_addr, self.to_addrs = message, from_addr, to_addrs
+        if self.on_send is not None:
+            self.on_send()
         if self.gate:
-            self.gate.wait(1)
+            self.gate.wait()
         return self.refused or {}
 
     def close(self):
@@ -254,19 +259,96 @@ async def test_partial_smtp_acceptance_is_not_retried():
     assert result.error_code == "smtp_partial_acceptance"
 
 
-async def test_smtp_timeout_is_unknown_and_at_most_one_thread_in_flight():
-    gate = threading.Event()
-    smtp = FakeSMTP(gate=gate)
+async def finish_smtp_thread(sender, gate):
+    gate.set()
+    if sender._inflight is not None:
+        await asyncio.wait_for(asyncio.shield(sender._inflight), 5)
+
+
+@pytest.mark.parametrize("phase", ["before_factory", "in_send"])
+async def test_smtp_timeout_is_unknown_and_at_most_one_thread_in_flight(monkeypatch, phase):
+    gate, ready = threading.Event(), asyncio.Event()
+    loop = asyncio.get_running_loop()
+    timeouts = []
+    real_wait_for = asyncio.wait_for
+
+    class ReadyDeadline:
+        # Replace only this module's reference, not the process-wide asyncio module.
+        # The actual timeout and shield semantics remain asyncio's implementation.
+        def __getattr__(self, name):
+            return getattr(asyncio, name)
+
+        async def wait_for(self, awaitable, timeout_seconds):
+            timeouts.append(timeout_seconds)
+            await real_wait_for(ready.wait(), 5)
+            return await real_wait_for(awaitable, timeout_seconds)
+
+    monkeypatch.setattr(senders, "asyncio", ReadyDeadline())
+    smtp = FakeSMTP(
+        gate=gate if phase == "in_send" else None,
+        on_send=(lambda: loop.call_soon_threadsafe(ready.set)) if phase == "in_send" else None,
+    )
+
+    def factory(**kwargs):
+        if phase == "before_factory":
+            loop.call_soon_threadsafe(ready.set)
+            gate.wait()
+        return smtp.factory(**kwargs)
+
     config = notification_settings().model_copy(update={"timeout_seconds": 0.02})
-    sender = EmailSender(config, smtp_factory=smtp.factory)
+    sender = EmailSender(config, smtp_factory=factory)
     try:
-        assert (await sender.send(MESSAGE)).status == "UNKNOWN"
+        first = await sender.send(MESSAGE)
+        assert (first.status, first.error_code, first.retryable) == (
+            "UNKNOWN",
+            "smtp_timeout",
+            False,
+        )
+        assert ready.is_set() and not gate.is_set()
+        inflight = sender._inflight
+        assert inflight is not None and not inflight.done()
         second = await sender.send(MESSAGE)
-        assert second.status == "FAILED" and second.retryable
-        assert smtp.events.count("send") == 1
+        assert (second.status, second.error_code, second.retryable) == ("FAILED", "smtp_busy", True)
+        assert sender._inflight is inflight and not inflight.done()
+        assert timeouts == [0.02], "the second call must not queue another timed socket thread"
+        assert smtp.events.count("send") == (0 if phase == "before_factory" else 1)
     finally:
-        gate.set()
-        await asyncio.sleep(0.03)
+        await finish_smtp_thread(sender, gate)
+    assert smtp.events.count("connect") == smtp.events.count("send") == 1
+    assert smtp.events[-1] == "close" and inflight.done()
+
+
+async def test_real_smtp_deadline_can_expire_before_factory_starts_sending():
+    """No timeout wrapper: slow startup is allowed to outlast the real 20ms deadline."""
+    gate, entered = threading.Event(), asyncio.Event()
+    loop = asyncio.get_running_loop()
+    smtp = FakeSMTP()
+
+    def factory(**kwargs):
+        loop.call_soon_threadsafe(entered.set)
+        gate.wait()
+        return smtp.factory(**kwargs)
+
+    config = notification_settings().model_copy(update={"timeout_seconds": 0.02})
+    sender = EmailSender(config, smtp_factory=factory)
+    try:
+        first = await sender.send(MESSAGE)
+        assert (first.status, first.error_code, first.retryable) == (
+            "UNKNOWN",
+            "smtp_timeout",
+            False,
+        )
+        await asyncio.wait_for(entered.wait(), 5)
+        inflight = sender._inflight
+        assert inflight is not None and not inflight.done()
+        second = await sender.send(MESSAGE)
+        assert (second.status, second.error_code, second.retryable) == ("FAILED", "smtp_busy", True)
+        assert sender._inflight is inflight
+        assert not gate.is_set() and smtp.events == []
+    finally:
+        await finish_smtp_thread(sender, gate)
+    assert smtp.events.count("connect") == smtp.events.count("send") == 1
+    assert smtp.events[-1] == "close" and inflight.done()
 
 
 @pytest.mark.parametrize("audience", ["other", "attacker@example.test"])
@@ -295,21 +377,29 @@ async def test_email_header_injection_refused_before_connect():
 
 async def test_cancelled_smtp_call_keeps_background_thread_tracked():
     gate = threading.Event()
-    smtp = FakeSMTP(gate=gate)
+    started = asyncio.Event()
+    loop = asyncio.get_running_loop()
+    smtp = FakeSMTP(gate=gate, on_send=lambda: loop.call_soon_threadsafe(started.set))
     sender = EmailSender(notification_settings(), smtp_factory=smtp.factory)
     task = asyncio.create_task(sender.send(MESSAGE))
     try:
-        for _ in range(100):
-            if "send" in smtp.events:
-                break
-            await asyncio.sleep(0.001)
-        assert "send" in smtp.events
+        await asyncio.wait_for(started.wait(), 5)
+        inflight = sender._inflight
+        assert inflight is not None and not inflight.done()
         task.cancel()
         with pytest.raises(asyncio.CancelledError):
             await task
         result = await sender.send(MESSAGE)
         assert (result.status, result.error_code, result.retryable) == ("FAILED", "smtp_busy", True)
-        assert smtp.events.count("send") == 1
+        assert sender._inflight is inflight and not gate.is_set()
+        assert smtp.events.count("send") == 1 and not inflight.done()
     finally:
         gate.set()
-        await asyncio.sleep(0.03)
+        if not task.done():
+            task.cancel()
+        try:
+            with suppress(asyncio.CancelledError):
+                await task
+        finally:
+            await finish_smtp_thread(sender, gate)
+    assert smtp.events.count("send") == 1 and smtp.events[-1] == "close"

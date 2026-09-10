@@ -37,7 +37,7 @@
 
 ## Windows 配置与运行
 
-先确认代码确实包含 R-106（不是只更新到 PR #5），保护本机修改和凭据，按交付清单备份、锁定依赖并迁移。保持 `ACTION_MODE=SHADOW`、`ONEBOT_ACTIONS_ENABLED=false`，不要为了测通知开启处罚。所有通知参数见 `.env.example`；服务和任务使用受限 Windows 账户读取本机配置，不把口令放任务命令行、截图或PR。
+先从 [R-106 PR #6](https://github.com/miaomiao636/qq-group-moderation-bot/pull/6) 核对最终三项检查、合并状态和精确SHA（不是只更新到PR #5），保护本机修改和凭据，按交付清单备份、锁定依赖并迁移。保持 `ACTION_MODE=SHADOW`、`ONEBOT_ACTIONS_ENABLED=false`，不要为了测通知开启处罚。所有通知参数见 `.env.example`；服务和任务使用受限 Windows 账户读取本机配置，不把口令放任务命令行、截图或PR。
 
 1. 负责人指定仅含管理员的 QQ 群、首位与备份接管人、值班时段。确认机器上的 QQ 已加入该管理群，配置固定 `ONEBOT_SELF_ID`、入站令牌、`NOTIFICATION_QQ_GROUP_ID`。QQ提醒还要求 `ONEBOT_WS_ENABLED=true`、NapCat反向连接实际ready；同时保持 `ONEBOT_ACTIONS_ENABLED=false`、`ACTION_MODE=SHADOW`，不要误把接入开关当成处罚开关。通知不支持靠群名或自然语言猜群，不接收任意群成员在 QQ 中回复“确认”。
 2. 邮件填 `SMTP_HOST/PORT/SECURITY/FROM/USERNAME/PASSWORD`，收件人填 `NOTIFICATION_EMAIL_TO`、`NOTIFICATION_EMAIL_BACKUP_TO`（逗号分隔裸邮箱地址）。STARTTLS一般587、隐式TLS一般465，实际以邮箱服务文档为准；不支持降级明文。使用专用邮箱授权凭据，不使用QQ登录密码。
