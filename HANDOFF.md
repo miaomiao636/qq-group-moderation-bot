@@ -16,6 +16,8 @@ Windows Agent从 `docs/windows-delivery-checklist.md` 开始：查实际部署�
 
 ## 历史实施报告（保留来源，以下“当前”仅指当时）
 
+R-105远程平台补验：首轮本轮CI `34447804238` Windows因fcntl静态分支判定失败而未合并；已改用sys.platform并移除Any绕行。本机与Windows目标mypy均通过，锁/入站/纠错55项通过；以PR最终head的新CI核对完整跨平台结果。该记录属于当前交接补充，不复用失败运行作成功证据。
+
 ## 日期
 
 2026-09-09晚（T-303收尾 + T-307实现 + Windows服务化）

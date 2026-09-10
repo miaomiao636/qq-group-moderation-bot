@@ -9,8 +9,8 @@ from __future__ import annotations
 
 import hashlib
 import json
-import os
 import secrets
+import sys
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -51,7 +51,7 @@ def acquire_runtime_lock(database_url: str) -> BinaryIO:
     )
     handle = lock_path.open("a+b")
     try:
-        if os.name == "nt":
+        if sys.platform == "win32":
             import msvcrt
 
             handle.seek(0)
@@ -59,9 +59,7 @@ def acquire_runtime_lock(database_url: str) -> BinaryIO:
                 handle.write(b"0")
                 handle.flush()
             handle.seek(0)
-            # These Windows-only members are absent from macOS typeshed.
-            windows_locker: Any = msvcrt
-            windows_locker.locking(handle.fileno(), windows_locker.LK_NBLCK, 1)
+            msvcrt.locking(handle.fileno(), msvcrt.LK_NBLCK, 1)
         else:
             import fcntl
 
