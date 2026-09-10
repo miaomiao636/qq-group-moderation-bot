@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import json
+import logging
 import re
 import time
 from dataclasses import dataclass, field
@@ -693,6 +694,17 @@ class AIReviewService:
             self.quota._spent_cents = max(self.quota._spent_cents, usage["reported_cost_cents"])
             self.quota._restored_day = self.quota._day
         if not self.quota.allow():
+            # 限流被触发意味着该消息会静默降级（AI 证据缺失）→ 必须告警留痕，
+            # 不得让运营方误以为审核仍在正常工作。
+            logger.warning(
+                "AI 调用被限流/预算拦截（ai_rate_or_budget_limited）：minute_calls=%d "
+                "daily_calls=%d spent_cents=%d model=%s —— 消息将降级转人工，"
+                "请检查 AI_PER_MINUTE_LIMIT / AI_DAILY_CALL_LIMIT / AI_DAILY_BUDGET_CENTS",
+                len(self.quota._minute_calls),
+                self.quota._daily_calls,
+                self.quota._spent_cents,
+                moderator.model_id,
+            )
             result = degraded_ai_result(
                 "ai_rate_or_budget_limited",
                 model_id=moderator.model_id,
@@ -778,6 +790,8 @@ def secondary_review_reason(
 
 
 _FRAUD_DIRECT_MIN = 0.85  # 诈骗误报代价最高，单独要求更高置信度
+
+logger = logging.getLogger(__name__)
 
 
 def _direct_threshold(category: str | None, base: float) -> float:

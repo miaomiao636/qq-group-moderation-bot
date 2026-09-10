@@ -1,0 +1,198 @@
+{
+  "schema_version": "r105-eval-v1",
+  "metrics": {
+    "samples": 160,
+    "positive_samples": 59,
+    "negative_samples": 101,
+    "true_positive": 53,
+    "false_positive": 0,
+    "false_negative": 6,
+    "true_negative": 101,
+    "precision": 1.0,
+    "recall": 0.8983050847457628,
+    "false_positive_rate": 0.0,
+    "flagged_recall": 0.8983050847457628,
+    "manual_review_rate": 0.05625,
+    "p95_latency_ms": 8890.0
+  },
+  "by_kind": {
+    "gif": {
+      "samples": 5,
+      "positive_samples": 0,
+      "negative_samples": 5,
+      "true_positive": 0,
+      "false_positive": 0,
+      "false_negative": 0,
+      "true_negative": 5,
+      "precision": null,
+      "recall": null,
+      "false_positive_rate": 0.0,
+      "flagged_recall": null,
+      "manual_review_rate": 0.0,
+      "p95_latency_ms": 953.0
+    },
+    "image": {
+      "samples": 70,
+      "positive_samples": 31,
+      "negative_samples": 39,
+      "true_positive": 26,
+      "false_positive": 0,
+      "false_negative": 5,
+      "true_negative": 39,
+      "precision": 1.0,
+      "recall": 0.8387096774193549,
+      "false_positive_rate": 0.0,
+      "flagged_recall": 0.8387096774193549,
+      "manual_review_rate": 0.11428571428571428,
+      "p95_latency_ms": 17858.0
+    },
+    "mixed": {
+      "samples": 43,
+      "positive_samples": 2,
+      "negative_samples": 41,
+      "true_positive": 2,
+      "false_positive": 0,
+      "false_negative": 0,
+      "true_negative": 41,
+      "precision": 1.0,
+      "recall": 1.0,
+      "false_positive_rate": 0.0,
+      "flagged_recall": 1.0,
+      "manual_review_rate": 0.0,
+      "p95_latency_ms": 16.0
+    },
+    "share_card": {
+      "samples": 1,
+      "positive_samples": 1,
+      "negative_samples": 0,
+      "true_positive": 0,
+      "false_positive": 0,
+      "false_negative": 1,
+      "true_negative": 0,
+      "precision": null,
+      "recall": 0.0,
+      "false_positive_rate": null,
+      "flagged_recall": 0.0,
+      "manual_review_rate": 0.0,
+      "p95_latency_ms": 1860.0
+    },
+    "text": {
+      "samples": 41,
+      "positive_samples": 25,
+      "negative_samples": 16,
+      "true_positive": 25,
+      "false_positive": 0,
+      "false_negative": 0,
+      "true_negative": 16,
+      "precision": 1.0,
+      "recall": 1.0,
+      "false_positive_rate": 0.0,
+      "flagged_recall": 1.0,
+      "manual_review_rate": 0.024390243902439025,
+      "p95_latency_ms": 2672.0
+    }
+  },
+  "by_category": {
+    "ad": {
+      "samples": 51,
+      "positive_samples": 51,
+      "negative_samples": 0,
+      "true_positive": 51,
+      "false_positive": 0,
+      "false_negative": 0,
+      "true_negative": 0,
+      "precision": 1.0,
+      "recall": 1.0,
+      "false_positive_rate": null,
+      "flagged_recall": 1.0,
+      "manual_review_rate": 0.0,
+      "p95_latency_ms": 4875.0
+    },
+    "fraud": {
+      "samples": 3,
+      "positive_samples": 1,
+      "negative_samples": 2,
+      "true_positive": 1,
+      "false_positive": 0,
+      "false_negative": 0,
+      "true_negative": 2,
+      "precision": 1.0,
+      "recall": 1.0,
+      "false_positive_rate": 0.0,
+      "flagged_recall": 1.0,
+      "manual_review_rate": 0.6666666666666666,
+      "p95_latency_ms": 9327.0
+    },
+    "other": {
+      "samples": 105,
+      "positive_samples": 6,
+      "negative_samples": 99,
+      "true_positive": 0,
+      "false_positive": 0,
+      "false_negative": 6,
+      "true_negative": 99,
+      "precision": null,
+      "recall": 0.0,
+      "false_positive_rate": 0.0,
+      "flagged_recall": 0.0,
+      "manual_review_rate": 0.06666666666666667,
+      "p95_latency_ms": 8890.0
+    },
+    "porn": {
+      "samples": 1,
+      "positive_samples": 1,
+      "negative_samples": 0,
+      "true_positive": 1,
+      "false_positive": 0,
+      "false_negative": 0,
+      "true_negative": 0,
+      "precision": 1.0,
+      "recall": 1.0,
+      "false_positive_rate": null,
+      "flagged_recall": 1.0,
+      "manual_review_rate": 0.0,
+      "p95_latency_ms": 1625.0
+    }
+  },
+  "threshold_checks": {
+    "precision_99pct": true,
+    "recall_85pct": true,
+    "ad_recall_90pct": true,
+    "fraud_recall_90pct": true,
+    "text_latency": true,
+    "image_latency": false,
+    "gif_latency": true,
+    "video_latency": null
+  },
+  "model_revisions": [
+    "deepseek-v4-flash-vision-exp@t204-v4"
+  ],
+  "rule_revisions": [
+    "ruleset6-v3"
+  ],
+  "sample_coverage": {
+    "ad": {
+      "positive_20": true,
+      "negative_30": false
+    },
+    "fraud": {
+      "positive_20": false,
+      "negative_30": false
+    },
+    "other": {
+      "positive_20": false,
+      "negative_30": true
+    },
+    "porn": {
+      "positive_20": false,
+      "negative_30": false
+    }
+  },
+  "release_decision": "REQUIRES_HUMAN_REVIEW",
+  "limitations": [
+    "人工真值及留出集独立性必须另行核验；重复模板应按近重复族隔离。",
+    "人工复核(record_only)不计入自动处罚召回，单独报告发现召回。",
+    "百分比是样本点估计，小样本不能证明长期99%精确率。",
+    "不证明真实消息接收、动作执行、Windows恢复或通知到达。"
+  ]
+}
