@@ -16,7 +16,7 @@ from typing import Any
 from urllib.parse import quote
 
 from fastapi import APIRouter, Form, HTTPException, Request, Response
-from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -1686,17 +1686,47 @@ async def api_groups(request: Request) -> list[dict[str, Any]]:
     ]
 
 
-@router.post("/api/groups/{group_openid}/settings")
+@router.post("/api/groups/{group_openid}/settings", response_model=None)
 async def api_group_settings(
     request: Request,
     group_openid: str,
     moderation_enabled: bool | None = None,
     action_enabled: bool | None = None,
     name: str | None = None,
-) -> dict[str, Any]:
-    """更新群设置（AI Agent 对接用）。"""
+    confirm_token: str = "",
+) -> dict[str, Any] | JSONResponse:
+    """更新群设置（AI Agent 对接用）。
+
+    P0-2: 开启 action_enabled 属于高风险操作，必须二阶段确认：
+    第一次调用（无 confirm_token）→ 返回 202 + 确认令牌 + 变更摘要；
+    第二次调用（带 confirm_token）→ 验证并执行。
+    """
     _require_api_auth(request, scope="settings:write")
     from app.core.group_settings import get_or_create_group_settings
+    from app.web.agent_confirm import create_confirmation, validate_and_consume
+
+    # P0-2: 高风险操作——开启动作需要二阶段确认
+    if action_enabled:
+        summary = f"group_action_enable:{group_openid}"
+        if not confirm_token:
+            token = create_confirmation(
+                "group_action_enable", summary, {"group_openid": group_openid}
+            )
+            from fastapi.responses import JSONResponse
+
+            return JSONResponse(
+                content={
+                    "confirmation_required": True,
+                    "confirmation_token": token,
+                    "summary": summary,
+                    "expires_in_seconds": 300,
+                    "message": "This is a high-risk operation. Re-send with confirm_token to execute.",
+                },
+                status_code=202,
+            )
+        confirmed = validate_and_consume(confirm_token, "group_action_enable", summary)
+        if confirmed is None:
+            raise HTTPException(403, "Invalid, expired, or replayed confirmation token")
 
     async with SessionLocal() as session:
         gs = await get_or_create_group_settings(session, group_openid)
@@ -1722,6 +1752,7 @@ async def api_group_settings(
             "action_enabled": action_enabled,
             "name": name[:64] if name else None,
             "auto_routed_providers": routed,
+            "two_phase_confirmed": action_enabled is True,
         },
     )
     return {

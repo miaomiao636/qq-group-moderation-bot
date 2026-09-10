@@ -1,0 +1,19 @@
+fix(p1-6,p0-2): SSRF DNS hardening + Agent two-phase confirmation
+
+P1-6 SSRF:
+- DNS resolution of all addresses before download (reject loopback/private/
+  link-local/CGN/multicast/IPv4-mapped/IPv6 ULA)
+- Port whitelist (80/443 only)
+- Disable auto-redirect, manual per-hop SSRF validation (max 3 hops)
+- Fail-closed on DNS resolution failure
+- 16 new tests
+
+P0-2 Agent two-phase confirmation:
+- High-risk operations (enable action_enabled) require preview -> confirm ->
+  execute flow
+- Confirmation token: short-lived (5min), single-use, bound to change summary
+- Replayed/expired/wrong-group tokens rejected
+- Low-risk operations (moderation_enabled, disable) bypass confirmation
+- 7 new tests
+
+Full: 370 passed, 1 skipped. ruff+mypy+format+diff-check all green.

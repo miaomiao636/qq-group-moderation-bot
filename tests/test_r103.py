@@ -18,6 +18,7 @@ class _FakeByteStream:
     def __init__(self, chunks: list[bytes]) -> None:
         self._chunks = chunks
         self.headers: dict[str, str] = {}
+        self.status_code = 200
 
     async def __aenter__(self) -> _FakeByteStream:
         return self
@@ -87,9 +88,15 @@ def test_safe_filename_uses_full_message_identity() -> None:
 
 
 @pytest.mark.asyncio
-async def test_download_enforces_quota_during_stream(tmp_path: Path) -> None:
+async def test_download_enforces_quota_during_stream(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     (tmp_path / "existing.bin").write_bytes(b"12345678")
     client = _FakeStreamClient([b"12345"])
+    # P1-6: bypass SSRF check for this unit test (tests quota logic, not SSRF)
+    from app.adapters.qq_official import media as media_mod
+
+    monkeypatch.setattr(media_mod, "_is_safe_media_url", _always_safe)
 
     name, _ext, reason = await download_attachment(
         client,  # type: ignore[arg-type]
@@ -104,6 +111,10 @@ async def test_download_enforces_quota_during_stream(tmp_path: Path) -> None:
     assert name is None
     assert "配额" in reason
     assert total_media_size(tmp_path) == 8
+
+
+async def _always_safe(url: str) -> bool:
+    return True
 
 
 @pytest.mark.asyncio
@@ -122,6 +133,9 @@ async def test_download_reads_only_magic_header_for_sniffing(
             raise AssertionError("read_bytes must not be used for sniffing")
 
         monkeypatch.setattr(Path, "read_bytes", forbidden_read_bytes)
+        from app.adapters.qq_official import media as media_mod
+
+        monkeypatch.setattr(media_mod, "_is_safe_media_url", _always_safe)
         name, _ext, reason = await download_attachment(
             client,
             "https://example.invalid/a",

@@ -73,6 +73,9 @@ def sniff_file_head(path: Path, limit: int = 16) -> bytes:
         return f.read(limit)
 
 
+_MAX_REDIRECT_HOPS = 3
+
+
 async def stream_download(
     client: httpx.AsyncClient,
     url: str,
@@ -82,48 +85,67 @@ async def stream_download(
     media_dir: Path | None = None,
     quota_bytes: int = MEDIA_QUOTA_BYTES,
 ) -> tuple[bool, str, int]:
-    """流式下载到 dest，超限时中止。返回 (ok, reason, bytes)。"""
-    bytes_written = 0
+    """流式下载到 dest，超限时中止。返回 (ok, reason, bytes)。
+
+    P1-6: 禁自动重定向，每跳重定向重新执行SSRF校验（防重定向绕过）。
+    """
+    current_url = url
     try:
-        async with client.stream("GET", url, timeout=30, follow_redirects=True) as resp:
-            resp.raise_for_status()
-            tmp = dest.with_suffix(dest.suffix + ".part")
-            tmp.unlink(missing_ok=True)
-            quota_dir = media_dir or dest.parent
-            base_size = total_media_size(quota_dir)
-            content_length = resp.headers.get("content-length")
-            if content_length and content_length.isdigit():
-                expected_size = int(content_length)
-                if base_size + expected_size > quota_bytes:
-                    return False, f"磁盘配额不足，剩余{max(quota_bytes - base_size, 0)}字节", 0
-            with tmp.open("wb") as f:
-                async for chunk in resp.aiter_bytes(chunk_size=65536):
-                    bytes_written += len(chunk)
-                    if bytes_written > size_limit:
-                        f.close()
-                        tmp.unlink(missing_ok=True)
-                        return False, f"文件超过{size_limit}字节上限", bytes_written
-                    if base_size + bytes_written > quota_bytes:
-                        f.close()
-                        tmp.unlink(missing_ok=True)
-                        return (
-                            False,
-                            f"磁盘配额不足，剩余{max(quota_bytes - base_size, 0)}字节",
-                            bytes_written,
-                        )
-                    f.write(chunk)
-            if total_media_size(quota_dir) > quota_bytes:
+        for _hop in range(_MAX_REDIRECT_HOPS + 1):
+            if not await _is_safe_media_url(current_url):
+                return False, f"URL被SSRF防护拦截: {current_url[:100]}", 0
+            async with client.stream(
+                "GET", current_url, timeout=30, follow_redirects=False
+            ) as resp:
+                if resp.status_code in (301, 302, 303, 307, 308):
+                    location = resp.headers.get("location", "")
+                    if not location:
+                        return False, "重定向缺少Location头", 0
+                    if location.startswith("/"):
+                        parsed = urllib.parse.urlparse(current_url)
+                        location = f"{parsed.scheme}://{parsed.hostname}{location}"
+                    current_url = location
+                    continue
+                resp.raise_for_status()
+                bytes_written = 0
+                tmp = dest.with_suffix(dest.suffix + ".part")
                 tmp.unlink(missing_ok=True)
-                return False, "磁盘配额不足", bytes_written
-            tmp.replace(dest)
-        return True, "", bytes_written
+                quota_dir = media_dir or dest.parent
+                base_size = total_media_size(quota_dir)
+                content_length = resp.headers.get("content-length")
+                if content_length and content_length.isdigit():
+                    expected_size = int(content_length)
+                    if base_size + expected_size > quota_bytes:
+                        return False, f"磁盘配额不足，剩余{max(quota_bytes - base_size, 0)}字节", 0
+                with tmp.open("wb") as f:
+                    async for chunk in resp.aiter_bytes(chunk_size=65536):
+                        bytes_written += len(chunk)
+                        if bytes_written > size_limit:
+                            f.close()
+                            tmp.unlink(missing_ok=True)
+                            return False, f"文件超过{size_limit}字节上限", bytes_written
+                        if base_size + bytes_written > quota_bytes:
+                            f.close()
+                            tmp.unlink(missing_ok=True)
+                            return (
+                                False,
+                                f"磁盘配额不足，剩余{max(quota_bytes - base_size, 0)}字节",
+                                bytes_written,
+                            )
+                        f.write(chunk)
+                if total_media_size(quota_dir) > quota_bytes:
+                    tmp.unlink(missing_ok=True)
+                    return False, "磁盘配额不足", bytes_written
+                tmp.replace(dest)
+                return True, "", bytes_written
+        return False, "重定向次数超上限", 0
     except httpx.HTTPError as exc:
-        return False, f"下载失败:{type(exc).__name__}", bytes_written
+        return False, f"下载失败:{type(exc).__name__}", 0
     except OSError as exc:
-        return False, f"写入失败:{type(exc).__name__}", bytes_written
+        return False, f"写入失败:{type(exc).__name__}", 0
 
 
-# SSRF防护：拒绝回环/私有/链路本地地址
+# SSRF防护：拒绝回环/私有/链路本地/多播/未指定/保留地址（P1-6扩展）
 _BLOCKED_NETWORKS = [
     ipaddress.ip_network(n)
     for n in (
@@ -133,26 +155,76 @@ _BLOCKED_NETWORKS = [
         "192.168.0.0/16",
         "169.254.0.0/16",
         "0.0.0.0/8",
+        "100.64.0.0/10",  # CGN/共享地址
+        "192.0.0.0/24",  # IETF协议分配
+        "198.18.0.0/15",  # 基准测试
+        "224.0.0.0/3",  # 多播+保留
         "::1/128",
         "fc00::/7",
         "fe80::/10",
+        "::/128",  # 未指定
+        "::ffff:0:0/96",  # IPv4映射
     )
 ]
 
+_ALLOWED_PORTS = {80, 443}  # P1-6: 仅允许标准HTTP/HTTPS端口
 
-def _is_safe_media_url(url: str) -> bool:
-    """拒绝指向内网/回环/链路本地地址的媒体URL（SSRF防护）。"""
+
+def _is_safe_ip(ip: ipaddress.IPv4Address | ipaddress.IPv6Address) -> bool:
+    """检查IP是否安全（不在被封锁的网络段内）。"""
+    return not any(ip in net for net in _BLOCKED_NETWORKS)
+
+
+def _is_safe_media_url_sync(url: str) -> bool:
+    """同步检查：scheme/端口/字面IP。域名需另行DNS解析检查。"""
     parsed = urllib.parse.urlparse(url)
     if parsed.scheme not in ("http", "https"):
         return False
     host = (parsed.hostname or "").lower()
     if not host or host == "localhost":
         return False
+    # P1-6: 端口白名单
+    port = parsed.port
+    if port is not None and port not in _ALLOWED_PORTS:
+        return False
     try:
         ip = ipaddress.ip_address(host)
     except ValueError:
-        return True  # 域名（非IP字面量）放行，QQ CDN均为域名
-    return not any(ip in net for net in _BLOCKED_NETWORKS)
+        return True  # 域名，需要DNS解析检查
+    return _is_safe_ip(ip)
+
+
+async def _check_dns_resolution(host: str) -> bool:
+    """P1-6: DNS解析后检查所有地址，拒绝解析到内网/回环的域名。"""
+    import socket
+
+    loop = asyncio.get_event_loop()
+    try:
+        infos = await loop.getaddrinfo(host, None)
+    except (socket.gaierror, OSError):
+        return False  # 解析失败 → fail-closed拒绝
+    for info in infos:
+        ip_str = info[4][0]
+        try:
+            ip = ipaddress.ip_address(ip_str)
+        except ValueError:
+            return False
+        if not _is_safe_ip(ip):
+            return False
+    return True
+
+
+async def _is_safe_media_url(url: str) -> bool:
+    """P1-6: 完整SSRF检查——scheme/端口/字面IP/DNS解析后全地址。"""
+    if not _is_safe_media_url_sync(url):
+        return False
+    parsed = urllib.parse.urlparse(url)
+    host = (parsed.hostname or "").lower()
+    try:
+        ipaddress.ip_address(host)
+        return True  # 字面IP已在sync检查中验证
+    except ValueError:
+        return await _check_dns_resolution(host)
 
 
 async def download_attachment(
@@ -173,8 +245,8 @@ async def download_attachment(
         return None, "", "无URL"
     if url.startswith("//"):
         url = "https:" + url
-    if not _is_safe_media_url(url):
-        return None, "", "URL被SSRF防护拦截（内网/回环/链路本地地址）"
+    if not await _is_safe_media_url(url):
+        return None, "", "URL被SSRF防护拦截（内网/回环/DNS解析到内网）"
 
     ensure_media_dir(media_dir)
     async with _QUOTA_LOCK:
