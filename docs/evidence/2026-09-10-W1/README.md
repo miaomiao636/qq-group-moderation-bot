@@ -6,10 +6,13 @@
 
 | 项 | 值 |
 |---|---|
-| 代码 SHA | `d77ea603cc3e3277b6d676fae5e333cead5da218`（main） |
-| 窗口开始（本地 UTC+8） | 2026-09-10 约 18:06（服务 ready 时刻） |
-| 窗口开始（UTC） | 2026-09-10T10:06:34Z（`last_connect_at`） |
-| 计划结束 | 至少 2026-09-11 18:06（本地），即连续 ≥24h |
+| 代码 SHA | `13b9b1f`（分支 `windows-deploy-2026-09-10`，含模型切换+规则外置+限流告警） |
+| 窗口开始（本地 UTC+8） | 2026-09-11 00:19（服务 ready 时刻） |
+| 窗口开始（UTC） | 2026-09-10T16:19:51Z（`last_connect_at`） |
+| 计划结束 | 至少 2026-09-12 00:19（本地），即连续 ≥24h |
+| AI 主模型 | `deepseek-v4-flash-vision-exp` |
+| AI 复核模型 | `qwen3.8-flash`（异源独立，仅灰区触发） |
+| 提示词版本 | `t204-v6` + 业务规则 `config/ai_prompt_rules.txt` |
 | 模式 | SAFE / `ACTION_MODE=SHADOW` |
 | 动作开关 | `ONEBOT_ACTIONS_ENABLED=false`、`ONEBOT_ACTION_STAGE=recall_only` |
 | DB 急停 | 已激活（`runtime_emergency_stop=true`） |
