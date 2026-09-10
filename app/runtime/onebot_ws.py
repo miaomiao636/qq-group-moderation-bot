@@ -232,6 +232,11 @@ _worker_stop: asyncio.Event | None = None
 _runtime_lock: BinaryIO | None = None
 
 
+def moderation_worker_healthy() -> bool:
+    """A connected QQ session alone does not prove its consumer is alive."""
+    return _worker_task is not None and not _worker_task.done()
+
+
 def _ensure_worker() -> asyncio.Queue[str]:
     """惰性启动影子处理worker；事件循环变化（测试/重启）时重建。
 

@@ -2,7 +2,7 @@
 
 24×7 识别 QQ 群中的垃圾广告、诈骗及自定义违规内容，支持文字、图片、GIF、表情、视频、语音、文件和卡片；自动执行高置信消息的撤回和分级禁言，整理两次违规证据并交由人工决定是否踢人。
 
-> 当前阶段（2026-09-10）：PR #5实现T-307与R-105安全整改；默认SHADOW、OneBot真实动作关闭。代码合并不表示Windows验收通过。部署人员先读[Windows实测与交付清单](docs/windows-delivery-checklist.md)，按W1→W2→隔离群W3→恢复W4→小规模W5执行；实际本轮门禁见PROGRESS/PR。
+> 当前阶段（2026-09-10）：PR #5已合并；R-106加入默认关闭的主动通知、人工接手与外部健康探针。默认SHADOW、OneBot真实动作关闭。代码不等于Windows验收。先读[交付清单](docs/windows-delivery-checklist.md)和[通知部署手册](docs/proactive-notifications.md)；实际门禁见PROGRESS/PR。
 
 ## 架构概览
 
@@ -87,7 +87,7 @@ uv run mypy app
 
 CI（`.github/workflows/ci.yml`）会在每次 push/PR 时，在 Linux 与 Windows 上自动运行以上全部检查。
 
-> 质量记录按提交核对：T-306历史CI不能替代R-105。本轮结果见PROGRESS与PR #5；真实模型、QQ操作、Windows恢复不由mock单测证明。新增迁移head为 `c2e4f6a8b010`，升级后历史按群动作位安全关闭，不能自动恢复。
+> 质量记录按提交核对：历史CI不能替代新版本。本轮结果见PROGRESS；真实模型、QQ操作、Windows恢复不由mock单测证明。R-106迁移head为 `d3f5a7b9c111`，仅增加通知表，保留旧记录；R-105旧授权安全关闭政策不变，不能自动恢复。
 
 ## 目录结构
 
@@ -167,4 +167,4 @@ tests/fixtures/   # 脱敏QQ事件和媒体/模型固定样本
 
 项目已确定使用一台空白Windows电脑进行正式整机测试。W0基础兼容性已通过；新路线为：R-104/T-305/T-306后进入W1 NapCat影子接收，W2验证完整影子闭环，T-307后进入W3隔离群管理动作，T-404后执行W4无人值守恢复，最后才进入W5目标群分阶段上线。详细进入条件见 [`docs/windows-operations.md`](docs/windows-operations.md) 的“分阶段测试计划”。
 
-现有告警仅后台展示，不是主动推送；无人值守交付还需客户确定接管人及独立通知渠道并实测到达。无法完成时明确按有人值班的辅助工具交付。Windows 10安全支持与补丁也需复核，不擅自更改正式电脑系统。
+R-106提供[通知与人工接手](docs/proactive-notifications.md)：后台 `/admin/notifications`、QQ固定管理员群、TLS邮件、机器外Healthchecks与独立探针。全部默认关闭；配置好不代表接通或到人，需Windows实测。无法完成时明确按有人值班辅助工具交付。Windows 10安全支持与补丁也需复核，不擅自更改正式电脑系统。
