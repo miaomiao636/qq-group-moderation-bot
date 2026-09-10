@@ -16,6 +16,7 @@ from app.core.routing import (
 from app.db import SessionLocal
 from app.moderation.decision import ModerationDecision
 from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
 
 
 class RecordingClient:
@@ -79,6 +80,23 @@ def _high_decision(msg: StandardMessage) -> ModerationDecision:
     )
 
 
+async def _enable_actions(
+    session: AsyncSession, group_openid: str, provider: str = "onebot"
+) -> None:
+    """T-303 UX：OFFICIAL 模式测试需显式为测试群启用动作。"""
+    from app.models import ProviderGroupSettings
+
+    gs = await session.get(ProviderGroupSettings, (provider, group_openid))
+    if gs is None:
+        gs = ProviderGroupSettings(
+            provider=provider, external_group_id=group_openid, action_enabled=True
+        )
+        session.add(gs)
+    else:
+        gs.action_enabled = True
+    await session.commit()
+
+
 @pytest.mark.asyncio
 async def test_default_official_route_keeps_legacy_official_behavior() -> None:
     group = f"G_ROUTE_DEFAULT_{uuid.uuid4().hex[:6]}"
@@ -121,6 +139,7 @@ async def test_routed_onebot_group_never_borrows_official_client() -> None:
     official = RecordingClient("official")
     msg = _msg(group, "200000001")
     async with SessionLocal() as session:
+        await _enable_actions(session, group)
         await upsert_group_route(
             session, group, message_provider="onebot", action_provider="onebot"
         )
@@ -138,7 +157,7 @@ async def test_routed_onebot_group_never_borrows_official_client() -> None:
     assert intents[0].status == "SKIPPED"
     assert intents[0].provider == "onebot"
     assert intents[0].external_group_id == group
-    assert "T-307" in intents[0].reason
+    assert "ONEBOT_ACTIONS_ENABLED" in intents[0].reason
 
 
 @pytest.mark.asyncio
@@ -149,6 +168,7 @@ async def test_official_mode_never_enables_injected_onebot_client() -> None:
     onebot = RecordingClient("onebot")
     msg = _msg(group, "200000002")
     async with SessionLocal() as session:
+        await _enable_actions(session, group)
         await upsert_group_route(
             session, group, message_provider="onebot", action_provider="onebot"
         )
@@ -174,11 +194,11 @@ async def test_official_mode_never_enables_injected_onebot_client() -> None:
     assert [i.status for i in intents] == ["SKIPPED"]
     assert all(i.provider == "onebot" for i in route_rows)
     assert all(i.external_group_id == group for i in route_rows)
-    assert "T-307" in intents[0].reason
+    assert "ONEBOT_ACTIONS_ENABLED" in intents[0].reason
 
 
 @pytest.mark.asyncio
-async def test_same_external_group_id_can_have_independent_provider_routes() -> None:
+async def test_same_external_group_id_retains_routes_but_only_latest_owner_executes() -> None:
     group = f"SAME_{uuid.uuid4().hex[:8]}"
     async with SessionLocal() as session:
         await upsert_group_route(
@@ -187,7 +207,7 @@ async def test_same_external_group_id_can_have_independent_provider_routes() -> 
         await upsert_group_route(
             session, group, message_provider="onebot", action_provider="onebot"
         )
-        assert await resolve_action_provider(session, "qq_official", group) == "qq_official"
+        assert await resolve_action_provider(session, "qq_official", group) is None
         assert await resolve_action_provider(session, "onebot", group) == "onebot"
 
 
@@ -203,6 +223,7 @@ async def test_unrouted_group_keeps_official_behavior() -> None:
         text="违规测试内容",
     )
     async with SessionLocal() as session:
+        await _enable_actions(session, group, provider="qq_official")
         intents = await orchestrate_actions(
             session,
             msg,

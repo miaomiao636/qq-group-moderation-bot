@@ -106,7 +106,15 @@ class Settings(BaseSettings):
 
     # 管理后台鉴权（生产环境必须设置强口令）
     admin_username: str = Field(default="admin", alias="ADMIN_USERNAME")
-    admin_password: str = Field(default="", alias="ADMIN_PASSWORD")
+    admin_password: str = Field(default="", alias="ADMIN_PASSWORD", repr=False)
+    admin_session_ttl_seconds: int = Field(
+        default=3600, ge=300, le=86400, alias="ADMIN_SESSION_TTL_SECONDS"
+    )
+
+    # Agent REST API 独立令牌（P0-1）：与 ADMIN_PASSWORD 分离，可独立撤销轮换
+    agent_api_token: str = Field(default="", alias="AGENT_API_TOKEN", repr=False)
+    agent_api_read_token: str = Field(default="", alias="AGENT_API_READ_TOKEN", repr=False)
+    agent_api_write_scopes: str = Field(default="project:read", alias="AGENT_API_WRITE_SCOPES")
 
     # 数据保留期（天）
     raw_retention_days: int = Field(default=30, ge=1, alias="RAW_RETENTION_DAYS")
@@ -117,7 +125,7 @@ class Settings(BaseSettings):
 
     # QQ 官方机器人凭据（T-102；未配置时适配器拒绝执行动作，应用仍可启动）
     qq_app_id: str = Field(default="", alias="QQ_APP_ID")
-    qq_app_secret: str = Field(default="", alias="QQ_APP_SECRET")
+    qq_app_secret: str = Field(default="", alias="QQ_APP_SECRET", repr=False)
     qq_api_base: str = Field(default="https://api.bot.qq.com", alias="QQ_API_BASE")
 
     # 远程AI辅助审核（T-204）：默认关闭，按群显式启用；密钥只从环境变量读取
@@ -130,16 +138,43 @@ class Settings(BaseSettings):
     ai_timeout_seconds: float = Field(default=5.0, ge=0.2, le=60.0, alias="AI_TIMEOUT_SECONDS")
     ai_daily_budget_cents: int = Field(default=0, ge=0, alias="AI_DAILY_BUDGET_CENTS")
     ai_per_minute_limit: int = Field(default=30, ge=1, le=600, alias="AI_PER_MINUTE_LIMIT")
-    ai_prompt_version: str = Field(default="t204-v1", alias="AI_PROMPT_VERSION")
+    ai_prompt_version: str = Field(default="t204-v4", alias="AI_PROMPT_VERSION")
+    ai_daily_call_limit: int = Field(default=1000, ge=1, alias="AI_DAILY_CALL_LIMIT")
+
+    # P0-3: 双模型条件复核（第二模型仅在灰区/冲突/疑难时调用，控制成本）
+    ai_review_model: str = Field(default="", alias="AI_REVIEW_MODEL")
+    ai_review_base_url: str = Field(default="", alias="AI_REVIEW_BASE_URL")
+    ai_review_api_key: str = Field(default="", alias="AI_REVIEW_API_KEY", repr=False)
+    ai_primary_direct_threshold: float = Field(
+        default=0.90, ge=0.0, le=1.0, alias="AI_PRIMARY_DIRECT_THRESHOLD"
+    )
+    ai_secondary_review_low: float = Field(
+        default=0.60, ge=0.0, le=1.0, alias="AI_SECONDARY_REVIEW_LOW"
+    )
+    ai_secondary_review_high: float = Field(
+        default=0.90, ge=0.0, le=1.0, alias="AI_SECONDARY_REVIEW_HIGH"
+    )
 
     # NapCat/OneBot 11 反向WebSocket入站（T-306）：默认关闭；访问令牌只从
     # 环境变量或系统凭据读取，绝不写入仓库。启用即强制要求令牌与本机/内网绑定。
     onebot_ws_enabled: bool = Field(default=False, alias="ONEBOT_WS_ENABLED")
     onebot_access_token: str = Field(default="", alias="ONEBOT_ACCESS_TOKEN", repr=False)
+    onebot_self_id: str = Field(default="", alias="ONEBOT_SELF_ID")
     onebot_ws_path: str = Field(default="/onebot/ws", alias="ONEBOT_WS_PATH")
     onebot_queue_max: int = Field(default=500, ge=1, le=10000, alias="ONEBOT_QUEUE_MAX")
     onebot_heartbeat_timeout_seconds: int = Field(
         default=90, ge=5, le=3600, alias="ONEBOT_HEARTBEAT_TIMEOUT_SECONDS"
+    )
+
+    # T-307：OneBot 真实管理动作（撤回/禁言/警告）。独立于 ACTION_MODE=OFFICIAL
+    # 的第二道开关：代码同步、服务重启或 NapCat 重连都不会自动开启真实处罚。
+    onebot_actions_enabled: bool = Field(default=False, alias="ONEBOT_ACTIONS_ENABLED")
+    # Local owner-controlled rollout stage; changing it requires a service restart.
+    onebot_action_stage: Literal["recall_only", "full"] = Field(
+        default="recall_only", alias="ONEBOT_ACTION_STAGE"
+    )
+    onebot_action_timeout_seconds: int = Field(
+        default=10, ge=1, le=60, alias="ONEBOT_ACTION_TIMEOUT_SECONDS"
     )
 
     @model_validator(mode="after")
@@ -161,9 +196,12 @@ class Settings(BaseSettings):
                 missing.append("APP_ENV=prod")
             if not self.admin_password.strip():
                 missing.append("ADMIN_PASSWORD")
-            if not self.qq_app_id.strip():
+            # Legacy OFFICIAL names the global live-action gate. A OneBot-only
+            # deployment does not need unrelated official API credentials;
+            # the official adapter independently refuses to build without them.
+            if not self.onebot_actions_enabled and not self.qq_app_id.strip():
                 missing.append("QQ_APP_ID")
-            if not self.qq_app_secret.strip():
+            if not self.onebot_actions_enabled and not self.qq_app_secret.strip():
                 missing.append("QQ_APP_SECRET")
             if self.emergency_stop:
                 missing.append("EMERGENCY_STOP=false")
@@ -181,7 +219,46 @@ class Settings(BaseSettings):
             and not self.ai_base_url.startswith(("https://", "http://"))
         ):
             raise ValueError("AI_BASE_URL 必须以 https:// 或 http:// 开头。")
+        if self.ai_secondary_review_low >= self.ai_primary_direct_threshold:
+            raise ValueError("AI_SECONDARY_REVIEW_LOW 必须小于 AI_PRIMARY_DIRECT_THRESHOLD。")
+        if self.ai_review_model.strip() and (
+            self.ai_review_model.strip() == self.ai_vision_model.strip()
+        ):
+            raise ValueError("AI_REVIEW_MODEL 必须与 AI_VISION_MODEL 不同，不能伪装独立复核。")
+        allowed_scopes = {
+            "project:read",
+            "settings:write",
+            "actions:enable",
+            "routing:write",
+            "emergency:stop",
+            "rules:publish",
+            "rules:rollback",
+        }
+        scopes = {part.strip() for part in self.agent_api_write_scopes.split(",") if part.strip()}
+        if not scopes.issubset(allowed_scopes):
+            raise ValueError("AGENT_API_WRITE_SCOPES 含不支持的权限。")
+        if self.agent_api_token and self.agent_api_read_token == self.agent_api_token:
+            raise ValueError("AGENT_API_READ_TOKEN 必须与 AGENT_API_TOKEN 分离。")
+        if self.admin_password and self.admin_password in (
+            self.agent_api_token,
+            self.agent_api_read_token,
+        ):
+            raise ValueError("Agent 令牌不得复用 ADMIN_PASSWORD。")
+        if self.onebot_self_id and not (
+            self.onebot_self_id.isascii()
+            and self.onebot_self_id.isdigit()
+            and int(self.onebot_self_id) > 0
+        ):
+            raise ValueError("ONEBOT_SELF_ID 必须是非零 ASCII 数字账号。")
+        if self.onebot_actions_enabled and not self.onebot_self_id:
+            raise ValueError("ONEBOT_SELF_ID 必须在启用真实动作前显式绑定专用账号。")
         self._validate_onebot_ws()
+        # T-307：真实动作经反向WS出站，必须同时开启 WS 入站
+        if self.onebot_actions_enabled and not self.onebot_ws_enabled:
+            raise ValueError(
+                "ONEBOT_ACTIONS_ENABLED 配置错误：真实动作经反向WS出站，"
+                "必须同时开启 ONEBOT_WS_ENABLED"
+            )
         return self
 
     def _validate_onebot_ws(self) -> None:

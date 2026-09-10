@@ -50,6 +50,17 @@ def _status(client: TestClient) -> dict[str, Any]:
     return response.json()
 
 
+def _inbox_contains(message_id: str) -> bool:
+    from app.db import SessionLocal
+    from app.runtime.inbox import InboxEvent
+
+    async def query() -> bool:
+        async with SessionLocal() as session:
+            return await session.get(InboxEvent, f"onebot:10000001:{message_id}") is not None
+
+    return bool(_run(query()))
+
+
 def _lifecycle(self_id: int = 10000001) -> str:
     return json.dumps(
         {
@@ -71,6 +82,149 @@ def _heartbeat(self_id: int = 10000001, *, online: bool = True) -> str:
             "meta_event_type": "heartbeat",
             "status": {"online": online},
         }
+    )
+
+
+def test_second_live_connection_cannot_replace_owner() -> None:
+    with (
+        TestClient(app) as client,
+        client.websocket_connect(WS_PATH, headers=_auth_headers()) as first,
+    ):
+        first.send_text(_lifecycle())
+        first.send_text(_heartbeat())
+        assert _wait_for(lambda: _status(client)["state"] == "ready")
+        with _expect_disconnect(), client.websocket_connect(WS_PATH, headers=_auth_headers()):
+            pass
+        assert _status(client)["connected"] is True
+
+
+def test_connection_identity_cannot_change_midstream() -> None:
+    with TestClient(app) as client:
+        with client.websocket_connect(WS_PATH, headers=_auth_headers()) as ws:
+            ws.send_text(_lifecycle())
+            ws.send_text(_heartbeat())
+            ws.send_text(_heartbeat(10000002))
+            assert _wait_for(lambda: _status(client)["state"] == "degraded", timeout=3)
+        assert _status(client)["state"] == "degraded"
+
+
+def test_event_is_persisted_when_processing_is_unavailable(monkeypatch) -> None:
+    from app.db import SessionLocal
+    from app.runtime import onebot_ws
+    from app.runtime.inbox import InboxEvent
+
+    event = _load_event("group_message_text.json")
+    event["message_id"] = int(f"99{uuid.uuid4().int % 10**10}")
+    key = f"onebot:10000001:{event['message_id']}"
+
+    async def idle_worker(queue):
+        await asyncio.Event().wait()
+
+    real_worker = onebot_ws._worker_main
+    monkeypatch.setattr(onebot_ws, "_worker_main", idle_worker)
+
+    def persisted() -> bool:
+        async def query():
+            async with SessionLocal() as session:
+                row = await session.get(InboxEvent, key)
+                return row is not None and row.status == "PENDING" and bool(row.payload_json)
+
+        return _run(query())
+
+    with (
+        TestClient(app) as client,
+        client.websocket_connect(WS_PATH, headers=_auth_headers()) as ws,
+    ):
+        ws.send_text(_lifecycle())
+        ws.send_text(json.dumps(event))
+        assert _wait_for(persisted)
+
+    calls = []
+
+    async def process(payload, *_args, **_kwargs):
+        calls.append(payload["message_id"])
+        return object()
+
+    def completed() -> bool:
+        async def query():
+            async with SessionLocal() as session:
+                row = await session.get(InboxEvent, key)
+                return row is not None and row.status == "DONE" and row.payload_json == ""
+
+        return _run(query())
+
+    monkeypatch.setattr(onebot_ws, "_worker_main", real_worker)
+    monkeypatch.setattr(onebot_ws.onebot_wiring, "process_onebot_event", process)
+    with TestClient(app):
+        assert _wait_for(completed)
+    with TestClient(app):
+        assert calls == [event["message_id"]]
+
+
+@pytest.mark.parametrize(
+    "error,close_code",
+    [(RuntimeError("storage unavailable"), 1011), (ValueError("bad payload"), 1013)],
+)
+def test_uncommitted_event_closes_connection_without_processing(
+    monkeypatch, error, close_code
+) -> None:
+    from app.runtime import onebot_ws
+
+    async def fail(*args, **kwargs):
+        raise error
+
+    monkeypatch.setattr(onebot_ws.inbox, "enqueue_event", fail)
+    event = _load_event("group_message_text.json")
+    event["message_id"] = int(f"99{uuid.uuid4().int % 10**10}")
+    with (
+        TestClient(app) as client,
+        client.websocket_connect(WS_PATH, headers=_auth_headers()) as ws,
+    ):
+        ws.send_text(_lifecycle())
+        ws.send_text(json.dumps(event))
+        with pytest.raises(WebSocketDisconnect) as exc:
+            ws.receive_text()
+        assert exc.value.code == close_code
+        assert not _inbox_contains(str(event["message_id"]))
+
+
+def test_three_concurrent_workers_share_same_member_flood_history(monkeypatch) -> None:
+    from app.db import SessionLocal
+    from app.runtime import onebot_ws
+    from app.runtime.inbox import enqueue_event
+
+    mid_base = int(f"98{uuid.uuid4().int % 10**10}")
+    target_ids = {mid_base + index for index in range(3)}
+    arrived = []
+    decisions = []
+    barrier = asyncio.Event()
+
+    async def process(payload, _session, *, text_engine, **_kwargs):
+        if payload["message_id"] not in target_ids:
+            return object()
+        arrived.append(text_engine)
+        if len(arrived) == 3:
+            barrier.set()
+        await barrier.wait()
+        decisions.append(text_engine.evaluate(onebot_ws.onebot_wiring.parse_onebot_event(payload)))
+        return object()
+
+    async def seed():
+        async with SessionLocal() as session:
+            for mid in target_ids:
+                event = _load_event("group_message_text.json")
+                event["message_id"] = mid
+                event["message"] = [{"type": "text", "data": {"text": "今天下午大家一起读书"}}]
+                await enqueue_event(session, event, max_pending=1000)
+
+    _run(seed())
+    monkeypatch.setattr(onebot_ws.onebot_wiring, "process_onebot_event", process)
+    with TestClient(app):
+        assert _wait_for(lambda: len(decisions) == 3)
+    assert len({id(engine) for engine in arrived}) == 3
+    assert (
+        sum(any(hit.rule_name == "flood" for hit in decision.rule_hits) for decision in decisions)
+        == 1
     )
 
 
@@ -405,6 +559,7 @@ def test_file_without_url_and_unknown_segment_degrade() -> None:
                 event = _load_event(name)
                 event["message_id"] = int(mid)
                 ws.send_text(json.dumps(event))
+                assert _wait_for(lambda mid=mid: _inbox_contains(mid))
 
         def _record(mid: str) -> ShadowDecision | None:
             async def _fetch() -> ShadowDecision | None:
@@ -435,17 +590,34 @@ def test_file_without_url_and_unknown_segment_degrade() -> None:
 
 
 def test_onebot_adapter_never_defines_management_actions() -> None:
-    """OneBot Adapter 包内不得出现任何管理动作实现（撤回/禁言/警告/踢人）。"""
+    """T-307：管理动作只允许出现在 onebot/actions.py；踢人全包禁止。"""
     import ast
 
     adapter_dir = Path(__file__).parent.parent / "app" / "adapters" / "onebot"
+    allowed_file = "actions.py"
     forbidden = {"recall", "mute", "unmute", "warn", "kick"}
     for py in sorted(adapter_dir.rglob("*.py")):
         tree = ast.parse(py.read_text(encoding="utf-8"))
         for node in ast.walk(tree):
             if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
-                assert node.name not in forbidden, f"{py.name} 定义了管理动作 {node.name}"
-        assert "kick" not in py.read_text(encoding="utf-8").lower(), f"{py.name} 出现 kick"
+                if node.name == "kick" or "kick" in node.name.lower():
+                    raise AssertionError(f"{py.name} 定义了踢人 {node.name}")
+                if node.name in forbidden and py.name != allowed_file:
+                    raise AssertionError(
+                        f"{py.name} 定义了管理动作 {node.name}（只允许 {allowed_file}）"
+                    )
+        content = py.read_text(encoding="utf-8").lower()
+        assert "kick" not in content, f"{py.name} 出现 kick"
+        if py.name == allowed_file:
+            # 动作实现必须显式声明无踢人且受独立开关保护（组合根检查）
+            assert "t-307" in content, f"{py.name} 缺少 T-307 架构约束说明"
+
+    # 运行时hub不得内置任何具体管理动作端点名（recall=delete_msg 等由 Adapter 提供）
+    runtime_hub = Path(__file__).parent.parent / "app" / "runtime" / "onebot_actions.py"
+    hub_content = runtime_hub.read_text(encoding="utf-8")
+    assert "delete_msg" not in hub_content
+    assert "set_group_ban" not in hub_content
+    assert "send_group_msg" not in hub_content
 
 
 # ---------- 配置 fail-closed 校验 ----------

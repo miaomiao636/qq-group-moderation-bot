@@ -52,6 +52,16 @@ def build_default_ai_review_service() -> AIReviewService:
             timeout_seconds=settings.ai_timeout_seconds,
             prompt_version=settings.ai_prompt_version,
         )
+    # P0-3: 第二复核模型（仅在灰区/冲突/疑难时调用）
+    review_vision_moderator: VisionModerator | None = None
+    if settings.ai_review_model:
+        review_vision_moderator = OpenAICompatibleVisionModerator(
+            base_url=settings.ai_review_base_url or settings.ai_base_url,
+            api_key=settings.ai_review_api_key or settings.ai_api_key,
+            model_id=settings.ai_review_model,
+            timeout_seconds=settings.ai_timeout_seconds,
+            prompt_version=settings.ai_prompt_version,
+        )
     if text_moderator is None and vision_moderator is None:
         return AIReviewService(
             enabled=True,
@@ -63,8 +73,13 @@ def build_default_ai_review_service() -> AIReviewService:
         enabled_groups=enabled_groups,
         text_moderator=text_moderator,
         vision_moderator=vision_moderator,
+        review_vision_moderator=review_vision_moderator,
+        primary_direct_threshold=settings.ai_primary_direct_threshold,
+        secondary_review_low=settings.ai_secondary_review_low,
+        secondary_review_high=settings.ai_secondary_review_high,
         quota=AIQuota(
             daily_budget_cents=settings.ai_daily_budget_cents,
             per_minute_limit=settings.ai_per_minute_limit,
+            daily_call_limit=settings.ai_daily_call_limit,
         ),
     )

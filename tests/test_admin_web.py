@@ -237,6 +237,21 @@ def test_dynamic_rule_admin_create_item_publish_flow(logged_in: TestClient) -> N
     )
     assert resp.status_code == 303
 
+    plan_url = resp.headers["location"]
+    assert plan_url.startswith("/admin/plans/")
+    assert (
+        logged_in.post(
+            plan_url + "/approve", data={"csrf": csrf}, follow_redirects=False
+        ).status_code
+        == 303
+    )
+    assert (
+        logged_in.post(
+            plan_url + "/execute", data={"csrf": csrf}, follow_redirects=False
+        ).status_code
+        == 303
+    )
+
     async def _decision() -> str:
         async with SessionLocal() as session:
             snapshot = await load_active_snapshot(session, group_id)

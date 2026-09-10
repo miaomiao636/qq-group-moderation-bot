@@ -79,17 +79,78 @@ def _msg(text: str, *, group: str = "G_AI") -> StandardMessage:
     )
 
 
-def test_single_ai_result_is_soft_evidence_only() -> None:
+def test_single_text_ai_result_is_soft_evidence_only() -> None:
+    """文字模型单结果只能升到 record_only（软证据），不直接违规。"""
     result = AIModerationResult(
         category="ad",
         confidence=0.99,
         evidence="疑似广告",
         model_id="fake",
         prompt_version="v1",
+        source="text",
     )
     decision = merge_ai_evidence(_allow_decision(), [result])
     assert decision.verdict == "record_only"
     assert decision.recommended_actions == []
+
+
+def test_single_vision_ai_high_confidence_ad_upgrades_to_violation() -> None:
+    """A confident primary without uncertainty or local conflicts may act."""
+    result = AIModerationResult(
+        category="ad",
+        confidence=0.95,
+        evidence="图片含招聘引流广告",
+        model_id="mimo-v2.5",
+        prompt_version="v1",
+        source="vision",
+        needs_review=False,
+    )
+    decision = merge_ai_evidence(_allow_decision(), [result])
+    assert decision.verdict == "violation_high"
+    assert decision.category == "ad"
+    assert decision.recommended_actions == ["recall", "mute", "warn"]
+
+
+def test_single_vision_ai_fraud_high_confidence_upgrades() -> None:
+    result = AIModerationResult(
+        category="fraud",
+        confidence=0.90,
+        evidence="诈骗图片",
+        model_id="mimo-v2.5",
+        prompt_version="v1",
+        source="vision",
+        needs_review=False,
+    )
+    decision = merge_ai_evidence(_allow_decision(), [result])
+    assert decision.verdict == "violation_high"
+
+
+def test_vision_ai_below_threshold_stays_record_only() -> None:
+    """Without an independent reviewer, gray-zone evidence remains record_only."""
+    result = AIModerationResult(
+        category="ad",
+        confidence=0.75,
+        evidence="疑似广告",
+        model_id="mimo-v2.5",
+        prompt_version="v1",
+        source="vision",
+    )
+    decision = merge_ai_evidence(_allow_decision(), [result])
+    assert decision.verdict == "record_only"
+
+
+def test_vision_ai_other_category_stays_record_only() -> None:
+    """视觉模型非 ad/fraud 类（如 other）即使高置信也不直接升级。"""
+    result = AIModerationResult(
+        category="other",
+        confidence=0.95,
+        evidence="未知内容",
+        model_id="mimo-v2.5",
+        prompt_version="v1",
+        source="vision",
+    )
+    decision = merge_ai_evidence(_allow_decision(), [result])
+    assert decision.verdict == "record_only"
 
 
 def test_ai_result_rejects_action_like_fields() -> None:
@@ -165,7 +226,8 @@ async def test_ai_cache_reuses_result_and_records_usage() -> None:
     assert second.verdict == "record_only"
     assert fake.calls == 1
     assert first_results[0].source == "text"
-    assert second_results[0].source == "cache"
+    assert second_results[0].source == "text"
+    assert second_results[0].cache_hit is True
     assert usage_count == 2
 
 
@@ -181,7 +243,7 @@ async def test_provider_failure_degrades_without_blocking_chain() -> None:
         decision, results = await service.review_message(
             session, _msg("需要AI但供应商失败", group=group), _allow_decision()
         )
-    assert decision.verdict == "allow"
+    assert decision.verdict == "record_only"
     assert results[0].degraded_reason == "provider_invalid_model_json"
 
 

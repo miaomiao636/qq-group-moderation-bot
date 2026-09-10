@@ -1,5 +1,7 @@
 # Windows 24×7运行与恢复要求
 
+> 2026-09-10 R-105补充：现行执行与签收表见[Windows实测与交付清单](windows-delivery-checklist.md)。本文历史“已部署”是实施方记录，不等于本轮主审已取得原始证据；旧T-303报告需脱敏核验，W2效果独立评测。持久inbox仅恢复已提交事件，不保证上游断线无丢失；单Web/OneBot实例，禁止多worker；通知到人尚需独立渠道。Windows 10有效延长安全更新/补丁需现场核实。
+
 ## 目的和适用范围
 
 本文定义项目在单台Windows 10专业版专用机（决策D-011）上长期运行时必须满足的电源、启动、重启、更新、状态恢复、监控和人工接管要求。
@@ -120,6 +122,21 @@ NapCat反向WS地址只填写 `ws://<WEB_HOST>:<WEB_PORT>/onebot/ws`，令牌通
 - 第一次和第二次崩溃可以自动重启，连续失败后使用指数退避并告警。
 - 开发用的 `uvicorn --reload` 不得用于生产运行。
 - 服务必须使用专用低权限Windows账号，只授予数据目录、日志目录和系统凭据的必要权限。
+
+#### 已部署现状（2026-09-09，T-404主体）
+
+- `QQBotWeb`（`python -m app`，端口 `WEB_PORT`）与 `QQBotRuntime`（`python -m app.runtime`）
+  已用 NSSM 注册为 Windows 服务，启动类型 `SERVICE_AUTO_START`，崩溃 5 秒自动重启，
+  日志落 `data/service_*.log`（10MB 轮转）。
+- 注册脚本：`D:\QQ\tools\install-qqbot-services.ps1`（修复中文路径乱码版 `fix-qqbot-services.ps1`）。
+  **坑**：PowerShell 5.1 按 GBK 解析无 BOM 的 UTF-8 脚本，中文路径会乱码 →
+  注册表存的 `D:\CodeBuddy宸ヤ綔绌洪棿\...` 服务找不到文件。所有含中文路径的
+  安装脚本必须以 UTF-8 BOM 保存（`[IO.File]::WriteAllBytes($p, [byte[]](0xEF,0xBB,0xBF)+$b)`）。
+- NapCat/QQ 是 GUI 程序，**不能**做成服务（Session 0 隔离 + 扫码登录需求）。
+  当前用用户启动文件夹的 `qqbot-napcat.bat`（带单实例保护）在登录后自启，
+  快速登录凭据有效时免扫码恢复（演练3已验证）。
+- 崩溃自动重启实测通过：`taskkill` 服务进程 → 12 秒内 NSSM 拉起新 PID + healthz 200。
+
 
 ### NapCat特殊限制
 

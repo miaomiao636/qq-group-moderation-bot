@@ -97,6 +97,8 @@ async def process_onebot_event(
 ) -> ShadowDecision | None:
     """处理一条 OneBot 群消息事件：去重认领 → 下载媒体 → 影子流水线。"""
     key = dedup_key_for(payload, str(payload.get("message_id") or ""))
+    # The WebSocket intake committed the durable inbox before worker dispatch.
+    # Pipeline ownership remains with the existing persistent moderation lease.
 
     async def _prepare(current_payload: dict[str, Any]) -> None:
         msg = parse_onebot_event(current_payload)

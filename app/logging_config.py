@@ -36,3 +36,7 @@ def setup_logging() -> None:
     root = logging.getLogger()
     root.handlers = [handler]
     root.setLevel(settings.log_level.upper())
+    # HTTPX 的 INFO 请求日志含完整 URL；媒体链接可能带签名，禁止进入日志。
+    # 项目自身只记录安全事件名、失败类别和不含内容的关联标识。
+    for name in ("httpx", "httpcore"):
+        logging.getLogger(name).setLevel(logging.WARNING)

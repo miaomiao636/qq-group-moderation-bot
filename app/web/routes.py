@@ -9,13 +9,16 @@ from __future__ import annotations
 
 import html
 import json
+import secrets
 from datetime import timedelta
+from hashlib import sha256
 from typing import Any
 from urllib.parse import quote
 
 from fastapi import APIRouter, Form, HTTPException, Request, Response
-from fastapi.responses import HTMLResponse, RedirectResponse
-from sqlalchemy import select
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse
+from sqlalchemy import select, text, update
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.cases.case_sm import IllegalTransitionError
 from app.cases.models import Case, ViolationRecord
@@ -43,7 +46,9 @@ _STYLE = (
 )
 
 
-def _page(title: str, body: str, logged_in: bool = True) -> Response:
+def _page(
+    title: str, body: str, logged_in: bool = True, refresh_seconds: int | None = None
+) -> Response:
     header = ""
     if logged_in:
         header = (
@@ -52,12 +57,26 @@ def _page(title: str, body: str, logged_in: bool = True) -> Response:
             '<a href="/admin/shadow" style="color:#93c5fd">影子判定</a> &nbsp; '
             '<a href="/admin/rules" style="color:#93c5fd">规则</a> &nbsp; '
             '<a href="/admin/feedback" style="color:#93c5fd">反馈学习</a> &nbsp; '
+            '<a href="/admin/groups" style="color:#93c5fd">群管理</a> &nbsp; '
             '<a href="/admin/stats" style="color:#93c5fd">统计</a> &nbsp; '
             '<a href="/admin/reports" style="color:#93c5fd">报告</a> &nbsp; '
+            '<a href="/admin/settings" style="color:#93c5fd">设置</a> &nbsp; '
             '<a href="/admin/logout" style="color:#fca5a5">退出</a></div></header>'
         )
+    refresh = ""
+    if refresh_seconds:
+        # 仅用脚本刷新（不用meta硬刷新）：正在打字/填写反馈时跳过本次刷新
+        interval_ms = refresh_seconds * 1000
+        refresh = (
+            "<script>setInterval(function(){var a=document.activeElement;"
+            "if(a&&(a.tagName==='INPUT'||a.tagName==='SELECT'||a.tagName==='TEXTAREA'))return;"
+            "var i=document.querySelectorAll('input[name=reason]');"
+            "for(var j=0;j<i.length;j++){if(i[j].value)return;}"
+            f"location.reload();}}, {interval_ms});</script>"
+        )
     return HTMLResponse(
-        f"<!DOCTYPE html><html lang=zh-CN><head><meta charset=utf-8><title>{title}</title>{_STYLE}</head>{header}<main>{body}</main></html>"
+        f"<!DOCTYPE html><html lang=zh-CN><head><meta charset=utf-8><title>{title}</title>"
+        f"{refresh}{_STYLE}</head>{header}<main>{body}</main></html>"
     )
 
 
@@ -97,12 +116,32 @@ def _ai_model_table(models: list[dict[str, Any]]) -> str:
         return "<div class=card><h3>AI 调用（按模型）</h3><p class=muted>暂无调用</p></div>"
     rows = "".join(
         f"<tr><td>{_esc(m['model'])}</td><td>{m['calls']}</td><td>{m['ok']}</td>"
-        f"<td>{m['fail']}</td><td>{m['avg_ms']}ms</td><td>{m['cost_cents']}分</td></tr>"
+        f"<td>{m['fail']}</td><td>{m['avg_ms']}ms</td><td>未核算（以供应商账单为准）</td></tr>"
         for m in models
     )
     return (
         "<div class=card><h3>AI 调用（按模型）</h3>"
         "<table><tr><th>模型</th><th>调用</th><th>成功</th><th>失败</th>"
+        "<th>平均延迟</th><th>费用</th></tr>" + rows + "</table></div>"
+    )
+
+
+def _ai_daily_table(daily: list[dict[str, Any]]) -> str:
+    """AI 每日消耗表（调用量/成功率/延迟/费用）。"""
+    if not daily:
+        return "<div class=card><h3>AI 每日消耗</h3><p class=muted>暂无AI调用记录</p></div>"
+    rows = "".join(
+        f"<tr><td>{_esc(d['day'])}</td><td>{d['calls']}</td>"
+        f"<td>{d['primary_calls']}</td><td>{d['secondary_calls']}</td>"
+        f"<td>{d['cache_hits']}</td><td>{d['blocked_calls']}</td>"
+        f"<td>{d['fail']}</td><td>{d['avg_latency_ms']}ms</td><td>未核算</td></tr>"
+        for d in daily
+    )
+    return (
+        "<div class=card><h3>AI 每日消耗（UTC，金额未核算）</h3>"
+        "<p class=muted>实际调用不含缓存和本地额度拒绝；旧记录未区分主/次模型时不猜测补齐。供应商账单为准。</p>"
+        "<table><tr><th>日期</th><th>实际调用</th><th>主模型</th><th>次模型</th>"
+        "<th>缓存</th><th>额度阻断</th><th>失败</th>"
         "<th>平均延迟</th><th>费用</th></tr>" + rows + "</table></div>"
     )
 
@@ -119,8 +158,12 @@ def _stats_body(stats: dict[str, Any]) -> str:
             ("待审案件", t["pending_cases"]),
             ("已标注反馈", t["feedback"]),
             ("AI 调用", t["ai_calls"]),
+            ("主模型调用", stats["ai_usage"]["primary_calls"]),
+            ("次模型调用", stats["ai_usage"]["secondary_calls"]),
+            ("缓存命中", stats["ai_usage"]["cache_hits"]),
+            ("额度阻断", stats["ai_usage"]["blocked_calls"]),
             ("AI 失败率", f"{ai_fail_rate:.1f}%"),
-            ("AI/人工一致率", agree_label),
+            ("已标注样本一致率（非验收）", agree_label),
         ]
     )
     return (
@@ -204,7 +247,9 @@ async def login_page(error: str = "") -> Response:
 
 
 @router.post("/login")
-async def login_submit(username: str = Form(""), password: str = Form("")) -> RedirectResponse:
+async def login_submit(
+    request: Request, username: str = Form(""), password: str = Form("")
+) -> RedirectResponse:
     try:
         token = auth.login(username, password)
     except auth.AuthError as exc:
@@ -216,8 +261,8 @@ async def login_submit(username: str = Form(""), password: str = Form("")) -> Re
         token,
         httponly=True,
         samesite="lax",
-        secure=settings.app_env == "prod",
-        max_age=12 * 3600,
+        secure=request.url.scheme == "https",
+        max_age=settings.admin_session_ttl_seconds,
     )
     return resp
 
@@ -269,7 +314,8 @@ async def stats_dashboard(request: Request) -> Response:
         return _login_redirect()
     async with SessionLocal() as session:
         stats = await build_stats(session)
-    return _page("统计大盘", _stats_body(stats))
+        ai_daily = await _build_ai_daily_stats(session)
+    return _page("统计大盘", _stats_body(stats) + _ai_daily_table(ai_daily))
 
 
 # ---------- 案件详情 ----------
@@ -485,6 +531,41 @@ def _zh_kind(kind: str) -> str:
     return KIND_ZH.get(kind, kind)
 
 
+def _beijing(naive_utc: Any) -> str:
+    """数据库存 naive UTC，展示转为北京时间。"""
+    return f"{naive_utc + timedelta(hours=8):%m-%d %H:%M:%S}"
+
+
+def _feedback_form_html(
+    record: Any, csrf: str, saved_label: str = "", saved_reason: str = ""
+) -> str:
+    """人工反馈表单；已保存时回显（下拉选中、原因带默认值、按钮为更新）。"""
+    category = _esc(record.category or "other")
+    has_saved = bool(saved_label)
+    options = [
+        ("confirmed_violation", "确认违规"),
+        ("confirmed_normal", "确认正常"),
+        ("false_positive", "误判"),
+        ("unknown_recall", "未知原因撤回"),
+        ("other_recall", "其他原因撤回"),
+    ]
+    sel = "".join(
+        f"<option value={v}{' selected' if v == saved_label else ''}>{t}</option>"
+        for v, t in options
+    )
+    return (
+        '<form method=post action="/admin/feedback" style="display:grid;gap:4px">'
+        f"{csrf}"
+        f'<input type=hidden name=message_id value="{_esc(record.message_id)}">'
+        f'<input type=hidden name=category value="{category}">'
+        f"<select name=label>{sel}</select>"
+        f'<input name=reason list=feedback-reasons value="{_esc(saved_reason)}" '
+        f'data-default="{_esc(saved_reason)}" placeholder="原因，可选" style="width:140px">'
+        + ("<span class=muted>已反馈✓</span>" if has_saved else "")
+        + f"<button class=btn>{'更新反馈' if has_saved else '保存反馈'}</button></form>"
+    )
+
+
 @router.get("/shadow", response_class=HTMLResponse)
 async def shadow_page(request: Request, verdict: str = "") -> Response:
     token = await _require_login(request)
@@ -504,15 +585,23 @@ async def shadow_page(request: Request, verdict: str = "") -> Response:
             select(GroupAlias).where(GroupAlias.group_openid.in_(distinct_groups))
         )
         group_names = {g.group_openid: g.name for g in group_rows.scalars()}
+        # 已保存的人工反馈：用于回显（保存后下拉/原因保持，不再被刷新重置）
+        saved_map: dict[str, tuple[str, str]] = {}
+        if records:
+            from app.moderation.feedback import FeedbackRecord
+
+            fb_rows = await session.execute(
+                select(FeedbackRecord).where(
+                    FeedbackRecord.message_id.in_([r.message_id for r in records])
+                )
+            )
+            for f in fb_rows.scalars():
+                saved_map.setdefault(f.message_id, (f.label, f.reason or ""))
 
     counts: dict[str, int] = {}
     for r in records:
         counts[r.verdict] = counts.get(r.verdict, 0) + 1
     summary = "、".join(f"{_zh_verdict(k)}={v}" for k, v in sorted(counts.items())) or "暂无"
-
-    def _beijing(naive_utc: Any) -> str:
-        """数据库存 naive UTC，展示转为北京时间。"""
-        return f"{naive_utc + timedelta(hours=8):%m-%d %H:%M:%S}"
 
     def _member_display(record: Any) -> str:
         name = _esc(getattr(record, "sender_name", "") or "")
@@ -525,26 +614,13 @@ async def shadow_page(request: Request, verdict: str = "") -> Response:
         return _esc(name) if name else f"<code>{_esc(openid[:10])}…</code>"
 
     def _feedback_form(record: Any) -> str:
-        category = _esc(record.category or "other")
-        return (
-            '<form method=post action="/admin/feedback" style="display:grid;gap:4px">'
-            f"{csrf}"
-            f'<input type=hidden name=message_id value="{_esc(record.message_id)}">'
-            f'<input type=hidden name=category value="{category}">'
-            "<select name=label>"
-            "<option value=confirmed_violation>确认违规</option>"
-            "<option value=confirmed_normal>确认正常</option>"
-            "<option value=false_positive>误判</option>"
-            "<option value=unknown_recall>未知原因撤回</option>"
-            "<option value=other_recall>其他原因撤回</option>"
-            "</select>"
-            '<input name=reason placeholder="原因，可选" style="width:140px">'
-            "<button class=btn>保存反馈</button></form>"
-        )
+        saved_label, saved_reason = saved_map.get(record.message_id, ("", ""))
+        return _feedback_form_html(record, csrf, saved_label, saved_reason)
 
     rows = "".join(
         "<tr>"
-        f"<td>{_esc(_beijing(r.created_at))}</td>"
+        f'<td><a href="/admin/shadow/detail?message_id={quote(r.message_id)}">'
+        f"{_esc(_beijing(r.created_at))}</a></td>"
         f"<td>{_group_display(r.group_openid)}</td>"
         f"<td>{_zh_kind(r.kind)}</td>"
         f"<td>{_zh_verdict(r.verdict)}</td>"
@@ -585,12 +661,182 @@ async def shadow_page(request: Request, verdict: str = "") -> Response:
         "把每个代码对应的群名填一次并保存，之后列表直接显示群名。</div>"
         "<table><tr><th>时间</th><th>群</th><th>类型</th><th>判定</th><th>置信度</th><th>成员（群昵称）</th><th>原因</th><th>人工反馈</th></tr>"
         f"{rows}</table>"
+        # 人工反馈原因预设（datalist：可下拉选择，也可自由填写）
+        "<datalist id=feedback-reasons>"
+        "<option value=广告/引流>"
+        "<option value=诈骗/钓鱼>"
+        "<option value=色情/低俗>"
+        "<option value=违禁品交易>"
+        "<option value=刷屏/灌水>"
+        "<option value=骚扰/辱骂>"
+        "<option value=泄露他人隐私>"
+        "<option value=白名单来源（校园墙等）>"
+        "<option value=正常聊天>"
+        "<option value=规则误判>"
+        "<option value=媒体无法自动判定>"
+        "</datalist>"
         '<div class=card style="margin-top:20px"><h3>群名称备注</h3>'
         "<p class=muted>官方接口只提供群加密OpenID。把下面各OpenID对应的群名填一次，"
         "之后列表将直接显示群名称。</p>"
         f"<table><tr><th>群OpenID</th><th>已备注</th><th>备注操作</th></tr>{group_forms}</table></div>"
     )
-    return _page("影子判定", body)
+    return _page("影子判定", body, refresh_seconds=30)
+
+
+@router.get("/shadow/detail", response_class=HTMLResponse)
+async def shadow_detail(request: Request, message_id: str = "") -> Response:
+    """单条影子判定详情：原文预览、消息段、媒体原件回看、AI取证。"""
+    token = await _require_login(request)
+    if not token:
+        return _login_redirect()
+    csrf = _csrf_field(token)
+    from app.models import GroupAlias
+    from app.runtime.models import ShadowDecision
+
+    back = '<p><a href="/admin/shadow">← 返回影子判定列表</a></p>'
+    async with SessionLocal() as session:
+        record = (
+            (
+                await session.execute(
+                    select(ShadowDecision).where(ShadowDecision.message_id == message_id)
+                )
+            )
+            .scalars()
+            .first()
+        )
+        if record is None:
+            return _page(
+                "影子判定详情",
+                back + "<div class=card><b>未找到该消息的影子记录。</b>"
+                "可能产生于本功能上线前，或已被保留期清理。</div>",
+            )
+        alias = await session.get(GroupAlias, record.group_openid)
+        from app.moderation.feedback import FeedbackRecord
+
+        fb = (
+            (
+                await session.execute(
+                    select(FeedbackRecord).where(FeedbackRecord.message_id == message_id)
+                )
+            )
+            .scalars()
+            .first()
+        )
+
+    try:
+        detail = json.loads(record.detail_json or "{}")
+    except json.JSONDecodeError:
+        detail = {}
+
+    group_name = alias.name if alias else ""
+    member = _esc(
+        getattr(record, "sender_name", "")
+        or record.external_user_id
+        or record.member_openid
+        or "（未知）"
+    )
+
+    # 媒体原件回看（图片直接展示；音视频播放；文件下载）
+    media_parts: list[str] = []
+    for m in detail.get("media_files") or []:
+        name = str(m.get("name") or "")
+        mtype = str(m.get("type") or "")
+        if not name:
+            continue
+        url = "/admin/media/" + quote(name)
+        if mtype.startswith("image/"):
+            media_parts.append(
+                f'<div><img src="{url}" alt="消息图片" style="max-width:480px;'
+                'max-height:480px;border:1px solid #ddd"></div>'
+            )
+        elif mtype.startswith("video/"):
+            media_parts.append(
+                f'<div><video controls src="{url}" style="max-width:480px"></video></div>'
+            )
+        elif mtype == "voice":
+            media_parts.append(f'<div><audio controls src="{url}"></audio></div>')
+        else:
+            media_parts.append(
+                f'<div><a class=btn href="{url}">下载文件（{_esc(name[:24])}）</a></div>'
+            )
+    if not media_parts:
+        media_parts.append(
+            '<p class=muted>本条无媒体，或该记录早于"媒体文件名存档"功能上线'
+            "（30天内原件仍在 data/media/，暂无法逐条对应）。</p>"
+        )
+
+    seg_items = (
+        "".join(
+            f"<li>类型={_esc(str(s.get('kind')))}　内容={_esc(str(s.get('text'))[:120])}</li>"
+            for s in detail.get("segments") or []
+        )
+        or "<li class=muted>无段摘要（早于该功能）</li>"
+    )
+
+    ai_items = (
+        "".join(
+            f"<li>模型={_esc(str(h.get('rule_name')))}　类别={_esc(str(h.get('category')))}　"
+            f"取证（脱敏）={_esc(str(h.get('evidence_masked'))[:200])}</li>"
+            for h in detail.get("rule_hits") or []
+            if str(h.get("rule_id", "")).startswith("AI_")
+        )
+        or "<li class=muted>本条无AI辅助记录</li>"
+    )
+
+    fb_line = (
+        f"<p>已保存反馈：{_esc(fb.label)}　原因：{_esc(fb.reason or '无')}</p>"
+        if fb is not None
+        else "<p class=muted>尚未保存反馈</p>"
+    )
+    text_preview = _esc(str(detail.get("text_preview") or ""))
+
+    body = (
+        f'<p><a href="/admin/shadow">← 返回影子判定列表</a></p><h2>判定详情</h2>'
+        "<div class=card><table>"
+        f"<tr><th>时间</th><td>{_esc(_beijing(record.created_at))}（北京时间）</td></tr>"
+        f"<tr><th>群</th><td>{_esc(group_name or '（未备注）')}　"
+        f"<code>{_esc(record.group_openid[:20])}…</code></td></tr>"
+        f"<tr><th>成员</th><td>{member}</td></tr>"
+        f"<tr><th>类型</th><td>{_zh_kind(record.kind)}</td></tr>"
+        f"<tr><th>判定</th><td><b>{_zh_verdict(record.verdict)}</b>　置信度 {record.confidence}</td></tr>"
+        f"<tr><th>判定原因</th><td>{_esc(record.reason)}</td></tr>"
+        f"</table>{fb_line}</div>"
+        "<div class=card><h3>文字内容</h3>"
+        f"<p>{text_preview or '<span class=muted>（无文字）</span>'}</p>"
+        "<p class=muted>隐私设计：文字仅保留前60字预览，完整原文不留存。</p></div>"
+        f"<div class=card><h3>消息段</h3><ul>{seg_items}</ul></div>"
+        "<div class=card><h3>媒体内容（原件保留30天）</h3>"
+        f"{''.join(media_parts)}</div>"
+        f"<div class=card><h3>AI 取证（脱敏，保留180天）</h3><ul>{ai_items}</ul></div>"
+        "<div class=card><h3>人工反馈</h3>"
+        + _feedback_form_html(
+            record,
+            csrf,
+            fb.label if fb is not None else "",
+            fb.reason if fb is not None else "",
+        )
+        + "</div>"
+    )
+    return _page("影子判定详情", body)
+
+
+@router.get("/media/{name}")
+async def media_file(name: str, request: Request) -> FileResponse:
+    """受保护的媒体原件查看（仅登录管理员；防路径穿越；仅限 data/media/ 内）。"""
+    token = await _require_login(request)
+    if not token:
+        raise HTTPException(status_code=401, detail="login required")
+    from pathlib import Path
+
+    from app.runtime.pipeline import MEDIA_DIR
+
+    safe = Path(name).name
+    if safe != name or not name:
+        raise HTTPException(status_code=404, detail="not found")
+    path = (MEDIA_DIR / safe).resolve()
+    if MEDIA_DIR.resolve() not in path.parents or not path.is_file():
+        raise HTTPException(status_code=404, detail="not found")
+    return FileResponse(path)
 
 
 @router.post("/groups/alias")
@@ -836,46 +1082,77 @@ async def add_rule_item_submit(
     return _rules_notice_redirect(f"已添加规则项#{item.id}")
 
 
+async def _rule_plan_state(session: AsyncSession, version_id: int) -> dict[str, Any]:
+    from app.moderation.dynamic_rules import RuleItem, RuleSet, RuleVersion
+
+    version = await session.get(RuleVersion, version_id, populate_existing=True)
+    if version is None:
+        raise HTTPException(404, "规则版本不存在")
+    rule_set = await session.get(RuleSet, version.rule_set_id)
+    items = (
+        await session.scalars(
+            select(RuleItem).where(RuleItem.version_id == version_id).order_by(RuleItem.id)
+        )
+    ).all()
+    active = (
+        await session.scalars(
+            select(RuleVersion.id)
+            .where(RuleVersion.rule_set_id == version.rule_set_id, RuleVersion.status == "ACTIVE")
+            .order_by(RuleVersion.id)
+        )
+    ).all()
+    return {
+        "version_id": version_id,
+        "version": version.version,
+        "status": version.status,
+        "scope": rule_set.scope if rule_set else "",
+        "scope_key": rule_set.scope_key if rule_set else "",
+        "active_versions": list(active),
+        "items": [
+            {
+                column.name: getattr(item, column.name)
+                for column in RuleItem.__table__.columns
+                if column.name != "created_at"
+            }
+            for item in items
+        ],
+    }
+
+
+async def _preview_rule_change(
+    request: Request, version_id: int, csrf: str, action: str
+) -> Response:
+    token = await _require_admin_post(request, csrf)
+    from app.web.agent_confirm import create_confirmation
+
+    async with SessionLocal() as session:
+        state = await _rule_plan_state(session, version_id)
+        if action == "rule_publish" and state["status"] != "DRAFT":
+            raise HTTPException(409, "只能预览发布草稿规则")
+        if action == "rule_rollback" and state["status"] not in ("ACTIVE", "ARCHIVED"):
+            raise HTTPException(409, "只能回滚到已发布的历史规则")
+        plan = await create_confirmation(
+            session,
+            action=action,
+            params={"version_id": version_id},
+            expected_state=state,
+            requestor=_human_actor(token),
+        )
+    return RedirectResponse(f"/admin/plans/{plan.id}", status_code=303)
+
+
 @router.post("/rules/versions/{version_id}/publish")
 async def publish_rule_version_submit(
     request: Request, version_id: int, csrf: str = Form("")
 ) -> Response:
-    await _require_admin_post(request, csrf)
-    operator = await _operator(request)
-    from app.moderation.dynamic_rules import publish_rule_version
-
-    try:
-        async with SessionLocal() as session:
-            version = await publish_rule_version(session, version_id, operator=operator)
-        await record_admin_audit(
-            operator, "rule_publish", "rule_version", str(version.id), {"version": version.version}
-        )
-    except ValueError as exc:
-        return _rules_notice_redirect(str(exc))
-    return _rules_notice_redirect(f"已发布规则版本#{version.id}")
+    return await _preview_rule_change(request, version_id, csrf, "rule_publish")
 
 
 @router.post("/rules/versions/{version_id}/rollback")
 async def rollback_rule_version_submit(
     request: Request, version_id: int, csrf: str = Form("")
 ) -> Response:
-    await _require_admin_post(request, csrf)
-    operator = await _operator(request)
-    from app.moderation.dynamic_rules import rollback_to_version
-
-    try:
-        async with SessionLocal() as session:
-            version = await rollback_to_version(session, version_id, operator=operator)
-        await record_admin_audit(
-            operator,
-            "rule_rollback",
-            "rule_version",
-            str(version.id),
-            {"version": version.version},
-        )
-    except ValueError as exc:
-        return _rules_notice_redirect(str(exc))
-    return _rules_notice_redirect(f"已回滚到规则版本#{version.id}")
+    return await _preview_rule_change(request, version_id, csrf, "rule_rollback")
 
 
 # ---------- 反馈学习 ----------
@@ -1003,7 +1280,8 @@ async def mine_feedback_submit(request: Request, csrf: str = Form("")) -> Respon
     from app.moderation.feedback import mine_rule_candidates
 
     async with SessionLocal() as session:
-        candidates = await mine_rule_candidates(session)
+        # 负责人确认：确认即真值，门槛降至1条即学（不再需要≥3条×≥2人）
+        candidates = await mine_rule_candidates(session, min_messages=3, min_members=2)
     await record_admin_audit(
         operator, "feedback_mine_candidates", "rule_candidate", "batch", {"count": len(candidates)}
     )
@@ -1071,3 +1349,771 @@ async def cleanup_now(request: Request, csrf: str = Form("")) -> RedirectRespons
         await purge_expired(session)
     await record_admin_audit(await _operator(request), "cleanup_now", "retention", "manual")
     return RedirectResponse("/admin/reports", status_code=303)
+
+
+# ---------- 群管理（P0：按群审核/动作开关） ----------
+
+
+async def _ensure_action_routes(
+    session: AsyncSession, group_openid: str, provider: str = "", *, commit: bool = True
+) -> list[str]:
+    """动作开启时按该群已见消息来源补齐同通道路由（T-307/P1-8）。
+
+    P1-8修复：同群只能有一个动作出口。仅当该群只有一个消息来源 provider
+    时自动补齐路由；有多个候选 provider 时拒绝自动路由，要求管理员显式选择。
+    """
+    from app.core.group_settings import resolve_group_identity
+    from app.core.routing import upsert_group_route
+
+    provider = await resolve_group_identity(session, group_openid, provider)
+    await upsert_group_route(
+        session,
+        group_openid,
+        message_provider=provider,
+        action_provider=provider,
+        commit=commit,
+    )
+    return [provider]
+
+
+@router.get("/groups", response_class=HTMLResponse)
+async def groups_page(request: Request, notice: str = "") -> Response:
+    """Provider-qualified controls with an explicit, human-approved action owner."""
+    token = await _require_login(request)
+    if not token:
+        return _login_redirect()
+    csrf = _csrf_field(token)
+    from app.core.emergency_stop import emergency_stop_active
+    from app.models import GroupActionOwner, ProviderGroupSettings
+    from app.runtime.models import ShadowDecision
+
+    async with SessionLocal() as session:
+        seen = {
+            tuple(row)
+            for row in (
+                await session.execute(
+                    select(ShadowDecision.provider, ShadowDecision.external_group_id).distinct()
+                )
+            ).all()
+        }
+        settings_rows = (await session.scalars(select(ProviderGroupSettings))).all()
+        settings_map = {(row.provider, row.external_group_id): row for row in settings_rows}
+        seen.update(settings_map)
+        owners = {
+            row.external_group_id: row.provider
+            for row in (await session.scalars(select(GroupActionOwner))).all()
+        }
+        stopped = await emergency_stop_active(session)
+    rows = []
+    for provider, group in sorted(seen):
+        if not group:
+            continue
+        gs = settings_map.get((provider, group))
+        rows.append(
+            f"<tr><td>{_esc(provider)}<br><code>{_esc(group)}</code></td>"
+            f"<td>{_esc(owners.get(group) or '未选择 / 有歧义')}</td><td>"
+            f'<form method=post action="/admin/groups/settings">{csrf}'
+            f'<input type=hidden name=provider value="{_esc(provider)}">'
+            f'<input type=hidden name=group_openid value="{_esc(group)}">'
+            f'<label>群备注 <input name=name maxlength=64 value="{_esc(gs.name if gs else "")}"></label> '
+            f"<label><input type=checkbox name=moderation_enabled value=1 {'checked' if gs is None or gs.moderation_enabled else ''}>审核</label> "
+            f"<label><input type=checkbox name=action_enabled value=1 {'checked' if gs and gs.action_enabled else ''}>真实动作</label> "
+            "<button class=btn>保存 / 预览高风险变更</button></form></td></tr>"
+        )
+    body = (
+        "<h2>群管理</h2><p>群设置按来源和群 ID 隔离。开启真实动作或改变出口需预览并由登录管理员确认；"
+        "选择出口会关闭同 ID 其他来源的动作。不同通道 ID 不做猜测映射。</p>"
+        f"<div role=status>{_esc(notice)}</div>"
+        f"<div class=card><strong>急停：{'已开启，禁止外部动作' if stopped else '未开启'}</strong>"
+        f'<form method=post action="/admin/emergency-stop">{csrf}'
+        '<button class="btn danger">立即停止全部外部动作</button></form>'
+        f'<form method=post action="/admin/emergency-resume">{csrf}'
+        "<button class=btn>预览解除急停</button></form></div>"
+        "<table><tr><th>群身份</th><th>唯一动作出口</th><th>设置</th></tr>"
+        + ("".join(rows) or "<tr><td colspan=3>暂无群消息。可在下方明确添加群来源。</td></tr>")
+        + f'</table><div class=card><h3>添加明确的群身份</h3><form method=post action="/admin/groups/settings">{csrf}'
+        "<label>来源 <select name=provider><option value=onebot>onebot</option>"
+        "<option value=qq_official>qq_official</option></select></label> "
+        "<label>群 ID <input name=group_openid required maxlength=128></label> "
+        "<label>群备注 <input name=name maxlength=64></label> "
+        "<input type=hidden name=moderation_enabled value=1>"
+        "<button class=btn>添加（仅审核，动作关闭）</button></form></div>"
+    )
+    return _page("群管理", body)
+
+
+@router.post("/groups/settings")
+async def save_group_settings(
+    request: Request,
+    group_openid: str = Form(""),
+    provider: str = Form(""),
+    name: str = Form(""),
+    moderation_enabled: str = Form(""),
+    action_enabled: str = Form(""),
+    csrf: str = Form(""),
+) -> Response:
+    session_token = await _require_admin_post(request, csrf)
+    actor = _human_actor(session_token)
+    try:
+        result = await _save_or_plan_group(
+            group_openid,
+            provider=provider,
+            name=name,
+            moderation_enabled=moderation_enabled == "1",
+            action_enabled=action_enabled == "1",
+            actor=actor,
+        )
+    except HTTPException as exc:
+        return _page(
+            "无法保存群设置",
+            f'<p role=alert>{_esc(str(exc.detail))}</p><a href="/admin/groups">返回群管理</a>',
+        )
+    if result.get("confirmation_required"):
+        return RedirectResponse(str(result["approval_url"]), status_code=303)
+    return RedirectResponse("/admin/groups?notice=" + quote("设置已保存"), status_code=303)
+
+
+# ---------- 系统设置（保留期/清理/备份） ----------
+
+
+@router.get("/settings", response_class=HTMLResponse)
+async def settings_page(request: Request, notice: str = "") -> Response:
+    """系统设置：保留期、清理、备份、存储路径。"""
+    token = await _require_login(request)
+    if not token:
+        return _login_redirect()
+    csrf = _csrf_field(token)
+    from app.config import get_settings
+
+    settings = get_settings()
+    async with SessionLocal() as session:
+        from app.models import SystemSetting
+
+        auto_cleanup = await session.get(SystemSetting, "auto_cleanup_enabled")
+        last_cleanup = await session.get(SystemSetting, "last_cleanup_at")
+        cleanup_status = await session.get(SystemSetting, "last_cleanup_status")
+    auto_on = (auto_cleanup.value if auto_cleanup else "0") == "1"
+    last_cleanup_text = last_cleanup.value if last_cleanup else "无执行记录"
+    cleanup_status_text = cleanup_status.value if cleanup_status else "未验证任务计划"
+
+    notice_html = (
+        f'<div class=card style="border-color:#16804b">{_esc(notice)}</div>' if notice else ""
+    )
+    body = (
+        "<h2>系统设置</h2>"
+        f"{notice_html}"
+        "<div class=card><h3>数据保留期（来自 .env，修改需重启）</h3>"
+        f"<p>原始消息/媒体：<b>{settings.raw_retention_days}</b> 天　"
+        f"判定/反馈/动作记录：<b>{settings.decision_retention_days}</b> 天</p></div>"
+        "<div class=card><h3>存储路径</h3>"
+        "<p>数据库位置由本机DATABASE_URL配置决定；备份存放在数据库同级backups目录。</p></div>"
+        "<div class=card><h3>数据清理</h3>"
+        f"<p>计划清理许可：{'已允许' if auto_on else '未允许'}。此开关不会创建Windows计划任务。</p>"
+        "<p class=muted>需在本机配置每6小时执行 uv run python -m app.reports.maintenance cleanup，并核对最近结果；程序未内置定时线程。</p>"
+        f"<p>最近尝试（UTC）：{_esc(last_cleanup_text)}；结果：{_esc(cleanup_status_text)}</p>"
+        f'<form method=post action="/admin/settings/auto-cleanup" style="display:inline">{csrf}'
+        f"<button class=btn>{'关闭自动清理' if auto_on else '开启自动清理'}</button></form>"
+        f'<form method=post action="/admin/cleanup" style="display:inline;margin-left:12px">{csrf}'
+        "<button class=btn>立即执行清理</button></form></div>"
+        "<div class=card><h3>数据库备份</h3>"
+        f'<form method=post action="/admin/settings/backup">{csrf}'
+        "<button class=btn>创建一致性数据库备份</button></form>"
+        "<p class=muted>包含已提交WAL记录；不包含媒体文件和本机凭据。备份含私密数据，请限制访问并另外保管异机副本。</p></div>"
+    )
+    return _page("系统设置", body)
+
+
+@router.post("/settings/auto-cleanup")
+async def toggle_auto_cleanup(request: Request, csrf: str = Form("")) -> RedirectResponse:
+    await _require_admin_post(request, csrf)
+    async with SessionLocal() as session:
+        from app.models import SystemSetting
+
+        s = await session.get(SystemSetting, "auto_cleanup_enabled")
+        if s is None:
+            from app.models import SystemSetting
+
+            s = SystemSetting(key="auto_cleanup_enabled", value="0")
+            session.add(s)
+        s.value = "0" if s.value == "1" else "1"
+        await session.commit()
+    await record_admin_audit(
+        await _operator(request),
+        "auto_cleanup_toggle",
+        "system",
+        "cleanup",
+        {"enabled": s.value == "1"},
+    )
+    return RedirectResponse(
+        f"/admin/settings?notice=自动清理已{'开启' if s.value == '1' else '关闭'}", status_code=303
+    )
+
+
+@router.post("/settings/backup")
+async def backup_db(request: Request, csrf: str = Form("")) -> RedirectResponse:
+    await _require_admin_post(request, csrf)
+    import asyncio
+
+    from app.reports.backup import backup_sqlite
+
+    try:
+        dest = await asyncio.to_thread(backup_sqlite, get_settings().database_url)
+    except Exception as exc:
+        await record_admin_audit(
+            await _operator(request),
+            "db_backup_failed",
+            "system",
+            "backup",
+            {"error_kind": type(exc).__name__},
+        )
+        raise HTTPException(503, "备份未完成，请检查数据库、磁盘和权限；不能用此结果交付") from exc
+    msg = f"已完成一致性备份：{dest.name}（未包含媒体文件）"
+    await record_admin_audit(
+        await _operator(request),
+        "db_backup",
+        "system",
+        "backup",
+        {"filename": dest.name, "integrity_check": "ok", "includes_media": False},
+    )
+    return RedirectResponse(f"/admin/settings?notice={_esc(msg)}", status_code=303)
+
+
+# ---------- AI 消费面板（扩展统计页） ----------
+
+
+async def _build_ai_daily_stats(session: AsyncSession, days: int = 7) -> list[dict[str, Any]]:
+    """UTC日窗口：实际外呼、缓存和本地拒绝分开，未定价不能显示免费。"""
+    from datetime import UTC, datetime, timedelta
+
+    from app.moderation.ai import AIUsageLog, summarize_ai_usage
+
+    today = datetime.now(UTC).replace(hour=0, minute=0, second=0, microsecond=0)
+    cutoff = today - timedelta(days=max(1, days) - 1)
+
+    rows = (
+        (
+            await session.execute(
+                select(AIUsageLog)
+                .where(
+                    AIUsageLog.created_at >= cutoff,
+                    AIUsageLog.created_at < today + timedelta(days=1),
+                )
+                .order_by(AIUsageLog.created_at.desc())
+            )
+        )
+        .scalars()
+        .all()
+    )
+    per_day: dict[str, dict[str, Any]] = {}
+    for r in rows:
+        day = r.created_at.strftime("%Y-%m-%d")
+        d = per_day.setdefault(day, {"calls": 0, "ok": 0, "latency": []})
+        if r.source.startswith("cache") or r.error_kind == "ai_rate_or_budget_limited":
+            continue
+        d["calls"] += 1
+        d["ok"] += 1 if r.ok else 0
+        d["latency"].append(r.latency_ms or 0)
+    result = []
+    for day in sorted(per_day, reverse=True)[:days]:
+        d = per_day[day]
+        start = datetime.strptime(day, "%Y-%m-%d").replace(tzinfo=UTC)
+        usage = await summarize_ai_usage(session, since=start, until=start + timedelta(days=1))
+        avg = sum(d["latency"]) / len(d["latency"]) if d["latency"] else 0
+        result.append(
+            {
+                "day": day,
+                "calls": d["calls"],
+                "ok": d["ok"],
+                "fail": d["calls"] - d["ok"],
+                "cost_yuan": None,
+                "cost_known": False,
+                **usage,
+                "avg_latency_ms": round(avg, 0),
+            }
+        )
+    return result
+
+
+# ---------- 管理 REST API（AI Agent 对接） ----------
+
+# P0-1: REST API 权限范围
+_API_SCOPES = {
+    "project:read",
+    "settings:write",
+    "rules:publish",
+    "rules:rollback",
+    "actions:enable",
+    "routing:write",
+    "emergency:stop",
+}
+
+
+def _require_api_token(request: Request, *, scope: str = "project:read") -> str | None:
+    """REST API鉴权（P0-1修复）。
+
+    - Cookie session: 必须通过 ``auth.is_valid`` 验证（修复伪造Cookie绕过）；
+    - Bearer token: 与 ADMIN_PASSWORD 分离，使用独立 AGENT_API_TOKEN + 常量时间比较；
+    - Cookie 发起 POST 写操作必须有 CSRF token；
+    - 未授权返回 None（调用方返回 HTTP 401/403）。
+    """
+    settings = get_settings()
+    if scope not in _API_SCOPES:
+        raise HTTPException(403, "unknown permission scope")
+    cookie_token = request.cookies.get(auth.SESSION_COOKIE)
+    if cookie_token:
+        # P0-1 修复：必须验证 session 有效性，不接受任意非空字符串
+        if not auth.is_valid(cookie_token):
+            return None
+        # Cookie POST 写操作必须有 CSRF
+        if request.method in ("POST", "PUT", "PATCH", "DELETE"):
+            submitted = request.headers.get("x-csrf-token") or ""
+            if not submitted:
+                # 也接受 form 字段
+                try:
+                    form = request.scope.get("_form")
+                    if form is not None:
+                        submitted = form.get("csrf", "")
+                except Exception:  # noqa: BLE001
+                    pass
+            if not auth.validate_csrf(cookie_token, submitted):
+                raise HTTPException(403, "CSRF token required for cookie-originated write")
+        return _human_actor(cookie_token)
+    # Bearer token: 独立 AGENT_API_TOKEN，常量时间比较
+    auth_header = request.headers.get("authorization") or ""
+    if auth_header.lower().startswith("bearer "):
+        token = auth_header[7:].strip()
+        if settings.agent_api_read_token and secrets.compare_digest(
+            token, settings.agent_api_read_token
+        ):
+            if scope != "project:read":
+                raise HTTPException(403, "read-only credential cannot write")
+            return "agent:read:" + sha256(token.encode()).hexdigest()[:16]
+        if settings.agent_api_token and secrets.compare_digest(token, settings.agent_api_token):
+            if scope not in {value.strip() for value in settings.agent_api_write_scopes.split(",")}:
+                raise HTTPException(403, "credential lacks required scope")
+            return "agent:write:" + sha256(token.encode()).hexdigest()[:16]
+    return None
+
+
+def _human_actor(session_token: str) -> str:
+    return (
+        "human:"
+        + get_settings().admin_username[:20]
+        + ":"
+        + sha256(session_token.encode()).hexdigest()[:16]
+    )
+
+
+def _api_unauthorized_response() -> dict[str, object]:
+    return {"error": "unauthorized"}
+
+
+def _require_api_auth(request: Request, *, scope: str = "project:read") -> str:
+    """鉴权失败直接 raise 401；成功返回 token 标识。"""
+    token = _require_api_token(request, scope=scope)
+    if token is None:
+        raise HTTPException(401, "authentication required", headers={"WWW-Authenticate": "Bearer"})
+    return token
+
+
+@router.get("/api/status")
+async def api_status(request: Request) -> dict[str, object]:
+    """综合状态：进程、OneBot、判定统计（AI Agent 对接用）。"""
+    _require_api_auth(request, scope="project:read")
+    from app.runtime.onebot_ws import onebot_status
+
+    async with SessionLocal() as session:
+        from app.reports.stats import build_stats
+
+        stats = await build_stats(session)
+    return {
+        "status": "ok",
+        "onebot": onebot_status.snapshot(include_sensitive=False),
+        "stats": stats["totals"],
+        "generated_at": stats["generated_at"],
+    }
+
+
+@router.get("/api/groups")
+async def api_groups(request: Request) -> list[dict[str, Any]]:
+    _require_api_auth(request, scope="project:read")
+    from app.models import ProviderGroupSettings
+
+    async with SessionLocal() as session:
+        rows = (await session.scalars(select(ProviderGroupSettings))).all()
+        return [_group_response(row) for row in rows]
+
+
+def _group_response(gs: Any) -> dict[str, Any]:
+    return {
+        "provider": gs.provider,
+        "external_group_id": gs.external_group_id,
+        "group_openid": gs.external_group_id,
+        "name": gs.name,
+        "moderation_enabled": gs.moderation_enabled,
+        "action_enabled": gs.action_enabled,
+        "version": gs.version,
+    }
+
+
+async def _group_state(session: AsyncSession, provider: str, group_id: str) -> dict[str, Any]:
+    from app.core.routing import GroupProviderRoute
+    from app.models import GroupActionOwner, ProviderGroupSettings
+
+    gs = await session.get(ProviderGroupSettings, (provider, group_id), populate_existing=True)
+    owner = await session.get(GroupActionOwner, group_id, populate_existing=True)
+    routes = (
+        await session.execute(
+            select(
+                GroupProviderRoute.message_provider,
+                GroupProviderRoute.action_provider,
+            )
+            .where(GroupProviderRoute.external_group_id == group_id)
+            .order_by(GroupProviderRoute.message_provider)
+        )
+    ).all()
+    return {
+        "settings": _group_response(gs) if gs else None,
+        "owner": owner.provider if owner else None,
+        "routes": [list(row) for row in routes],
+    }
+
+
+async def _apply_group_change(
+    session: AsyncSession,
+    params: dict[str, Any],
+    *,
+    actor: str,
+    expected: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    from app.core.group_settings import get_or_create_group_settings
+    from app.models import ProviderGroupSettings
+    from app.web.agent_confirm import canonical
+
+    provider, group = params["provider"], params["external_group_id"]
+    before = await _group_state(session, provider, group)
+    if expected is not None and canonical(before) != canonical(expected):
+        raise HTTPException(409, "设置或出口已改变，请重新预览和批准")
+    gs = await get_or_create_group_settings(session, group, provider=provider)
+    version = gs.version
+    values: dict[str, Any] = {"version": version + 1}
+    for name in ("name", "moderation_enabled", "action_enabled"):
+        if params[name] is not None:
+            values[name] = params[name]
+    changed = await session.execute(
+        update(ProviderGroupSettings)
+        .where(
+            ProviderGroupSettings.provider == provider,
+            ProviderGroupSettings.external_group_id == group,
+            ProviderGroupSettings.version == version,
+        )
+        .values(**values)
+    )
+    if changed.rowcount != 1:  # type: ignore[attr-defined]
+        raise HTTPException(409, "并发修改冲突，请重新预览")
+    routed: list[str] = []
+    if _needs_action_confirmation(before, params):
+        routed = await _ensure_action_routes(session, group, provider, commit=False)
+    # Legacy table is rollback-only. Disable its action bit even for a new write,
+    # so reverting binaries never resurrects an old provider-ambiguous approval.
+    from app.models import GroupSettings
+
+    await session.execute(
+        update(GroupSettings)
+        .where(GroupSettings.group_openid == group)
+        .values(action_enabled=False)
+    )
+    session.add(
+        AdminAudit(
+            operator=actor,
+            action="group_settings_save",
+            target_type="group",
+            target_id=group,
+            detail_json=canonical(
+                {"params": params, "before": before, "auto_routed_providers": routed}
+            ),
+        )
+    )
+    await session.flush()
+    await session.refresh(gs)
+    return {**_group_response(gs), "auto_routed_providers": routed}
+
+
+def _plan_response(plan: Any) -> dict[str, Any]:
+    return {
+        "confirmation_required": True,
+        "confirmation_token": plan.id,
+        "plan_id": plan.id,
+        "summary": plan.action,
+        "params": json.loads(plan.params_json),
+        "expected_state": json.loads(plan.expected_state_json),
+        "status": plan.status,
+        "approval_url": f"/admin/plans/{plan.id}",
+        "expires_at": plan.expires_at.isoformat(),
+        "expires_in_seconds": 300,
+        "message": "请由真人登录管理后台检查并批准；Agent 自己重发令牌不能批准。",
+    }
+
+
+def _needs_action_confirmation(before: dict[str, Any], params: dict[str, Any]) -> bool:
+    settings = before.get("settings") or {"moderation_enabled": True, "action_enabled": False}
+    action_after = (
+        settings["action_enabled"] if params["action_enabled"] is None else params["action_enabled"]
+    )
+    moderation_after = (
+        settings["moderation_enabled"]
+        if params["moderation_enabled"] is None
+        else params["moderation_enabled"]
+    )
+    was_active = settings["action_enabled"] and settings["moderation_enabled"]
+    return params["action_enabled"] is True or (
+        not was_active and action_after and moderation_after
+    )
+
+
+async def _save_or_plan_group(
+    group_id: str,
+    *,
+    provider: str,
+    name: str | None,
+    moderation_enabled: bool | None,
+    action_enabled: bool | None,
+    actor: str,
+    confirm_token: str = "",
+    api_request: Request | None = None,
+) -> dict[str, Any]:
+    from app.core.group_settings import resolve_group_identity
+    from app.web.agent_confirm import create_confirmation
+
+    async with SessionLocal() as session:
+        # Authorization and transition detection share the write transaction;
+        # an enabled flag cannot change between the scope check and this write.
+        await session.execute(text("BEGIN IMMEDIATE"))
+        try:
+            provider = await resolve_group_identity(session, group_id, provider)
+        except ValueError as exc:
+            raise HTTPException(422 if provider else 409, str(exc)) from exc
+        params = {
+            "provider": provider,
+            "external_group_id": group_id,
+            "name": name.strip()[:64] if name is not None else None,
+            "moderation_enabled": moderation_enabled,
+            "action_enabled": action_enabled,
+        }
+        before = await _group_state(session, provider, group_id)
+        needs_confirmation = _needs_action_confirmation(before, params)
+        if needs_confirmation and api_request is not None:
+            _require_api_auth(api_request, scope="actions:enable")
+            _require_api_auth(api_request, scope="routing:write")
+        if confirm_token:
+            return await _execute_plan(
+                session, confirm_token, actor=actor, action="group_settings", params=params
+            )
+        if needs_confirmation:
+            plan = await create_confirmation(
+                session,
+                action="group_settings",
+                params=params,
+                expected_state=before,
+                requestor=actor,
+            )
+            return _plan_response(plan)
+        result = await _apply_group_change(session, params, actor=actor)
+        await session.commit()
+        return result
+
+
+@router.post("/api/groups/{group_openid}/settings", response_model=None)
+async def api_group_settings(
+    request: Request,
+    group_openid: str,
+    provider: str = "",
+    moderation_enabled: bool | None = None,
+    action_enabled: bool | None = None,
+    name: str | None = None,
+    confirm_token: str = "",
+) -> dict[str, Any] | JSONResponse:
+    actor = _require_api_auth(request, scope="settings:write")
+    if action_enabled is True:
+        _require_api_auth(request, scope="actions:enable")
+        _require_api_auth(request, scope="routing:write")
+    result = await _save_or_plan_group(
+        group_openid,
+        provider=provider,
+        name=name,
+        moderation_enabled=moderation_enabled,
+        action_enabled=action_enabled,
+        actor=actor,
+        confirm_token=confirm_token,
+        api_request=request,
+    )
+    return JSONResponse(result, status_code=202) if result.get("confirmation_required") else result
+
+
+async def _execute_plan(
+    session: AsyncSession,
+    plan_id: str,
+    *,
+    actor: str,
+    action: str | None = None,
+    params: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    from app.web.agent_confirm import canonical, claim_confirmation
+
+    plan = await claim_confirmation(session, plan_id, requestor=actor, action=action, params=params)
+    if plan is None:
+        raise HTTPException(403, "计划未经真人批准、已过期、已消费或身份/参数不匹配")
+    actual = json.loads(plan.params_json)
+    expected = json.loads(plan.expected_state_json)
+    try:
+        # SQLite is the supported deployment store. Lock before comparing the
+        # preview and applying it, so a concurrent draft edit/route switch cannot
+        # slip between the human-approved snapshot and the mutation.
+        await session.execute(text("BEGIN IMMEDIATE"))
+        if plan.action == "group_settings":
+            result = await _apply_group_change(session, actual, actor=actor, expected=expected)
+        elif plan.action == "emergency_resume":
+            from app.core.emergency_stop import emergency_stop_state, set_emergency_stop
+
+            if await emergency_stop_state(session) != expected:
+                raise HTTPException(409, "急停状态已改变，请重新预览")
+            if get_settings().emergency_stop:
+                raise HTTPException(409, "环境 EMERGENCY_STOP 仍开启，不能通过后台解除")
+            await set_emergency_stop(session, False, actor=actor)
+            result = {"emergency_stop": False}
+        elif plan.action in ("rule_publish", "rule_rollback"):
+            current = await _rule_plan_state(session, actual["version_id"])
+            if canonical(current) != canonical(expected):
+                raise HTTPException(409, "规则或生效版本已改变，请重新预览")
+            from app.moderation.dynamic_rules import publish_rule_version, rollback_to_version
+
+            operation = (
+                publish_rule_version if plan.action == "rule_publish" else rollback_to_version
+            )
+            version = await operation(session, actual["version_id"], operator=actor)
+            result = {"version_id": version.id, "status": version.status}
+        else:
+            raise HTTPException(422, "不支持的计划")
+        plan.status = "EXECUTED"
+        session.add(
+            AdminAudit(
+                operator=actor,
+                action="plan_execute",
+                target_type="admin_plan",
+                target_id=plan.id,
+                detail_json=canonical({"approved_by": plan.approved_by, "action": plan.action}),
+            )
+        )
+        await session.commit()
+        return result
+    except Exception as exc:
+        await session.rollback()
+        plan = await session.get(type(plan), plan_id, populate_existing=True)
+        if plan is not None:
+            plan.status = "FAILED"
+            await session.commit()
+        if isinstance(exc, ValueError):
+            raise HTTPException(409, str(exc)) from exc
+        raise
+
+
+@router.get("/plans/{plan_id}", response_class=HTMLResponse)
+async def plan_page(request: Request, plan_id: str) -> Response:
+    token = await _require_login(request)
+    if not token:
+        return _login_redirect()
+    from app.models import AdminChangePlan
+
+    async with SessionLocal() as session:
+        plan = await session.get(AdminChangePlan, plan_id)
+        if plan is None:
+            raise HTTPException(404, "计划不存在")
+    body = (
+        "<h2>确认具体管理变更</h2><p>请人工核对来源、群 ID、完整参数及当前版本。确认后不能改变参数；5 分钟内仅执行一次。</p>"
+        f"<p>发起身份：{_esc(plan.requestor)}；状态：{_esc(plan.status)}；操作：{_esc(plan.action)}</p>"
+        f"<h3>完整计划</h3><pre>{_esc(plan.params_json)}</pre>"
+        f"<h3>预览时状态 / 版本</h3><pre>{_esc(plan.expected_state_json)}</pre>"
+    )
+    if plan.status == "PENDING":
+        body += f'<form method=post action="/admin/plans/{_esc(plan.id)}/approve">{_csrf_field(token)}<button class="btn danger">我已人工核对，批准此计划</button></form>'
+    elif plan.status == "APPROVED" and plan.requestor == _human_actor(token):
+        body += f'<form method=post action="/admin/plans/{_esc(plan.id)}/execute">{_csrf_field(token)}<button class="btn danger">执行已批准的完整计划</button></form>'
+    elif plan.status == "APPROVED":
+        body += "<p>已批准。由发起该计划的 Agent 在有效期内执行。</p>"
+    return _page("管理计划", body)
+
+
+@router.post("/plans/{plan_id}/approve")
+async def approve_plan(request: Request, plan_id: str, csrf: str = Form("")) -> Response:
+    token = await _require_admin_post(request, csrf)
+    from app.web.agent_confirm import approve_confirmation
+
+    async with SessionLocal() as session:
+        if not await approve_confirmation(session, plan_id, human=_human_actor(token)):
+            raise HTTPException(409, "计划已过期或已处理，请重新预览")
+    return RedirectResponse(f"/admin/plans/{plan_id}", status_code=303)
+
+
+@router.post("/plans/{plan_id}/execute")
+async def execute_human_plan(request: Request, plan_id: str, csrf: str = Form("")) -> Response:
+    token = await _require_admin_post(request, csrf)
+    async with SessionLocal() as session:
+        await _execute_plan(session, plan_id, actor=_human_actor(token))
+    return RedirectResponse(f"/admin/plans/{plan_id}", status_code=303)
+
+
+@router.get("/api/plans/{plan_id}")
+async def api_plan(request: Request, plan_id: str) -> dict[str, Any]:
+    actor = _require_api_auth(request)
+    from app.models import AdminChangePlan
+
+    async with SessionLocal() as session:
+        plan = await session.get(AdminChangePlan, plan_id)
+        if plan is None or plan.requestor != actor:
+            raise HTTPException(404, "计划不存在")
+        return _plan_response(plan)
+
+
+@router.post("/api/emergency-stop")
+async def api_emergency_stop(request: Request) -> dict[str, bool]:
+    actor = _require_api_auth(request, scope="emergency:stop")
+    from app.core.emergency_stop import set_emergency_stop
+
+    async with SessionLocal() as session:
+        await set_emergency_stop(session, True, actor=actor)
+    return {"emergency_stop": True}
+
+
+@router.post("/emergency-stop")
+async def human_emergency_stop(request: Request, csrf: str = Form("")) -> Response:
+    token = await _require_admin_post(request, csrf)
+    from app.core.emergency_stop import set_emergency_stop
+
+    async with SessionLocal() as session:
+        await set_emergency_stop(session, True, actor=_human_actor(token))
+    return RedirectResponse("/admin/groups", status_code=303)
+
+
+@router.post("/emergency-resume")
+async def human_emergency_resume(request: Request, csrf: str = Form("")) -> Response:
+    token = await _require_admin_post(request, csrf)
+    from app.core.emergency_stop import emergency_stop_state
+    from app.web.agent_confirm import create_confirmation
+
+    async with SessionLocal() as session:
+        plan = await create_confirmation(
+            session,
+            action="emergency_resume",
+            params={"active": False},
+            expected_state=await emergency_stop_state(session),
+            requestor=_human_actor(token),
+        )
+    return RedirectResponse(f"/admin/plans/{plan.id}", status_code=303)
+
+
+@router.get("/api/stats/ai")
+async def api_ai_stats(request: Request) -> list[dict[str, Any]]:
+    """每日AI调用统计（AI Agent 对接用）。"""
+    _require_api_auth(request, scope="project:read")
+    async with SessionLocal() as session:
+        return await _build_ai_daily_stats(session)

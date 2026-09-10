@@ -1,6 +1,65 @@
 # Agent交接记录
 
+## 当前交接：2026-09-10，PR #5 R-105主审整改
+
+本次主审从PR首轮 `6304d35` 在隔离工作树修复，未覆盖原工作树。最终本地集成门禁与两轴复核通过；远程CI及合并SHA以PR新评论为准。本轮验证详见本节与 `docs/pr5-r105-acceptance.md`，不采信下面历史数字为本轮结论。
+
+已处理原10项复验中的缺陷，并实现剩余代码项#9 provider设置迁移、#10账号绑定、#12持久接收；#16 PR边界与#17文档随本轮交付。条件双模型保留，疑难复核失败不自动处罚；完整真人审批、DB急停、唯一动作出口、下载防SSRF与超时、幂等领取、人工标签撤销有效违规、WAL一致备份、维护CLI及独立评测CLI均有回归测试。完整逐项表见验收报告。
+
+仍未关闭：P1-13 Windows T-303原件/脱敏证据、P1-14真实独立W2效果。历史937条、服务恢复等是实施方自述，主审没有访问那台Windows电脑，不得补造证据。动作仍默认SHADOW、OneBot关闭、阶段recall_only；合并/重启不代表可自动全开。没有执行QQ动作、没有自动踢人。
+
+Windows Agent从 `docs/windows-delivery-checklist.md` 开始：查实际部署与本机修改→急停/关闭动作→一致备份→固定合并SHA→锁定依赖/迁移→W0/W1→真实SHADOW效果与临时DB假动作回放W2→负责人明确授权的隔离W3→恢复W4→目标群灰度W5。真实SHADOW本来就不累计处罚或生成处罚案件，不要为此偷开动作。只能在实际服务停止后恢复备份，并核对旧记录与真实QQ状态，未知结果不得重发。
+
+本轮迁移head `c2e4f6a8b010`：保留历史表及旧字段、清除旧动作授权；升级后逐群重新由真人批准。SQLite是首版受验数据方案；单Web/OneBot实例，禁止多worker，非当前使用的官方运行器不应同时启动。维护CLI已实现但Windows任务计划尚未注册/实测；后台通知仍不是主动推送，客户需明确接管人、渠道与响应目标，未完成不能按无人值守服务签收。
+
+本轮验证记录：完整pytest **556通过/1跳过/1个旧datetime弃用警告（103.60s）**；mypy71源文件、ruff check、format144文件、diff检查通过；临时库完整升降级与metadata一致性、旧授权安全迁移、干净仅运行时安装/导入且pytest缺失均通过。最终同成员动作链顺序亦经独立probe复验；GitHub Ubuntu/Windows/干净运行时三项以本轮最终head的PR评论与检查结果为准。跳过本地私有媒体样本，不能宣称真实模型或真机覆盖。
+
+## 历史实施报告（保留来源，以下“当前”仅指当时）
+
+R-105远程平台补验：首轮本轮CI `34447804238` Windows因fcntl静态分支判定失败而未合并；已改用sys.platform并移除Any绕行。本机与Windows目标mypy均通过，锁/入站/纠错55项通过；以PR最终head的新CI核对完整跨平台结果。该记录属于当前交接补充，不复用失败运行作成功证据。
+
 ## 日期
+
+2026-09-09晚（T-303收尾 + T-307实现 + Windows服务化）
+
+## 当前任务
+
+**T-303 24h影子数据汇总完成 + T-307 OneBot动作Adapter实现 + NSSM服务化**。
+- T-303窗口满24h，937条判定/936次AI调用/action_intents=0，证据 `data/t303-report.md`；断线演练三项通过 `data/drill-log-2026-09-09.md`。**待主审验收。**
+- T-307在分支 `feature/t307-onebot-actions` 实现：撤回=delete_msg/禁言=set_group_ban/警告=send_group_msg，经反向WS echo出站；数字ID强制校验；发送前未就绪=FAILED，发送后超时/断线=UNKNOWN冻结不重放；`ONEBOT_ACTIONS_ENABLED` 默认关闭，独立于ACTION_MODE第二道开关。29项新测试，全套320项通过、mypy 65文件、ruff通过。**未自行宣布验收，待主审独立审核。**
+- NSSM服务化：`QQBotWeb`/`QQBotRuntime` 已注册（开机自启/崩溃5s重启/日志轮转），NapCat启动脚本入启动文件夹；崩溃重启实测通过。**真实动作隔离群实测属W3，需T-307验收后进行。**
+- 切OFFICIAL前置：T-307验收 + ONEBOT_ACTIONS_ENABLED=true + 按群route(onebot→onebot) + 按群action_enabled + 急停关。当前默认仍SHADOW。面板勾"动作"已自动补齐同通道路由（方案A），完整流程见 `docs/switch-official.md`。
+
+## 已完成内容
+
+### 架构审查8项修复 + T-303实机UX改进（2026-09-09）
+
+**修改文件清单**（10文件，+437/-33行）：
+
+| 文件 | 改动 |
+|---|---|
+| `app/__main__.py` | ⑧ uvicorn `ws_max_size=1_048_576`（1MB WS帧上限） |
+| `app/main.py` | ⑤ lifespan启动时调用`reap_stuck_leases`清理过期租约+统计PENDING |
+| `app/moderation/ai.py` | ① `merge_ai_evidence`加AI置信度门槛：非正常类+≥0.60才升级record_only |
+| `app/adapters/qq_official/media.py` | ② `_is_safe_media_url`+`_BLOCKED_NETWORKS`SSRF防护 |
+| `app/core/dedup.py` | ⑤ `reap_stuck_leases`函数 + ④ `mark_pending`函数 + PENDING加入`_claim_existing`可领取条件 |
+| `app/runtime/onebot_ws.py` | ⑥ worker并发3（`asyncio.gather`独立引擎）+ ⑦ `_ensure_worker`重建前`cancel()`旧task |
+| `app/runtime/onebot_wiring.py` | ④ `process_onebot_event`处理前调`mark_pending` |
+| `app/runtime/pipeline.py` | detail补存`media_files`（供详情页回看原图） |
+| `app/moderation/feedback.py` | ④ `record_recall_notice`撤回通知自动记录 + `record_feedback`重复提交改为更新 |
+| `app/web/routes.py` | 详情页+媒体端点+反馈回显+datalist预设+30秒智能刷新 |
+
+**验证结果**：
+- `uv run ruff check app`：All checks passed
+- `uv run ruff format --check app`：61 files formatted
+- `uv run mypy app`：61源文件0错误（strict）
+- `uv run pytest`：**291 passed**（1个e2e flaky单独通过）
+- 服务重启：NapCat 5秒自动重连→`ready`
+- healthz：`self_id`/`group_last_event`不再暴露（`include_sensitive=False`）
+- 僵尸租约：旧1条过期PROCESSING→FAILED(lease_expired)已清理
+- 负责人已预同意：T-002样本达标+AI评测一致率满足后，升级AI参与自动处罚的政策（需走DECISIONS流程）
+
+### 历史交接
 
 2026-09-08（T-306主审整改轮）
 

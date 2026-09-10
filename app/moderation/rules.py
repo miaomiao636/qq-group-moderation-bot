@@ -167,7 +167,7 @@ SOFT_SIGNALS: tuple[str, ...] = (
 )
 
 FLOOD_WINDOW_SECONDS = 60.0
-FLOOD_MAX_MESSAGES = 5  # 负责人确认：1分钟>5条相同字样/图片/表情包
+FLOOD_MAX_MESSAGES = 3  # 负责人确认：连续发3条一模一样即撤回+禁言
 FLOOD_CONFIDENCE = 0.95  # 刷屏为负责人明确的确定性规则，单条规则即高置信
 
 _HIGH_ACTIONS: tuple[str, ...] = ("recall", "mute", "warn")  # 永远不含 kick
@@ -330,7 +330,7 @@ def _is_share_source_allowed(msg: StandardMessage) -> bool:
 
 
 class FrequencyTracker:
-    """滑动窗口刷屏检测：同群同成员，相同内容指纹 60 秒内超过 5 条。"""
+    """滑动窗口刷屏检测：同群同成员，相同内容指纹 60 秒内达到 3 条即触发。"""
 
     def __init__(
         self, window_seconds: float = FLOOD_WINDOW_SECONDS, max_messages: int = FLOOD_MAX_MESSAGES
@@ -355,7 +355,7 @@ class FrequencyTracker:
         # 清理其他过期键，防膨胀（简化：定期惰性清理）
         if len(self._history) > 50_000:
             self._history.clear()
-        return len(dq) > self._max
+        return len(dq) >= self._max
 
 
 def evaluate_text(
@@ -403,7 +403,7 @@ class TextRuleEngine:
                     rule_name="flood",
                     category="flood",
                     confidence_delta=FLOOD_CONFIDENCE,
-                    evidence_masked="60秒内相同内容超过5条",
+                    evidence_masked="60秒内相同内容超过3条（连续刷屏）",
                 )
             )
             confidence = max(confidence, FLOOD_CONFIDENCE)
