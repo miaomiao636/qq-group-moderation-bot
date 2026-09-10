@@ -31,6 +31,23 @@
 - [ ] 正常静默群与消息断流的区分
 - [ ] 缺口量化（不能仅凭 DB 内部自洽宣称零丢失）
 
+## ⚠️ 模型切换与窗口重置（2026-09-10 晚）
+
+因 AI 视觉模型延迟（mimo-v2.5 单次 25~43s）与精度口径问题，经评测后切换为：
+
+| 项 | 旧 | 新 |
+|---|---|---|
+| AI 提供商 | `api.xiaomimimo.com` | `https://api.deepseek.com` |
+| 文本/视觉模型 | `mimo-v2.5` | `deepseek-v4-flash-vision-exp` |
+| prompt 版本 | `t204-v3` | `t204-v4` |
+| 业务规则 | 硬编码 | 外部文件 `config/ai_prompt_rules.txt`（校园墙三特征 + 办证例外 + 平台黑话） |
+
+**评测依据**：`docs/model-eval-2026-09-10.md`。延迟 text avg 1.4s / vision avg 2.1s（快 15~18 倍），
+42 张人工标注图 precision 100% / recall 100%。
+
+**W1 窗口从模型切换重启后重新计时 24h**（前一窗口数据作废，避免跨模型版本混算）。
+服务重启后 `state=ready`、NapCat 自动重连；仍为 SHADOW 模式，`action_intents` 保持 0。
+
 ## 窗口内事件
 
 | 时间(UTC) | 事件 | 说明 |
