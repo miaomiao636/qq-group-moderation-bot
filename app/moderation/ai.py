@@ -35,7 +35,7 @@ AIContentKind = Literal[
 AIResultSource = Literal["text", "vision", "degraded", "cache"]
 AIReviewRole = Literal["auxiliary", "primary", "secondary"]
 
-PROMPT_VERSION = "t204-v4"
+PROMPT_VERSION = "t204-v6"
 AI_POLICY_VERSION = "conditional-review-v1"
 MAX_AI_TEXT_CHARS = 4_000
 MAX_AI_MEDIA_BYTES = 5 * 1024 * 1024
@@ -777,6 +777,14 @@ def secondary_review_reason(
     return ""
 
 
+_FRAUD_DIRECT_MIN = 0.85  # 诈骗误报代价最高，单独要求更高置信度
+
+
+def _direct_threshold(category: str | None, base: float) -> float:
+    """诈骗类误报代价最高（实测 0.78/0.82 的 fraud 为假阳性），单独抬高门槛。"""
+    return max(base, _FRAUD_DIRECT_MIN) if category == "fraud" else base
+
+
 def merge_ai_evidence(
     local: ModerationDecision,
     ai_results: list[AIModerationResult],
@@ -843,11 +851,24 @@ def merge_ai_evidence(
             else:
                 candidates.append(primary)
         elif (
-            primary.category in ("ad", "fraud")
-            and primary.confidence >= primary_direct_threshold
+            primary.category in ("ad", "fraud", "porn")
+            and primary.confidence >= _direct_threshold(primary.category, primary_direct_threshold)
             and not primary.needs_review
         ):
             candidates.append(primary)
+    # 文字通道：实测广告文本不被确定性规则命中，AI 是唯一判据；若不允许直接升级，
+    # 整类文字广告会永远停在 record_only（W2 回放实测 recall 仅 52%）。仅限 ad/fraud
+    # 两类且未要求人工复核，避免泛化误伤。
+    for text_result in ai_results:
+        if (
+            text_result.source == "text"
+            and text_result.category in ("ad", "fraud", "porn")
+            and text_result.confidence
+            >= _direct_threshold(text_result.category, primary_direct_threshold)
+            and not text_result.needs_review
+            and not text_result.degraded_reason
+        ):
+            candidates.append(text_result)
     # An orphaned secondary can never become a new primary by filtering.
     primary_groups = {r.review_group for r in primaries}
     if any(

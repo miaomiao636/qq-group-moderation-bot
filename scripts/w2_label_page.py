@@ -41,10 +41,13 @@ def main() -> None:
     ap.add_argument("--out", default="data/w2_label.html")
     ap.add_argument("--limit", type=int, default=80)
     ap.add_argument("--seed", type=int, default=20260910)
+    ap.add_argument("--exclude", default="", help="已标注文件，排除其中 sample_id")
     args = ap.parse_args()
 
     labeling = _load(Path(args.labeling))
     system = {r["sample_id"]: r for r in _load(Path(args.system))}
+    done_ids = {r["sample_id"] for r in _load(Path(args.exclude))} if args.exclude else set()
+    labeling = [r for r in labeling if r["sample_id"] not in done_ids]
     rng = random.Random(args.seed)
 
     seen: set[str] = set()

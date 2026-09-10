@@ -195,8 +195,19 @@ def _extract_json_payload(data: dict[str, Any]) -> dict[str, Any]:
         raise AIProviderError("provider_invalid_choice_content")
     try:
         parsed = json.loads(content)
-    except json.JSONDecodeError as exc:
-        raise AIProviderError("provider_invalid_model_json") from exc
+    except json.JSONDecodeError:
+        # 部分兼容端点会返回 ```json ... ``` 代码围栏（实测 qwen3.8-flash 偶发），
+        # 剥掉围栏后重试一次；仍失败才判无效。
+        stripped = content.strip()
+        if stripped.startswith("```"):
+            stripped = stripped.split("\n", 1)[-1] if "\n" in stripped else stripped
+            stripped = stripped.rstrip()
+            if stripped.endswith("```"):
+                stripped = stripped[:-3].rstrip()
+        try:
+            parsed = json.loads(stripped)
+        except json.JSONDecodeError as exc:
+            raise AIProviderError("provider_invalid_model_json") from exc
     if not isinstance(parsed, dict):
         raise AIProviderError("provider_invalid_model_json")
     return parsed
