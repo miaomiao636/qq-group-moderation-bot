@@ -46,12 +46,15 @@ class OpenAICompatibleTextModerator:
         timeout_seconds: float = 5.0,
         client: httpx.AsyncClient | None = None,
         provider: str = "openai-compatible",
+        extra_system_rules: str = "",
     ) -> None:
         self.base_url = base_url.rstrip("/")
         self.api_key = api_key
         self.model_id = model_id
         self.prompt_version = prompt_version
         self.provider = provider
+        rules = extra_system_rules.strip()
+        self.system_prompt = f"{SYSTEM_PROMPT}\n{rules}" if rules else SYSTEM_PROMPT
         self._client = client or httpx.AsyncClient(timeout=timeout_seconds)
         self._owns_client = client is None
 
@@ -62,7 +65,7 @@ class OpenAICompatibleTextModerator:
             "temperature": 0,
             "response_format": {"type": "json_object"},
             "messages": [
-                {"role": "system", "content": SYSTEM_PROMPT},
+                {"role": "system", "content": self.system_prompt},
                 {
                     "role": "user",
                     "content": json.dumps(
@@ -131,7 +134,7 @@ class OpenAICompatibleVisionModerator(OpenAICompatibleTextModerator):
             "temperature": 0,
             "response_format": {"type": "json_object"},
             "messages": [
-                {"role": "system", "content": SYSTEM_PROMPT},
+                {"role": "system", "content": self.system_prompt},
                 {
                     "role": "user",
                     "content": [

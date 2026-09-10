@@ -139,6 +139,9 @@ class Settings(BaseSettings):
     ai_daily_budget_cents: int = Field(default=0, ge=0, alias="AI_DAILY_BUDGET_CENTS")
     ai_per_minute_limit: int = Field(default=30, ge=1, le=600, alias="AI_PER_MINUTE_LIMIT")
     ai_prompt_version: str = Field(default="t204-v4", alias="AI_PROMPT_VERSION")
+    # 业务规则片段文件（相对仓库根）。与 SYSTEM_PROMPT 分离，避免把业务词硬编码进
+    # 通用提示词；为空则不追加。见 config/ai_prompt_rules.txt。
+    ai_prompt_rules_file: str = Field(default="", alias="AI_PROMPT_RULES_FILE")
     ai_daily_call_limit: int = Field(default=1000, ge=1, alias="AI_DAILY_CALL_LIMIT")
 
     # P0-3: 双模型条件复核（第二模型仅在灰区/冲突/疑难时调用，控制成本）
