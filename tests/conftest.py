@@ -30,6 +30,11 @@ os.environ["ADMIN_PASSWORD"] = "test-admin-pass"
 # 测试也绝不允许真实调用远程AI（项目规则：AI测试只用固定假响应；
 # 真实外呼会让测试非确定并外发消息内容）。AI 专属测试均使用显式假模型。
 os.environ["AI_ENABLED"] = "false"
+# R-106：测试不得继承部署机器的通知开关而外发真实消息。
+os.environ["NOTIFICATIONS_ENABLED"] = "false"
+os.environ["NOTIFICATION_QQ_ENABLED"] = "false"
+os.environ["NOTIFICATION_EMAIL_ENABLED"] = "false"
+os.environ["NOTIFICATION_HEARTBEAT_ENABLED"] = "false"
 # T-306：测试启用 OneBot 反向WS。令牌为测试专用假值，
 # 真实令牌只允许存在于 Windows 本机环境变量或凭据存储。
 os.environ["ONEBOT_WS_ENABLED"] = "true"

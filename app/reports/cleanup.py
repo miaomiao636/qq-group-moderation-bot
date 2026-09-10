@@ -67,6 +67,10 @@ async def purge_expired(session: AsyncSession, now: datetime | None = None) -> d
         decision_retention_days=settings.decision_retention_days,
     )
 
+    from app.notifications.service import purge_notifications
+
+    notification_counts = await purge_notifications(session, before=decision_cutoff)
+
     await session.commit()
     return {
         "processed_events_deleted": deleted_events,
@@ -74,4 +78,5 @@ async def purge_expired(session: AsyncSession, now: datetime | None = None) -> d
         "action_logs_deleted": deleted_logs,
         "media_files_deleted": deleted_media,
         **inbox_counts,
+        **{f"notification_{key}": count for key, count in notification_counts.items()},
     }

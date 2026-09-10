@@ -32,6 +32,8 @@ _COUNT_KEYS = frozenset(
         "media_files_deleted",
         "inbox_payloads_purged",
         "inbox_records_deleted",
+        "notification_notices_deleted",
+        "notification_deliveries_deleted",
     }
 )
 

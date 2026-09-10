@@ -59,6 +59,8 @@
 
 ### Windows运行与恢复
 
+→ `docs/proactive-notifications.md`（R-106/D-023主动通知、接手/升级、独立健康探针、安全配置、Windows实测与回退；默认关闭，实机送达尚未证明）。
+
 → `docs/pr5-r105-acceptance.md`（PR #5 原17项逐项核对、两轴复核与验证边界）。
 
 → `docs/windows-delivery-checklist.md`（R-105现行交付门禁、Windows Agent指令、P1-13/14证据、独立评测、通知接管和回滚边界；不是已通过报告）。

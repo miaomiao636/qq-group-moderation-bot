@@ -47,7 +47,12 @@ _STYLE = (
 
 
 def _page(
-    title: str, body: str, logged_in: bool = True, refresh_seconds: int | None = None
+    title: str,
+    body: str,
+    logged_in: bool = True,
+    refresh_seconds: int | None = None,
+    *,
+    extra_head: str = "",
 ) -> Response:
     header = ""
     if logged_in:
@@ -60,6 +65,7 @@ def _page(
             '<a href="/admin/groups" style="color:#93c5fd">群管理</a> &nbsp; '
             '<a href="/admin/stats" style="color:#93c5fd">统计</a> &nbsp; '
             '<a href="/admin/reports" style="color:#93c5fd">报告</a> &nbsp; '
+            '<a href="/admin/notifications" style="color:#93c5fd">通知与接手</a> &nbsp; '
             '<a href="/admin/settings" style="color:#93c5fd">设置</a> &nbsp; '
             '<a href="/admin/logout" style="color:#fca5a5">退出</a></div></header>'
         )
@@ -76,7 +82,7 @@ def _page(
         )
     return HTMLResponse(
         f"<!DOCTYPE html><html lang=zh-CN><head><meta charset=utf-8><title>{title}</title>"
-        f"{refresh}{_STYLE}</head>{header}<main>{body}</main></html>"
+        f"{refresh}{_STYLE}{extra_head}</head>{header}<main>{body}</main></html>"
     )
 
 
