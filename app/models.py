@@ -39,8 +39,10 @@ class ProcessedEvent(Base):
     provider: Mapped[str] = mapped_column(
         String(16), default="qq_official", server_default="qq_official"
     )
+    external_group_id: Mapped[str] = mapped_column(String(128), default="", server_default="")
+    external_user_id: Mapped[str] = mapped_column(String(128), default="", server_default="")
     status: Mapped[str] = mapped_column(
-        String(16), default="PROCESSED"
+        String(16), default="PROCESSED", index=True
     )  # PROCESSED / PROCESSING / FAILED / DEAD
     error_message: Mapped[str] = mapped_column(String(500), default="")
     error_kind: Mapped[str] = mapped_column(String(24), default="")
@@ -51,6 +53,17 @@ class ProcessedEvent(Base):
     attempts: Mapped[int] = mapped_column(default=0)
     next_retry_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     processed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
+
+
+class MemberAlias(Base):
+    """Retained legacy manual mapping; not an automatic cross-provider identity."""
+
+    __tablename__ = "member_aliases"
+
+    member_openid: Mapped[str] = mapped_column(String(64), primary_key=True)
+    qq_number: Mapped[str] = mapped_column(String(16), default="")
+    note: Mapped[str] = mapped_column(String(128), default="")
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
 
 
 class GroupAlias(Base):
@@ -66,7 +79,7 @@ class GroupAlias(Base):
 
 
 class GroupSettings(Base):
-    """群级管理设置：按群控制审核与动作开关（管理员可视化操作）。"""
+    """Legacy settings retained for recovery only; runtime uses ProviderGroupSettings."""
 
     __tablename__ = "group_settings"
 
@@ -77,6 +90,45 @@ class GroupSettings(Base):
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=_utcnow, onupdate=_utcnow
     )
+
+
+class ProviderGroupSettings(Base):
+    """Provider-qualified settings; legacy rows never enable runtime actions."""
+
+    __tablename__ = "provider_group_settings"
+
+    provider: Mapped[str] = mapped_column(String(16), primary_key=True)
+    external_group_id: Mapped[str] = mapped_column(String(128), primary_key=True)
+    name: Mapped[str] = mapped_column(String(64), default="")
+    moderation_enabled: Mapped[bool] = mapped_column(default=True, server_default="1")
+    action_enabled: Mapped[bool] = mapped_column(default=False, server_default="0")
+    version: Mapped[int] = mapped_column(default=1, server_default="1")
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=_utcnow, onupdate=_utcnow
+    )
+
+
+class GroupActionOwner(Base):
+    """Conservative single owner for a group ID seen across transports."""
+
+    __tablename__ = "group_action_owners"
+    external_group_id: Mapped[str] = mapped_column(String(128), primary_key=True)
+    provider: Mapped[str] = mapped_column(String(16), default="")
+
+
+class AdminChangePlan(Base):
+    """Immutable, short-lived management plan approved by a logged-in human."""
+
+    __tablename__ = "admin_change_plans"
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    action: Mapped[str] = mapped_column(String(32))
+    requestor: Mapped[str] = mapped_column(String(64))
+    params_json: Mapped[str] = mapped_column(Text)
+    expected_state_json: Mapped[str] = mapped_column(Text)
+    status: Mapped[str] = mapped_column(String(16), default="PENDING")
+    approved_by: Mapped[str] = mapped_column(String(64), default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
 
 
 class SystemSetting(Base):
@@ -123,9 +175,11 @@ class AdminAudit(Base):
     __tablename__ = "admin_audits"
 
     id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
-    operator: Mapped[str] = mapped_column(String(64))
-    action: Mapped[str] = mapped_column(String(64))
+    operator: Mapped[str] = mapped_column(String(64), index=True)
+    action: Mapped[str] = mapped_column(String(64), index=True)
     target_type: Mapped[str] = mapped_column(String(64), default="")
     target_id: Mapped[str] = mapped_column(String(128), default="")
     detail_json: Mapped[str] = mapped_column(Text, default="{}")
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=_utcnow, index=True
+    )

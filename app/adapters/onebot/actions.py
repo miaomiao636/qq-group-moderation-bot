@@ -14,7 +14,8 @@
 - 发送前失败（未就绪/未绑定连接）→ FAILED（确定没有发出请求）；
 - 发送后超时/连接丢失 → 抛 ``OneBotActionError``（结果不确定）→
   orchestrator 冻结为 UNKNOWN，禁止自动重放；
-- 响应 status=ok/async → SUCCEEDED；status=failed → FAILED（明确拒绝，
+- 响应 status=ok 且整数 retcode=0 → SUCCEEDED；status=failed 且失败码 → FAILED；
+  async、缺字段、类型错误及矛盾响应 → UNKNOWN（禁止升级或重放）；
   含 NapCat 权限不足等场景，可审计）。
 
 警告（send_group_msg）非幂等，不做自动重试；撤回/禁言同样只单次调用，
@@ -90,17 +91,39 @@ class OneBotActionClient:
             )
         status = str(resp.get("status") or "")
         retcode = resp.get("retcode")
-        err_code = int(retcode) if isinstance(retcode, (int, float)) else None
+        if type(retcode) is not int:
+            raise OneBotActionError("response_lost", "OneBot响应缺少整数retcode")
+        err_code = retcode
         wording = str(resp.get("wording") or resp.get("message") or "")
-        if status in ("ok", "async"):
+        # P0-7: OneBot规范——status=ok+retcode=0 才是确定成功；
+        # status=async 仅表示排队，不代表最终成功 → UNKNOWN
+        if status == "ok" and retcode == 0:
             return ActionResult(action=action_name, ok=True, status_code=0, attempts=1)
-        return ActionResult(
-            action=action_name,
-            ok=False,
-            status_code=0,
-            err_code=err_code,
-            err_message=wording or f"OneBot动作失败 status={status}",
-            attempts=1,
+        if status == "ok" and retcode != 0:
+            # 矛盾响应：status=ok 但 retcode≠0 → 结果不确定
+            raise OneBotActionError(
+                "response_lost",
+                f"OneBot矛盾响应 status=ok 但 retcode={retcode}",
+            )
+        if status == "async":
+            # async 仅表示请求已排队，不代表最终执行成功 → UNKNOWN
+            raise OneBotActionError(
+                "response_lost",
+                "OneBot status=async（请求已排队，结果不确定）",
+            )
+        if status == "failed" and retcode not in (0, 1):
+            return ActionResult(
+                action=action_name,
+                ok=False,
+                status_code=0,
+                err_code=err_code,
+                err_message=wording or f"OneBot动作失败 status=failed retcode={retcode}",
+                attempts=1,
+            )
+        # 未知 status 值 → 结果不确定
+        raise OneBotActionError(
+            "response_lost",
+            "OneBot响应状态与返回码不合约（结果不确定）",
         )
 
     async def recall(

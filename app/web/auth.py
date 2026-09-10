@@ -8,10 +8,11 @@
 from __future__ import annotations
 
 import secrets
+import time
 
 from app.config import get_settings
 
-_SESSIONS: set[str] = set()
+_SESSIONS: dict[str, float] = {}
 _CSRF_TOKENS: dict[str, str] = {}
 
 SESSION_COOKIE = "admin_session"
@@ -31,22 +32,33 @@ def login(username: str, password: str) -> str:
     ):
         raise AuthError("用户名或密码错误")
     token = secrets.token_urlsafe(32)
-    _SESSIONS.add(token)
+    now = time.monotonic()
+    for expired in [key for key, expiry in _SESSIONS.items() if expiry <= now]:
+        logout(expired)
+    _SESSIONS[token] = now + settings.admin_session_ttl_seconds
     _CSRF_TOKENS[token] = secrets.token_urlsafe(24)
     return token
 
 
 def logout(token: str) -> None:
-    _SESSIONS.discard(token)
+    _SESSIONS.pop(token, None)
     _CSRF_TOKENS.pop(token, None)
 
 
 def is_valid(token: str | None) -> bool:
-    return bool(token) and token in _SESSIONS
+    if not token:
+        return False
+    expiry = _SESSIONS.get(token)
+    if expiry is None or expiry <= time.monotonic():
+        logout(token)
+        return False
+    return True
 
 
 def csrf_token(session_token: str) -> str:
     """Return a stable CSRF token for the current in-memory admin session."""
+    if not is_valid(session_token):
+        raise AuthError("管理会话已过期，请重新登录")
     token = _CSRF_TOKENS.get(session_token)
     if token is None:
         token = secrets.token_urlsafe(24)
@@ -56,7 +68,7 @@ def csrf_token(session_token: str) -> str:
 
 def validate_csrf(session_token: str | None, submitted: str | None) -> bool:
     """Validate a submitted CSRF token for a logged-in admin session."""
-    if not session_token or not submitted:
+    if not session_token or not submitted or not is_valid(session_token):
         return False
     expected = _CSRF_TOKENS.get(session_token)
     if expected is None:

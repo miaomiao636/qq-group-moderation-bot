@@ -15,7 +15,7 @@ import json
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
-from sqlalchemy import and_, func, or_, select
+from sqlalchemy import and_, func, or_, select, text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -160,11 +160,20 @@ async def record_violation(
     """记录一次高置信违规并返回阶梯结果（含建议动作与可能的案件）。
 
     调用方负责：执行 planned_actions 中的动作并回写 action_result_json。
+    SQLite 的计数、违规写入和案件生成共享写事务；不要在取得写锁前计数。
     """
     if decision.verdict != "violation_high":
         raise ValueError("只有 violation_high 决策才能进入违规阶梯")
     if decision.is_protected_sender or msg.sender.role in ("owner", "admin"):
         raise ValueError("保护角色（群主/管理员）不得进入处罚阶梯")
+
+    if session.get_bind().dialect.name != "sqlite":
+        raise RuntimeError("违规阶梯事务目前仅支持 SQLite")
+    # A zero-row UPDATE acquires SQLite's database-wide writer reservation without
+    # modifying evidence. It also works inside the caller's existing transaction,
+    # unlike issuing another BEGIN IMMEDIATE or committing the caller's work.
+    # Keep the lock through count + insert + case creation until the commit below.
+    await session.execute(text("UPDATE violation_records SET revoked = revoked WHERE 0"))
 
     existing = await count_active_violations(
         session,
@@ -265,12 +274,14 @@ async def _create_case(
             violation_ids_json=json.dumps([v.id for v in related]),
             audit_json=json.dumps({"evidence_count": len(related)}, ensure_ascii=False),
         )
-        session.add(case)
         try:
-            await session.flush()
+            # Retry only this case insert. Rolling back the outer transaction
+            # would discard the just-recorded violation and release the strike lock.
+            async with session.begin_nested():
+                session.add(case)
+                await session.flush()
             return case
         except IntegrityError:
-            await session.rollback()
             continue
     raise RuntimeError("案件编号冲突，5次重试均失败（并发异常）")
 

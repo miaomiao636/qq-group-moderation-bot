@@ -61,8 +61,8 @@ async def _add_image_feedback(
 
 
 @pytest.mark.asyncio
-async def test_corrections_appear_in_vision_feedback_context() -> None:
-    """AI判ad但人工确认正常（校园墙）→ 反馈上下文含纠正记录。"""
+async def test_single_normal_label_does_not_generalize_into_vision_prompt() -> None:
+    """A human label is truth about one sample, not a general allow rule."""
     async with SessionLocal() as session:
         await _add_image_feedback(
             session,
@@ -71,15 +71,14 @@ async def test_corrections_appear_in_vision_feedback_context() -> None:
             ai_cat="ad",
             ai_conf=0.9,
         )
-        ctx = await load_vision_feedback_context(session)
-    assert "人工纠正" in ctx
-    assert "应判null" in ctx
-    assert "校园墙" in ctx
+        ctx = await load_vision_feedback_context(
+            session, provider="onebot", external_group_id="G_FB"
+        )
+    assert ctx == ""
 
 
 @pytest.mark.asyncio
-async def test_missed_violation_corrections_appear() -> None:
-    """AI判other但人工确认违规 → 反馈上下文含漏判纠正。"""
+async def test_single_violation_label_does_not_generalize_into_vision_prompt() -> None:
     async with SessionLocal() as session:
         await _add_image_feedback(
             session,
@@ -88,14 +87,14 @@ async def test_missed_violation_corrections_appear() -> None:
             ai_cat="other",
             ai_conf=0.9,
         )
-        ctx = await load_vision_feedback_context(session)
-    assert "人工纠正" in ctx
-    assert "应判ad" in ctx
+        ctx = await load_vision_feedback_context(
+            session, provider="onebot", external_group_id="G_FB"
+        )
+    assert ctx == ""
 
 
 @pytest.mark.asyncio
-async def test_reinforcements_appear_for_correct_ai() -> None:
-    """AI判ad且人工确认违规 → 强化记录。"""
+async def test_matching_human_label_stays_out_of_online_prompt() -> None:
     async with SessionLocal() as session:
         await _add_image_feedback(
             session,
@@ -104,9 +103,10 @@ async def test_reinforcements_appear_for_correct_ai() -> None:
             ai_cat="ad",
             ai_conf=0.95,
         )
-        ctx = await load_vision_feedback_context(session)
-    assert "人工确认正确" in ctx
-    assert "ad正确" in ctx
+        ctx = await load_vision_feedback_context(
+            session, provider="onebot", external_group_id="G_FB"
+        )
+    assert ctx == ""
 
 
 @pytest.mark.asyncio
@@ -116,12 +116,12 @@ async def test_empty_feedback_context_when_no_records() -> None:
         ctx = await load_vision_feedback_context(session)
     # 测试DB可能有其他测试的残留，只要不含我们测试群的纠正即可
     # 这里只验证不报错且是字符串
-    assert isinstance(ctx, str)
+    assert ctx == ""
 
 
 def test_prompt_version_bumped_for_feedback() -> None:
     """反馈上下文注入后 PROMPT_VERSION 必须升级（缓存键含版本号）。"""
-    assert PROMPT_VERSION == "t204-v3"
+    assert PROMPT_VERSION == "t204-v4"
 
 
 def test_request_carries_feedback_context() -> None:

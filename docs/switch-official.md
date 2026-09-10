@@ -1,17 +1,16 @@
 # 切换 OFFICIAL 模式操作手册
 
 本手册描述从 SHADOW（仅记录）切换到 OFFICIAL（真实撤回/禁言/警告）的完整流程。
-所有开关均为 **fail-closed**：任一缺失，违规消息只记一条 SKIPPED 意图，不执行任何动作。
+开关默认关闭；缺少必要条件不执行真实动作。OFFICIAL是兼容保留的全局门禁名称，出口按provider选择，不表示OneBot通过官方API执行。
 
 ## 前置条件（不可跳过）
 
 1. T-303 影子验证主审验收通过（24h 数据 + 断线演练证据齐备）
 2. T-307 NapCat 动作 Adapter 主审验收通过
-3. W3 隔离测试群实测：真的撤回一条、真的禁言 1 小时 / 24 小时、警告回复真的发出
+3. W2独立影子闭环通过。进入W3仅需负责人明确指定隔离群和同意受测成员；开放目标群则必须W3/W4通过。
 4. 已知风险并接受：OFFICIAL 模式会对真实群成员执行处罚
 
-**未完成前置条件前，下面的开关即使全开也不会执行动作**（`ONEBOT_ACTIONS_ENABLED` 默认关闭，
-且代码同步/服务重启/NapCat 重连均不会自动开启真实处罚）。
+**这些验收条件是人员流程门禁，不是代码自动读取的验收状态。开关全开并满足运行门禁就可能处罚真实成员。** 不要先全开再测试；按 `windows-delivery-checklist.md` 顺序执行。已有显式开关会随配置/DB保留，重启不是自动关闭，首次迁移R-105会安全关闭历史动作位。
 
 ## 三层开关（缺一不可）
 
@@ -20,14 +19,16 @@
 ├─ APP_ENV=prod
 ├─ ACTION_MODE=OFFICIAL          ← 主开关：SHADOW → OFFICIAL
 ├─ EMERGENCY_STOP=false
+├─ ONEBOT_SELF_ID=<专用QQ数字账号>
+├─ ONEBOT_ACTION_STAGE=recall_only ← 起步只撤回；批准full并重启才禁言/警告
 └─ ONEBOT_ACTIONS_ENABLED=true   ← T-307 独立第二道开关（默认 false）
 
 第2层：每群路由（group_provider_routes 表）
 └─ 消息入口 provider → 动作出口 provider 的同通道路由
-    （面板勾"动作"保存时自动补齐，见"动作出口"列；也可手动 upsert_group_route）
+    （身份必须明确，禁止双出口；变更经真人预览批准，不直接手改数据库）
 
 第3层：每群面板开关（管理后台 → 群管理）
-└─ 勾选"动作"并保存
+└─ 选择provider+群，预览完整变更并由真人批准，再执行；不是Agent自己点确认
 ```
 
 ## 操作步骤
@@ -39,27 +40,22 @@ APP_ENV=prod
 ACTION_MODE=OFFICIAL
 EMERGENCY_STOP=false
 ONEBOT_ACTIONS_ENABLED=true   # T-307 第二道开关
+ONEBOT_ACTION_STAGE=recall_only
 ```
 
-> 其余生产配置（`ADMIN_PASSWORD` / `QQ_APP_ID` / `QQ_APP_SECRET` / `ONEBOT_WS_ENABLED` /
-> `ONEBOT_ACCESS_TOKEN`）必须已正确设置。`ACTION_MODE=OFFICIAL` 启动校验会强制要求这些。
+> 还需 `ADMIN_PASSWORD`、`ONEBOT_WS_ENABLED`、`ONEBOT_ACCESS_TOKEN`、`ONEBOT_SELF_ID`。OneBot-only不需要QQ官方凭据；官方出口另需QQ_APP_ID/QQ_APP_SECRET。令牌与管理员口令分离，不给通用Agent管理员口令。
 
 ### 2. 重启服务
 
-```powershell
-# 管理员 PowerShell
-sc.exe stop QQBotWeb; sc.exe stop QQBotRuntime
-Start-Sleep 3
-sc.exe start QQBotWeb; sc.exe start QQBotRuntime
-```
+按本机实际服务名停止/启动本项目进程；先确认只有一个Web/OneBot实例。历史报告的QQBotWeb/QQBotRuntime名称须实机核实，官方运行器仅在确有官方入口时启动。修改前备份、先影子启动，禁止热重载或多worker。
 
 启动时配置校验 fail-closed：缺任何一项直接报错拒启（不会以半开状态运行）。
 
 ### 3. 面板开启目标群动作
 
-管理后台 → 群管理 → 目标群勾选「动作」→ 保存。
+管理后台 → 群管理 → 明确provider和目标群 → 预览变更 → 真人批准 → 执行。
 
-- 保存时自动按该群已见消息来源补齐同通道路由（`动作出口`列显示 `onebot→onebot`）
+- 核对同通道路由与唯一动作所有者，身份歧义时不得猜测或默认选一个
 - **建议先只开一个低风险隔离测试群**，观察至少 24 小时再开其他群
 - 关闭动作不会删除路由（路由是拓扑信息，动作开关由 `action_enabled` 守门）
 
@@ -68,16 +64,17 @@ sc.exe start QQBotWeb; sc.exe start QQBotRuntime
 - 触发一条高置信违规（测试群发广告词），观察：
   - 消息被撤回
   - 发送者被禁言（首次 1 小时，二次 24 小时）
-  - 群内出现警告回复
+  - 仅首次违规群内出现警告回复；第二次无警告并生成案件
 - 管理后台 → 案件/动作日志可审计每次执行结果
 - `action_intents` 表出现 `SUCCEEDED` 状态记录
+
+默认recall_only时只会撤回，不会禁言或警告。W3先验证撤回成功，再经负责人批准改 `ONEBOT_ACTION_STAGE=full` 并重启，验证完整阶梯。此阶段是全局配置，先只启用一个隔离群；W5目标群试运行重新从recall_only起步。仅撤回阶段仍累计有效违规，切full不会清零30天历史，所以应检查成员历史并用新同意的测试成员测首违，禁止删除真实历史凑测试。
 
 ## 紧急回退
 
 ### 急停（不重启，立即生效）
 
-`.env` 设 `EMERGENCY_STOP=true` 后重启服务，或通过管理后台急停开关（如有）。
-急停后所有群所有动作立即 SKIPPED，审核继续记录。
+优先后台“激活急停”：写共享DB，不需重启；Agent需emergency:stop权限，可直接激活，解除仍需真人批准。每个新外呼前重读急停，已发送请求无法撤回；核对在途UNKNOWN，不能声称立刻取消所有网络中的动作。
 
 > 注意：`ACTION_MODE=OFFICIAL` 与 `EMERGENCY_STOP=true` 在配置层互斥——
 > 启动校验会拒绝同时持有二者。急停的正确用法是先 `EMERGENCY_STOP=true` 再把
@@ -90,7 +87,7 @@ ACTION_MODE=SHADOW
 ONEBOT_ACTIONS_ENABLED=false
 ```
 
-重启服务。已执行的撤回/禁言不可逆，但新消息不再产生任何动作。
+重启服务。撤回不能恢复原消息，禁言可由授权管理员人工解除；新消息不执行真实处罚。
 
 ## 按群临时关闭
 
@@ -98,7 +95,7 @@ ONEBOT_ACTIONS_ENABLED=false
 
 管理后台 → 群管理 → 该群取消勾选「动作」→ 保存。
 
-该群立即回到只记录不执行；其他群不受影响。
+该群后续动作按最新DB开关拒绝，已发送请求需另行核对；其他群不受影响。
 
 ## 安全保证（T-307 实现）
 

@@ -117,7 +117,9 @@ async def _download_attachments(client: httpx.AsyncClient, payload: dict[str, An
 async def _listen_once(app_id: str, app_secret: str, stop: asyncio.Event) -> float:
     """连接并处理事件直到断开；返回本次存活秒数（用于退避判断）。"""
     started = time.monotonic()
-    async with httpx.AsyncClient(timeout=15, follow_redirects=True) as dl_client:
+    async with httpx.AsyncClient(
+        timeout=15, follow_redirects=False, trust_env=False, http2=False
+    ) as dl_client:
         token = await _get_token(dl_client, app_id, app_secret)
         async with connect(WS_URL, max_size=2**22) as ws:
             hello = json.loads(await ws.recv())
