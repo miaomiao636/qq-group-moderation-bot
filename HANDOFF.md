@@ -2,11 +2,11 @@
 
 ## 当前交接：2026-09-10，R-106主动通知
 
-用户要求落实QQ管理群业务提醒、独立邮件故障告警及外部健康心跳方案。本地分支 `feature/r106-proactive-notifications` 基于已合并main `15278e84560cdc11adab40e3d3225fa63634cc2a`，工作树 `/tmp/qqbot-pr5-round2.OZ4N0s`；原项目工作树保持原状。新增代码和文档均在该分支，尚未推送/合并，GitHub新CI未运行；发布安排待负责人确认。PR #5不包含R-106，Windows不能仅拉PR #5就认为通知可用。
+用户要求落实QQ管理群业务提醒、独立邮件故障告警及外部健康心跳方案，并已明确授权全面复验通过后推送GitHub、合并，余项交给Windows。本地分支 `feature/r106-proactive-notifications` 基于已合并main `15278e84560cdc11adab40e3d3225fa63634cc2a`，工作树 `/tmp/qqbot-pr5-round2.OZ4N0s`；原项目工作树保持原状。发布核验规则：在本分支对应的R-106 PR查看最终head的三项CI、合并状态及验收评论中的精确SHA；未合并或最终head检查未通过不得部署。PR #5不包含R-106，Windows不能仅拉PR #5就认为通知可用。
 
 交付代码：`app/notifications/`包含配置、三表、持久状态机、采集/恢复、发送、后台调度及独立watchdog；`app/web/notifications.py`真人接手（不处罚）；main挂载与生命周期、OneBot worker健康seam、cleanup+maintenance计数对接；迁移 `d3f5a7b9c111`（仅增表，父 `c2e4f6a8b010`）。配置模板全关闭，没有真实收件人/令牌。D-023与 `docs/proactive-notifications.md`记录设计、实际命令、阈值、故障处理、回退和Windows验收。
 
-最终实际验证：pytest **745通过/1跳过/1原有datetime弃用警告，107.08秒**；原生/Windows目标mypy83源文件、ruff check/format171文件、diff通过。临时库迁移升降级、旧数据保留、schema一致性通过；仅运行时环境能导入且无pytest，默认探针运行返回skipped。两轴复核剩余0：保留期后UNKNOWN/QQ回退不重弹、排队ACK终检、定时维护新增计数、并发停机、AI真实成功恢复、邮件故障可见均补红后绿回归。发送测试完全fake，未真实发QQ/邮件/心跳，未部署Windows。
+最终实际验证：pytest **754通过/1跳过/1原有datetime弃用警告**；原生/Windows目标mypy83源文件、ruff check/format172文件、diff及离线锁文件检查通过。受限环境曾阻止两项启动测试绑定回环端口，允许本地测试端口后整套重跑通过，没有删测试或放宽断言。临时库迁移升降级、旧数据保留、schema一致性通过；干净锁定仅运行时安装及导入通过且无pytest，默认探针运行返回skipped。两轴复核剩余0：保留期后UNKNOWN/QQ回退不重弹、排队ACK终检、定时维护新增计数、并发停机、AI真实成功恢复、邮件故障可见均补红后绿回归；最终补通道预留名额，新增9项公平性回归及独立阻塞/确认/取消/UNKNOWN探针均通过。发送测试完全fake，未真实发QQ/邮件/心跳，未部署Windows。
 
 明确缺口：Chrome控制和内置浏览器均不可用，视觉/窄屏/键盘QA未执行；已关闭独立临时零外呼QA服务，未动真实库。Windows须补页面验证、真实送达/接手/升级、服务退出/QQ退出/DB不可写/断网关机与恢复、任务计划无人登录运行；外部Healthchecks需另配首位/备份邮箱与缺失检测。应用内15分钟升级不能在整机断网/关机时运行，不是外部SLA保证。
 

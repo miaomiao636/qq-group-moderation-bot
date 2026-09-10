@@ -92,4 +92,4 @@ uv run python -m app.reports.evaluation --input <本机脱敏样本.jsonl> --out
 
 ## 可直接交给 Windows Agent 的执行指令
 
-接手前读取 AGENTS/MEMORY_INDEX/PROJECT_CONTEXT/NEXT_TASKS/PROGRESS/DECISIONS/HANDOFF及本清单。核对 PR #5 已合并的精确 SHA，保护本机修改与凭据。先备份并记录回滚方法，再以 SHADOW 更新/迁移；不要自行开启真实动作。核验并脱敏提交 P1-13 历史证据，执行独立 W2报告；只在两项通过且负责人明确指定隔离群和测试成员后进入 W3，随后 W4、W5。任何误伤、重复处罚、身份错配、未知动作重发、静默掉线或通知无法到人均停止升级并回影子，报告事实和证据。不得自动踢人、绕过QQ验证、伪造通过记录或把本地单测当真机结果。
+接手前读取 AGENTS/MEMORY_INDEX/PROJECT_CONTEXT/NEXT_TASKS/PROGRESS/DECISIONS/HANDOFF及本清单和 `docs/proactive-notifications.md`。核对本次R-106最终合并SHA与对应CI（PR #5本身不含R-106），保护本机修改与凭据。先备份并记录回滚方法，再以SHADOW更新/迁移；不要自行开启真实动作。经负责人批准接通QQ管理员提醒时，确认消息接入已启用且ready，处罚仍关闭；按通知手册实测首位/备份接收、确认/升级、关机断网/恢复及页面操作。核验并脱敏提交P1-13历史证据，执行独立W2报告；只在两项通过且负责人明确指定隔离群和测试成员后进入W3，随后W4、W5。任何误伤、重复处罚、身份错配、未知动作重发、静默掉线或通知无法到人均停止升级并回影子，报告事实和证据。不得自动踢人、绕过QQ验证、伪造通过记录或把本地单测当真机结果。

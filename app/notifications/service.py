@@ -243,16 +243,24 @@ async def enqueue_escalations(
 
 
 async def claim_delivery(
-    session: AsyncSession, *, now: datetime | None = None
+    session: AsyncSession, *, now: datetime | None = None, channel: str | None = None
 ) -> NotificationDelivery | None:
-    """Atomic UPDATE/subquery claim. Caller must commit before any external I/O."""
+    """Atomically claim FIFO work, optionally within one exact channel.
+
+    An empty channel queue never borrows another channel's work. The caller must
+    commit before external I/O; omitting the filter preserves global FIFO order.
+    """
     timestamp = _now(now)
+    if channel is not None:
+        channel = _identifier(channel, maximum=32, name="channel")
     eligible = and_(
         _pending_filter(),
         NotificationDelivery.next_attempt_at.is_not(None),
         NotificationDelivery.next_attempt_at <= timestamp,
         NotificationDelivery.attempts < MAX_ATTEMPTS,
     )
+    if channel is not None:
+        eligible = and_(eligible, NotificationDelivery.channel == channel)
     candidate = (
         select(NotificationDelivery.id)
         .join(NotificationNotice)

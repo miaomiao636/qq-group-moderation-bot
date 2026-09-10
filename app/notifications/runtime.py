@@ -149,13 +149,24 @@ async def send_batch(
     *,
     email_fallback: bool,
 ) -> None:
+    batch_limit = 4
     claims: list[NotificationDelivery] = []
     async with factory() as session:
         await reap_stale_deliveries(session)
         if email_fallback:
             await _fallbacks(session)
         await session.commit()
-        for _ in range(4):
+        # Reserve one slot per enabled sender so a QQ backlog cannot starve
+        # independent email (or vice versa). Current runtime enables at most two.
+        for channel in sorted(senders):
+            if len(claims) == batch_limit:
+                break
+            claimed = await claim_delivery(session, channel=channel)
+            await session.commit()  # MUST precede any external I/O.
+            if claimed is not None:
+                claims.append(claimed)
+        # Spare slots remain FIFO, including disabled channels that need SKIPPED.
+        for _ in range(batch_limit - len(claims)):
             claimed = await claim_delivery(session)
             await session.commit()  # MUST precede any external I/O.
             if claimed is None:
@@ -171,7 +182,7 @@ async def send_batch(
 
     # TaskGroup joins/cancels siblings on failure and application shutdown.
     async with asyncio.TaskGroup() as group:
-        for channel in {row.channel for row in claims}:
+        for channel in sorted({row.channel for row in claims}):
             group.create_task(channel_batch(channel))
 
 
