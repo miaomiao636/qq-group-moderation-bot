@@ -39,9 +39,18 @@
 | 测试样本 | **依赖历史消息与自然产生的消息**，不主动构造样本 | W1 类型覆盖以自然流入为准；未出现的类型标注 NOT_TESTED |
 | 故障演练 | **稍后安排**，先观察稳定接收 | WS 断开/QQ 退出演练推迟；窗口内先采稳定性数据 |
 
-## 需要负责人配合
+## 窗口内并行工作（不干扰接收）
+
+- **W2 样本准备工具**已就位：`scripts/w2_sample_export.py` + `scripts/w2_sample_merge.py`；
+  流程与延迟口径见 `docs/w2-sample-prep.md`。W1 窗口起点用 `2026-09-10 10:00:00`(UTC) 导出。
+- **AI 延迟根因（已完成排查）**：`mimo-v2.5` 模型固有慢——text avg 25.4s / vision avg 32.2s，
+  整体 p95 42.8s；非超时（60s 未触发）、非并发、非重试问题（错误率 0.8%）。
+  ⚠️ 与 W2 延迟门槛（text ≤3s / image ≤15s）冲突，需与主审确认处理方式。
+- **端到端延迟口径**：`onebot_inbox.updated_at - created_at`（DONE 行保留 180 天），
+  仅 W0 live inbox 之后的事件可用；此前记录只能回退到 AI 调用延迟。
 
 ## 关联
 
 - W0 基线证据：`docs/evidence/2026-09-10-W0/w0-deployment.md`
 - 历史 T-303 原件核验：`docs/evidence/2026-09-09-t303-history/README.md`
+- W2 样本准备与延迟口径：`docs/w2-sample-prep.md`
