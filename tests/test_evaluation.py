@@ -15,9 +15,11 @@ def sample(
             "label": label,
             "verdict": verdict,
             "category": "ad",
+            "category_source": "manual_truth",
             "kind": "image",
             "latency_ms": latency_ms,
             "latency_source": "inbox" if latency_ms is not None else "none",
+            "unavailable": "",
             "model_revision": "test-model",
             "rule_revision": "test-rule",
         }

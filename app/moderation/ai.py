@@ -862,7 +862,10 @@ def merge_ai_evidence(
     _text_signals = [r for r in ai_results if r.source == "text"]
     _vision_signals = [r for r in ai_results if r.source == "vision"]
     _text_veto = _cross_modal_veto(_text_signals, secondary_review_low)
-    _vision_veto = _cross_modal_veto(_vision_signals, secondary_review_low)
+    # A04：视觉侧的 veto 必须基于"复核对之后仍未消解的疑问"——
+    # 延后到视觉循环结束后计算（见下方 `_vision_veto`），
+    # 已获有效二审确认的 primary 不再被其原始 needs_review 标记否决。
+    _vision_resolved_ids: set[int] = set()
     primaries = [r for r in ai_results if r.source == "vision" and r.review_role == "primary"]
     for primary in primaries:
         secondaries = [
@@ -902,6 +905,7 @@ def merge_ai_evidence(
                 unresolved = True
             else:
                 candidates.append(primary)
+                _vision_resolved_ids.add(id(primary))
         elif (
             primary.category in ("ad", "fraud", "porn")
             and primary.confidence >= _direct_threshold(primary.category, primary_direct_threshold)
@@ -911,6 +915,15 @@ def merge_ai_evidence(
                 unresolved = True
             else:
                 candidates.append(primary)
+                _vision_resolved_ids.add(id(primary))
+    # A04：有效二审已确认的视觉结论，其原始 needs_review 疑问视为已消解；
+    # 只有"确定性正常"或"未被消解的 gray/needs_review"才阻止文字单通道升罚。
+    _vision_hard_normal = any(_confident_normal(v, secondary_review_low) for v in _vision_signals)
+    _vision_gray_unresolved = any(
+        v.source == "vision" and v.needs_review and id(v) not in _vision_resolved_ids
+        for v in _vision_signals
+    )
+    _vision_veto = _vision_hard_normal or _vision_gray_unresolved
     # 文字通道（R01）：与视觉完全同一套本地保护。实测广告文本不被确定性规则命中，
     # AI 是唯一判据，允许高置信直接升级；但规则/白名单冲突、本地类别冲突、
     # needs_review、unknown_category 一律不升级（转人工或条件复核）。

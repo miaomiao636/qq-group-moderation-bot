@@ -31,3 +31,18 @@
   main 侧自动合并保留），并修复合并引入的 review_vision_moderator 重复定义。
 - 合并后全量 pytest 通过（exit 0；13 项 data 守卫在服务运行中按设计跳过，CI 环境全跑）。
 - 推送后 GitHub Actions 触发并 **success**（run 34608272484，6m17s）。PR #7 状态 CLEAN / MERGEABLE。
+
+---
+
+## 主审复验（aa04f7f）A01–A04 整改
+
+| 编号 | 问题 | 整改 |
+|---|---|---|
+| A01 | 回放默认输出可产生虚高分类召回 | replay 默认输出标记 `category_source=model_predicted`；正式聚合器明确拒绝非 manual_truth 输入（必须先经 merge）|
+| A02 | 降级/异常样本被删除致分母缩水 | merge 不再删除：降级/异常保留在端到端召回分母（真实结果=未自动识别）并标记 `unavailable`；报告输出 unavailable 数量与 `measurement_complete` 完整性门槛（>5% 判不完整）|
+| A03 | 延迟来源仍被猜测/覆盖未声明 | merge 不再推断：无显式 inbox 声明一律未测；报告输出按类型延迟有效样本与缺失数、覆盖率；门槛需覆盖≥95% 才可判通过（否则未测）|
+| A04 | 有效二审被旧 needs_review 标记否决 | 视觉侧 veto 延后到复核对解析完成后计算：已获有效二审确认的 primary 不再被原始 needs_review 否决；未消解的 gray/brief仍保持安全转人工（3 项正向/反向回归）|
+
+验证：全量 pytest 通过（新增/更新 A01–A04 回归 9 项）；ruff/format/mypy 全绿。
+CI：合入后推送取得新 SHA 远程检查（见下方最新 run 记录）。
+文档校正（主审第四节）：索引 ad 类别改"不可判（待真值重跑）"；旧复核报告加历史说明并指向新索引；本记录 CI run 更新；放行顺序明确"端到端延迟可在 SHADOW 采集、W3 不可被例外替代"。

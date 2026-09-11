@@ -190,25 +190,117 @@ def test_s05_legacy_debug_without_revision_is_rejected(tmp_path) -> None:
         _merge(tmp_path, system, labels)
 
 
-def test_s08_degraded_samples_excluded_from_eval(tmp_path) -> None:
-    """S08: 供应商降级的样本不得进入评测（既不算漏判也不算放行）。"""
-    system = [
-        _system_row("s1", "violation_high"),
-        _system_row("s2", "record_only", degraded=True),
+def test_a02_degraded_samples_stay_in_end_to_end_denominator(tmp_path) -> None:
+    """A02: 降级样本保留在端到端召回分母（按未自动识别计），不得删除缩分母。
+
+    复现场景：40 条违规中 20 命中、20 因模型故障降级转人工；另有 60 条正常。
+    端到端自动召回必须为 20/40=50%，而不是把 20 条降级删掉后的 100%。
+    """
+    system = [_system_row(f"h{i}", "violation_high") for i in range(20)]
+    system += [_system_row(f"d{i}", "record_only", degraded=True) for i in range(20)]
+    system += [_system_row(f"n{i}", "record_only") for i in range(60)]
+    labels = [
+        {
+            "sample_id": f"h{i}",
+            "label": "confirmed_violation",
+            "truth_category": "ad",
+            "kind": "text",
+        }
+        for i in range(20)
     ]
+    labels += [
+        {
+            "sample_id": f"d{i}",
+            "label": "confirmed_violation",
+            "truth_category": "ad",
+            "kind": "text",
+        }
+        for i in range(20)
+    ]
+    labels += [
+        {
+            "sample_id": f"n{i}",
+            "label": "confirmed_normal",
+            "truth_category": "other",
+            "kind": "text",
+        }
+        for i in range(60)
+    ]
+    out = _merge(tmp_path, system, labels)
+    rows = [EvaluationSample.from_dict(r) for r in _read(out)]
+    assert len(rows) == 100  # 分母完整：降级样本没有被删除
+    report = summarize_samples(rows)
+    assert report["metrics"]["recall"] == 0.5
+    assert report["metrics"]["unavailable_samples"] == 20
+    assert report["metrics"]["positive_samples"] == 40
+    assert report["threshold_checks"]["measurement_complete"] is False
+
+
+def test_a01_predicted_categories_rejected_by_formal_aggregator() -> None:
+    """A01: 回放默认输出（model_predicted）不得直接进入正式聚合器。"""
+    row = {
+        "sample_id": "s1",
+        "label": "confirmed_violation",
+        "verdict": "violation_high",
+        "category": "ad",
+        "category_source": "model_predicted",
+        "kind": "text",
+        "latency_ms": None,
+        "latency_source": "none",
+        "unavailable": "",
+        "model_revision": "deepseek-flash@t204-v7",
+        "rule_revision": "rules+abc123",
+    }
+    with pytest.raises(ValueError, match="model-predicted"):
+        summarize_samples([EvaluationSample.from_dict(row)])
+    # 合并人工真值后的输出必须被接受
+    row["category_source"] = "manual_truth"
+    report = summarize_samples([EvaluationSample.from_dict(row)])
+    assert report["metrics"]["recall"] == 1.0
+
+
+def test_a03_legacy_latency_without_source_is_not_guessed(tmp_path) -> None:
+    """A03: 无来源声明的旧记录即使有数值也必须判未测，不得猜成端到端。"""
+    system = [_system_row("s1", "violation_high")]
+    system[0]["latency_ms"] = 10.0  # 旧记录：有数值但没有 latency_source 声明
     labels = [
         {
             "sample_id": "s1",
             "label": "confirmed_violation",
             "truth_category": "ad",
             "kind": "text",
-        },
-        {
-            "sample_id": "s2",
-            "label": "confirmed_violation",
-            "truth_category": "ad",
-            "kind": "text",
-        },
+        }
     ]
     out = _merge(tmp_path, system, labels)
-    assert [r["sample_id"] for r in _read(out)] == ["s1"]
+    rows = [EvaluationSample.from_dict(r) for r in _read(out)]
+    assert rows[0].latency_source == "none"
+    assert rows[0].latency_ms is None
+
+
+def test_a03_latency_gate_requires_coverage() -> None:
+    """A03: 100 条只有 1 条有端到端测量 → 覆盖率不足，延迟门槛不得判通过。"""
+    rows = []
+    for i in range(100):
+        measured = i == 0
+        rows.append(
+            EvaluationSample.from_dict(
+                {
+                    "sample_id": f"s{i}",
+                    "label": "confirmed_normal",
+                    "verdict": "allow",
+                    "category": "other",
+                    "category_source": "manual_truth",
+                    "kind": "text",
+                    "latency_ms": 10.0 if measured else None,
+                    "latency_source": "inbox" if measured else "none",
+                    "unavailable": "",
+                    "model_revision": "m",
+                    "rule_revision": "r",
+                }
+            )
+        )
+    report = summarize_samples(rows)
+    assert report["metrics"]["latency_measured_samples"] == 1
+    assert report["metrics"]["latency_missing_samples"] == 99
+    assert report["metrics"]["latency_coverage"] == 0.01
+    assert report["threshold_checks"]["text_latency"] is None

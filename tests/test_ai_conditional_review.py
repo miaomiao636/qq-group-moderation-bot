@@ -453,3 +453,42 @@ async def test_adapter_excludes_feedback_and_records_provider_token_usage():
     assert result.input_tokens == 123
     assert result.output_tokens == 45
     assert result.cost_known is False
+
+
+@pytest.mark.asyncio
+async def test_a04_successful_secondary_review_clears_original_needs_review(tmp_path):
+    """A04 正向回归: 主模型疑难(needs_review)+独立二审确认+同类别文字支持 → 应升级。
+
+    复现主审场景：视觉主模型判广告/0.99/needs_review=true，独立第二模型判广告/0.99/false，
+    文字结果同样判广告/0.99/false。三份结果一致、无类别或本地规则冲突——
+    已获有效二审消解的原始 needs_review 不得再否决最终结果。
+    """
+    primary = FakeVision("primary", "ad", 0.99, needs_review=True)
+    secondary = FakeVision("review", "ad", 0.99)
+    text = FakeText("text-model", "ad", 0.99)
+    decision, _ = await review_mixed(tmp_path, text, primary, secondary)
+    assert secondary.calls == 1
+    assert decision.verdict == "violation_high"
+    assert decision.category == "ad"
+    assert decision.recommended_actions == ["recall", "mute", "warn"]
+
+
+@pytest.mark.asyncio
+async def test_a04_unresolved_vision_gray_still_vetoes_text_ad(tmp_path):
+    """不削弱安全保护: 视觉疑难未获二审确认时，文字广告仍不得单独升罚。"""
+    primary = FakeVision("primary", "ad", 0.99, needs_review=True)
+    text = FakeText("text-model", "ad", 0.99)
+    decision, _ = await review_mixed(tmp_path, text, primary, None)
+    assert decision.verdict == "record_only"
+    assert decision.recommended_actions == []
+
+
+@pytest.mark.asyncio
+async def test_a04_failed_secondary_keeps_vision_gray_veto(tmp_path):
+    """不削弱安全保护: 二审调用失败（降级）时，文字广告同样不得单独升罚。"""
+    primary = FakeVision("primary", "ad", 0.99, needs_review=True)
+    secondary = FakeVision("review", "ad", 0.99, fails=True)
+    text = FakeText("text-model", "ad", 0.99)
+    decision, _ = await review_mixed(tmp_path, text, primary, secondary)
+    assert decision.verdict == "record_only"
+    assert decision.recommended_actions == []

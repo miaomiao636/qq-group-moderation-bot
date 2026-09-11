@@ -68,7 +68,10 @@
 W1-lite 窗口内生产 e2e 正常（见 `docs/evidence/2026-09-10-W1/README.md`）。
 runD（旧配置）image p95 26671ms 同样受重放并发影响。
 
-## 7. 结论
+## 7. 结论（历史章节，2026-09-11 早）
+
+> **注意：本节为历史记录，部分表述已被后续审核修正。** "全部门槛达标"当时基于旧预测分类口径；
+> 权威结论请以 `docs/evidence/2026-09-11-review-index.md`（分项 PASS/FAIL/NOT_TESTED）为准。
 
 1. **9 个失败样本中 0 个为模型真实错误**：8 个标签错误 + 1 个口径待定。
 2. 修正标签后，生产配置 `deepseek-flash@t204-v6` 达到 **precision 100% / recall 98.2%~100%**，全部门槛达标。
@@ -86,7 +89,10 @@ runD（旧配置）image p95 26671ms 同样受重放并发影响。
 
 最终重放(160样本, 92次真实AI调用):
 - t204-v6首重放: TP52/FP2/FN7 precision96.3% recall88.1%
-- t204-v7正式(w2_runF_final): TP72/FP0/FN0/TN88 **precision 100% recall 100% thresholds全部达标**
+- t204-v7正式(w2_runF_final): TP72/FP0/FN0/TN88 **precision 100% recall 100%**
+  ⚠️ 历史记录：当时报告"thresholds 全部达标"的类别/延迟口径已被主审修正——
+  权威分项结论（含 ad 类别不可判、fraud 未测、延迟覆盖率要求）见
+  `docs/evidence/2026-09-11-review-index.md`。
 
 证据: 本目录 w2_runF_final.json / w2_manifest_v7.json / w2_debug_v7.jsonl; 标签备份 data/w2_labels_all.pre-*.jsonl
 延迟口径见第6节(replay压力条件, 生产e2e按onebot_inbox口径)。

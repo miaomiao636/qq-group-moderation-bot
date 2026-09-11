@@ -201,17 +201,29 @@ async def main() -> None:
                     ],
                 }
             )
+            # A01：回放默认输出标记 category_source=model_predicted——这是"系统预测类别"，
+            # 不是人工真值；正式聚合器（app.reports.evaluation）会明确拒绝，
+            # 必须先经 scripts/w2_sample_merge.py 合并人工真值后才能进入正式报告。
+            row_unavailable = ""
+            row_verdict = verdict
+            if verdict == "ERROR":
+                row_unavailable = "error"
+                row_verdict = "record_only"
+            elif degraded:
+                row_unavailable = "degraded"
             rows.append(
                 {
                     "sample_id": item["sample_id"],
                     "label": item["label"],
-                    "verdict": verdict,
+                    "verdict": row_verdict,
                     "category": predicted,
+                    "category_source": "model_predicted",
                     "kind": item["kind"],
                     # S07：回放没有 inbox 端到端证据，延迟必须显式未测；
                     # AI 子链耗时只留在 debug 供诊断，不得进入端到端门槛。
                     "latency_ms": None,
                     "latency_source": "none",
+                    "unavailable": row_unavailable,
                     "model_revision": model_revision,
                     "rule_revision": f"rules+{rules_digest}",
                 }

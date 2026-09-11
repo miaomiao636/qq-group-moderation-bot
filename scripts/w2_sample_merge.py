@@ -60,7 +60,7 @@ def main() -> None:
     labels = _load_unique(Path(args.labels), "labels")
     system = _load_unique(Path(args.system), "system")
 
-    rows, missing_category, errors, degraded = [], 0, 0, 0
+    rows, missing_category, unavailable_count = [], 0, 0
     for sid, lab in labels.items():
         label = (lab.get("label") or "").strip()
         if not label:
@@ -78,12 +78,6 @@ def main() -> None:
                 f"S05：system 行缺少 model_revision/rule_revision（{sid}）—— "
                 "请使用新版 scripts/w2_replay.py 重新回放；跨版本混拼的输入不得评测"
             )
-        if sysrow.get("verdict") == "ERROR":
-            errors += 1
-            continue  # R08：失败样本不进入评测，避免伪装成正常放行/漏判
-        if sysrow.get("degraded"):
-            degraded += 1
-            continue  # S08：降级样本（供应商故障被捕获）同样不得进入评测
         truth_cat = (lab.get("truth_category") or "").strip()
         # S02：缺真值类别的样本不得回退 other——漏判广告会被归入 other 使类别召回虚高。
         # 缺真值即排除，并计入 missing_category 由报告声明。
@@ -94,14 +88,23 @@ def main() -> None:
             continue
         kind = sysrow["kind"] if sysrow["kind"] in KINDS else "unknown"
         verdict = sysrow["verdict"]
+        # A02：降级/异常样本**保留在端到端召回分母**，不得删除缩小分母。
+        # 其真实结果就是"未自动识别/转人工"，以 unavailable 标记并在报告中单列。
+        unavailable = ""
+        if verdict == "ERROR":
+            unavailable = "error"
+            verdict = "record_only"
+        elif sysrow.get("degraded"):
+            unavailable = "degraded"
         if verdict not in VERDICTS:
             raise SystemExit(f"非法 verdict '{verdict}' @ {sid}")
-        # S07：latency_ms 只接受 inbox 端到端证据；回放口径必须显式 none/null。
+        if unavailable:
+            unavailable_count += 1
+        # A03：延迟来源不做任何推断——未显式声明 inbox 一律未测；
+        # 只有数值而没有来源声明（旧记录）不得猜成端到端。
         latency_ms = sysrow.get("latency_ms")
-        latency_source = sysrow.get("latency_source") or (
-            "inbox" if isinstance(latency_ms, (int, float)) else "none"
-        )
-        if latency_source != "inbox":
+        latency_source = sysrow.get("latency_source")
+        if latency_source != "inbox" or not isinstance(latency_ms, (int, float)):
             latency_ms = None
             latency_source = "none"
         rows.append(
@@ -110,9 +113,11 @@ def main() -> None:
                 "label": label,
                 "verdict": verdict,
                 "category": truth_cat,
+                "category_source": "manual_truth",
                 "kind": kind,
                 "latency_ms": latency_ms,
                 "latency_source": latency_source,
+                "unavailable": unavailable,
                 "model_revision": sysrow["model_revision"][:128],
                 "rule_revision": sysrow["rule_revision"][:128],
             }
@@ -130,9 +135,8 @@ def main() -> None:
     print(
         f"已生成 {len(rows)} 条 → {args.out}\n"
         f"  缺 truth_category（S02，已排除而非记 other）: {missing_category} 条\n"
-        f"  回放异常样本（R08，已排除）: {errors} 条\n"
-        f"  供应商降级样本（S08，已排除）: {degraded} 条\n"
-        f"  延迟: latency_source=none（回放无端到端证据）；p95 门槛将显示为未测（S07）"
+        f"  降级/异常样本（A02，保留在分母、标记 unavailable）: {unavailable_count} 条\n"
+        f"  延迟: 无显式 inbox 声明一律未测；p95 门槛按覆盖率判定（A03）"
     )
 
 
