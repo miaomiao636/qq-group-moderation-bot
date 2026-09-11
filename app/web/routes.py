@@ -1404,6 +1404,13 @@ async def groups_page(request: Request, notice: str = "") -> Response:
         }
         settings_rows = (await session.scalars(select(ProviderGroupSettings))).all()
         settings_map = {(row.provider, row.external_group_id): row for row in settings_rows}
+        from app.models import GroupAlias
+
+        # 群备注与「群名称备注」统一为同一份数据（影子判定页显示的就是它）
+        alias_map = {
+            row.group_openid: row.name
+            for row in (await session.scalars(select(GroupAlias))).all()
+        }
         seen.update(settings_map)
         owners = {
             row.external_group_id: row.provider
@@ -1421,7 +1428,8 @@ async def groups_page(request: Request, notice: str = "") -> Response:
             f'<form method=post action="/admin/groups/settings">{csrf}'
             f'<input type=hidden name=provider value="{_esc(provider)}">'
             f'<input type=hidden name=group_openid value="{_esc(group)}">'
-            f'<label>群备注 <input name=name maxlength=64 value="{_esc(gs.name if gs else "")}"></label> '
+            f'<label>群备注 <input name=name maxlength=64 value="'
+            f'{_esc(alias_map.get(group) or (gs.name if gs else ""))}"></label> '
             f"<label><input type=checkbox name=moderation_enabled value=1 {'checked' if gs is None or gs.moderation_enabled else ''}>审核</label> "
             f"<label><input type=checkbox name=action_enabled value=1 {'checked' if gs and gs.action_enabled else ''}>真实动作</label> "
             "<button class=btn>保存 / 预览高风险变更</button></form></td></tr>"
@@ -1476,6 +1484,17 @@ async def save_group_settings(
         )
     if result.get("confirmation_required"):
         return RedirectResponse(str(result["approval_url"]), status_code=303)
+    # 群备注与「群名称备注」统一为同一份数据（GroupAlias），影子判定页据此显示群名
+    if name.strip():
+        async with SessionLocal() as session:
+            from app.models import GroupAlias
+
+            existing = await session.get(GroupAlias, group_openid)
+            if existing is None:
+                existing = GroupAlias(group_openid=group_openid)
+                session.add(existing)
+            existing.name = name.strip()[:64]
+            await session.commit()
     return RedirectResponse("/admin/groups?notice=" + quote("设置已保存"), status_code=303)
 
 
