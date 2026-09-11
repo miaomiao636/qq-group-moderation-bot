@@ -13,6 +13,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from typing import Any
 
@@ -22,12 +23,45 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.adapters.onebot.parser import OneBotMessageSource
 from app.adapters.qq_official.media import download_attachment
 from app.core.contracts import MessageParseError, MessageSource, StandardMessage
+from app.db import SessionLocal
 from app.moderation.image_engine import ImageModerationEngine
 from app.moderation.rules import TextRuleEngine
 from app.runtime.models import ShadowDecision
 from app.runtime.pipeline import MEDIA_DIR, run_pipeline
 
 logger = logging.getLogger(__name__)
+
+# 进程内去重：每个群只尝试一次自动备注（避免新群刷屏时反复调 API）
+_alias_attempted: set[str] = set()
+
+
+async def _autoname_group_task(group_id: str) -> None:
+    """首次见到群时自动从 NapCat 拉取群名写入备注（人工备注永不覆盖）。
+
+    设计为后台任务：不阻塞消息审核；失败静默（这是便利功能）。
+    """
+    try:
+        async with SessionLocal() as session:
+            from app.models import GroupAlias
+            from app.runtime.onebot_actions import onebot_action_hub
+
+            if await session.get(GroupAlias, group_id) is not None:
+                return  # 人工已备注，绝不覆盖
+            resp = await onebot_action_hub.call(
+                "get_group_info", {"group_id": int(group_id)}
+            )
+            name = str((resp or {}).get("group_name") or "").strip()
+            if not name:
+                return
+            existing = await session.get(GroupAlias, group_id)
+            if existing is None:
+                existing = GroupAlias(group_openid=group_id)
+                session.add(existing)
+            existing.name = name[:64]
+            await session.commit()
+            logger.info("自动备注群 %s -> %s", group_id, name[:64])
+    except Exception:  # noqa: BLE001 - 便利功能，任何失败都不影响审核主链
+        logger.debug("自动备注群 %s 失败（忽略）", group_id, exc_info=True)
 
 
 def build_onebot_message_source() -> MessageSource:
@@ -104,7 +138,7 @@ async def process_onebot_event(
         msg = parse_onebot_event(current_payload)
         await download_onebot_media(current_payload, msg, key, dl_client)
 
-    return await run_pipeline(
+    result = await run_pipeline(
         payload,
         session,
         message_source=OneBotMessageSource(),
@@ -113,3 +147,9 @@ async def process_onebot_event(
         image_engine=image_engine,
         prepare_payload=_prepare,
     )
+    # 100+ 群场景：首次见到群时自动拉取群名作备注（后台任务，不阻塞审核）
+    group_id = str(payload.get("group_id") or "")
+    if group_id and group_id not in _alias_attempted:
+        _alias_attempted.add(group_id)
+        asyncio.create_task(_autoname_group_task(group_id))
+    return result

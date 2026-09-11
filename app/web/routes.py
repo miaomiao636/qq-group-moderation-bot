@@ -684,7 +684,14 @@ async def shadow_page(request: Request, verdict: str = "") -> Response:
         '<div class=card style="margin-top:20px"><h3>群名称备注</h3>'
         "<p class=muted>官方接口只提供群加密OpenID。把下面各OpenID对应的群名填一次，"
         "之后列表将直接显示群名称。</p>"
-        f"<table><tr><th>群OpenID</th><th>已备注</th><th>备注操作</th></tr>{group_forms}</table></div>"
+        f"<table><tr><th>群OpenID</th><th>已备注</th><th>备注操作</th></tr>{group_forms}</table>"
+        '<form method=post action="/admin/groups/alias/bulk" style="margin-top:12px">'
+        f"{csrf}"
+        '<label style="display:block"><b>批量导入</b>（每行一条，格式：群ID 群名，空格分隔；'
+        "适合接入 100+ 群时一次性维护）</label>"
+        '<textarea name=bulk rows=5 style="width:100%;font-family:monospace" '
+        'placeholder="17598122 靠谱日结兼职群&#10;470794920 大学生兼职群"></textarea>'
+        '<button class=btn style="margin-top:6px">批量保存</button></form></div>'
     )
     return _page("影子判定", body, refresh_seconds=30)
 
@@ -868,6 +875,44 @@ async def save_group_alias(
         await _operator(request), "group_alias_save", "group", group_openid, {"name": name[:64]}
     )
     return RedirectResponse("/admin/shadow", status_code=303)
+
+
+@router.post("/groups/alias/bulk")
+async def bulk_group_alias(
+    request: Request,
+    bulk: str = Form(""),
+    csrf: str = Form(""),
+) -> Response:
+    """批量导入群备注：每行「群ID 群名」（空白分隔）。适配 100+ 群接入场景。"""
+    await _require_admin_post(request, csrf)
+    added, skipped = 0, 0
+    async with SessionLocal() as session:
+        from app.models import GroupAlias
+
+        for line in bulk.splitlines():
+            parts = line.split(None, 1)
+            if len(parts) != 2 or not parts[0].strip() or not parts[1].strip():
+                skipped += 1
+                continue
+            gid, group_name = parts[0].strip(), parts[1].strip()[:64]
+            existing = await session.get(GroupAlias, gid)
+            if existing is None:
+                existing = GroupAlias(group_openid=gid)
+                session.add(existing)
+            existing.name = group_name
+            added += 1
+        await session.commit()
+    await record_admin_audit(
+        await _operator(request),
+        "group_alias_bulk",
+        "group",
+        f"n={added}",
+        {"skipped": skipped},
+    )
+    return RedirectResponse(
+        "/admin/shadow?notice=" + quote(f"批量导入完成：成功 {added} 条，跳过 {skipped} 行"),
+        status_code=303,
+    )
 
 
 # ---------- 规则视图 ----------
