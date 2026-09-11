@@ -1,13 +1,11 @@
 """把人工盲标结果合并为评测工具所需的「元数据-only」JSONL。
 
-盲标流程：
-1. `_w2_export.py` 产出 `<out>-labeling.jsonl`（含内容，不含系统判定）与 `<out>-system.jsonl`。
-2. 标注人在 `-labeling.jsonl` 每行填 `label`（confirmed_violation / confirmed_normal / false_positive）。
-3. 本脚本合并 `-labeling.jsonl`(label) + `-system.jsonl`(verdict/category/延迟) →
-   评测工具 `app.reports.evaluation` 所需的严格字段 JSONL。
-
-约束（与评测工具 schema 一致）：label/verdict/kind/category 枚举校验、latency_ms≥0、
-model_revision/rule_revision 非空、sample_id 唯一、单一模型/规则版本。
+R03：评测的 ``category`` 必须来自人工真值（truth_category），不得使用模型预测类别——
+否则漏判样本会被归到 other，类别召回虚高。
+R07：latency_ms 在重放口径下是 **AI 子链耗时**，不是端到端；端到端门槛必须用
+``onebot_inbox``（updated_at-created_at）另行测量。本脚本输出的报告只用于
+精确率/召回；延迟门槛的证据另有来源。
+R09：重复 sample_id 在建字典前即检测，冲突直接报错（strict 与否都报）。
 """
 
 from __future__ import annotations
@@ -23,58 +21,69 @@ if _reconfigure is not None:
     _reconfigure(encoding="utf-8")
 
 LABELS = {"confirmed_violation", "confirmed_normal", "false_positive"}
-VERDICTS = {"allow", "record_only", "violation_high"}
+VERDICTS = {"allow", "record_only", "violation_high", "ERROR"}
 KINDS = {"text", "image", "gif", "video", "audio", "file", "share_card", "mixed", "unknown"}
 CATEGORIES = {"ad", "fraud", "porn", "violence", "flood", "other"}
-# 类别回落映射
-CAT_MAP = {"": "other", "normal": "other", "null": "other", "None": "other"}
 
 
-def _load(path: Path) -> dict[str, dict[str, Any]]:
+def _load_list(path: Path) -> list[dict[str, Any]]:
+    """R09：保留全部行，由调用方先做重复检测。"""
+    return [
+        json.loads(line) for line in path.read_text(encoding="utf-8").splitlines() if line.strip()
+    ]
+
+
+def _load_unique(path: Path, what: str) -> dict[str, dict[str, Any]]:
+    """R09：先检测重复再建索引，冲突报错，绝不静默覆盖。"""
     out: dict[str, dict[str, Any]] = {}
     for line in path.read_text(encoding="utf-8").splitlines():
-        if line.strip():
-            obj = json.loads(line)
-            out[obj["sample_id"]] = obj
+        if not line.strip():
+            continue
+        row = json.loads(line)
+        sid = row["sample_id"]
+        if sid in out:
+            if out[sid] != row:
+                raise SystemExit(f"R09：{what} 存在冲突的重复 sample_id: {sid}")
+            continue
+        out[sid] = row
     return out
 
 
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__)
-    ap.add_argument("--labeling", default="data/w2_candidates-labeling.jsonl")
-    ap.add_argument("--system", default="data/w2_candidates-system.jsonl")
+    ap.add_argument("--labels", default="data/w2_labels_all.jsonl")
+    ap.add_argument("--system", default="data/w2_debug.jsonl")
     ap.add_argument("--out", default="data/w2_samples.jsonl")
     ap.add_argument("--strict", action="store_true", help="遇到未标注行即报错")
     args = ap.parse_args()
 
-    labeling = _load(Path(args.labeling))
-    system = _load(Path(args.system))
+    labels = _load_unique(Path(args.labels), "labels")
+    system = _load_unique(Path(args.system), "system")
 
-    rows, skipped = [], 0
-    for sid, lab in labeling.items():
+    rows, missing_category, errors = [], 0, 0
+    for sid, lab in labels.items():
         label = (lab.get("label") or "").strip()
         if not label:
             if args.strict:
-                raise SystemExit(f"未标注: {sid}")
-            skipped += 1
+                raise SystemExit(f"R09/未标注: {sid}")
             continue
         if label not in LABELS:
             raise SystemExit(f"非法 label '{label}' @ {sid}")
         sysrow = system.get(sid)
         if not sysrow:
             raise SystemExit(f"system 缺失: {sid}")
+        if sysrow.get("verdict") == "ERROR":
+            errors += 1
+            continue  # R08：失败样本不进入评测，避免伪装成正常放行/漏判
+        truth_cat = (lab.get("truth_category") or "").strip()
+        if not truth_cat:
+            missing_category += 1
         kind = sysrow["kind"] if sysrow["kind"] in KINDS else "unknown"
-        cat = CAT_MAP.get(sysrow.get("category") or "", sysrow.get("category") or "other")
-        if cat not in CATEGORIES:
-            cat = "other"
+        # R03：category 必须是人工真值类别；无真值类别时用 other 占位并在清单中声明
+        cat = truth_cat if truth_cat in CATEGORIES else "other"
         verdict = sysrow["verdict"]
         if verdict not in VERDICTS:
             raise SystemExit(f"非法 verdict '{verdict}' @ {sid}")
-        lat = sysrow.get("latency_ms")
-        if lat is None:
-            lat = sysrow.get("latency_ai_ms")
-        if lat is None:
-            raise SystemExit(f"无延迟数据 @ {sid}（inbox 与 ai 均缺）")
         rows.append(
             {
                 "sample_id": sid,
@@ -82,7 +91,7 @@ def main() -> None:
                 "verdict": verdict,
                 "category": cat,
                 "kind": kind,
-                "latency_ms": float(lat),
+                "latency_ms": float(sysrow.get("latency_ai_ms") or 0),
                 "model_revision": sysrow["model_revision"][:128],
                 "rule_revision": sysrow["rule_revision"][:128],
             }
@@ -97,7 +106,12 @@ def main() -> None:
         "\n".join(json.dumps(r, ensure_ascii=False) for r in rows) + ("\n" if rows else ""),
         encoding="utf-8",
     )
-    print(f"已生成 {len(rows)} 条 → {args.out}（跳过未标注 {skipped}）")
+    print(
+        f"已生成 {len(rows)} 条 → {args.out}\n"
+        f"  其中缺 truth_category（类别指标不可信）: {missing_category} 条\n"
+        f"  回放失败样本（R08，已排除）: {errors} 条\n"
+        f"  注意：latency 为 AI 子链口径，端到端延迟须用 onebot_inbox 证据（R07）"
+    )
 
 
 if __name__ == "__main__":

@@ -26,6 +26,29 @@ def _load(path: Path) -> list[dict[str, Any]]:
     return [json.loads(x) for x in path.read_text(encoding="utf-8").splitlines() if x.strip()]
 
 
+def _safe_script_json(payload: str) -> str:
+    """把 JSON 安全嵌入 <script>：群文本不可信，</script> 会提前闭合标签（R02）。
+
+    \\uXXXX 是 JSON 合法转义，前端 JSON.parse 还原后值不变。
+    """
+    return payload.replace("<", "\\u003c").replace(">", "\\u003e").replace("&", "\\u0026")
+
+
+def _blind_items(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """盲标独立性：只导出标注所需字段，剥离系统预测，页面不携带任何判定。"""
+    return [
+        {
+            "sample_id": it["sample_id"],
+            "kind": it["kind"],
+            "text": it["text"],
+            "media": it["media"],
+            "label": "",
+            "truth_category": "",
+        }
+        for it in items
+    ]
+
+
 def _dedup_key(row: dict[str, Any]) -> str:
     media = row.get("media") or []
     if media:
@@ -79,7 +102,11 @@ def main() -> None:
     picked += prio3[:room]
     rng.shuffle(picked)
 
-    payload = json.dumps(picked, ensure_ascii=False)
+    # R02：群文本是不可信输入。json.dumps 不转义 </script>，直接拼进 <script> 会被
+    # 提前闭合并注入脚本。统一把 < > & 转成 \uXXXX（JSON 合法转义，前端还原后值不变），
+    # 同时只导出盲标所需字段，页面不再携带系统预测（保证盲标独立性）。
+    picked = _blind_items(picked)
+    payload = _safe_script_json(json.dumps(picked, ensure_ascii=True))
     page = _render(payload)
     Path(args.out).write_text(page, encoding="utf-8")
 
@@ -119,8 +146,9 @@ const DATA = """
         + """;
 const KEY='w2labels';
 let L=JSON.parse(localStorage.getItem(KEY)||'{}');
-function save(){localStorage.setItem(KEY,JSON.stringify(L));render();}
+function save(){localStorage.setItem(KEY,JSON.stringify(L));localStorage.setItem(KEY+'_cat',JSON.stringify(C));render();}
 function mark(id,v){L[id]=v;save();}
+function setCat(id,v){C[id]=v;save();}
 function render(){
  const app=document.getElementById('app');app.innerHTML='';
  let done=0;
@@ -129,6 +157,10 @@ function render(){
   let h='<div class="sid">#'+(i+1)+' / '+DATA.length+' · '+d.sample_id+' · '+d.kind+'</div>';
   if(d.text) h+='<div class="txt">'+ESC(d.text)+'</div>';
   (d.media||[]).forEach(m=>{h+='<img src="'+m.replace(/\\\\/g,'/').replace('data/','')+'" loading="lazy">';});
+  h+='<div class="catrow">真值类别(人工独立判断): '
+   +'<select onchange="setCat(\\''+d.sample_id+'\\',this.value)">'
+   +['','ad','fraud','porn','violence','flood','other'].map(c=>'<option'+(C[d.sample_id]===c?' selected':'')+'>'+c+'</option>').join('')+'</select>'
+   +'<span class="badge">'+(C[d.sample_id]||'未选')+'</span></div>';
   h+='<div class="btns">'
    +'<button class="v" onclick="mark(\\''+d.sample_id+'\\',\\'confirmed_violation\\')">违规 (v)</button>'
    +'<button class="n" onclick="mark(\\''+d.sample_id+'\\',\\'confirmed_normal\\')">正常 (n)</button>'
@@ -141,7 +173,7 @@ function render(){
 }
 function ESC(s){const d=document.createElement('div');d.textContent=s;return d.innerHTML;}
 function dump(){
- const lines=DATA.filter(d=>L[d.sample_id]).map(d=>JSON.stringify({sample_id:d.sample_id,kind:d.kind,text:d.text,media:d.media,label:L[d.sample_id]}));
+ const lines=DATA.filter(d=>L[d.sample_id]).map(d=>JSON.stringify({sample_id:d.sample_id,kind:d.kind,text:d.text,media:d.media,label:L[d.sample_id],truth_category:C[d.sample_id]||''}));
  document.getElementById('out').value=lines.join('\\n');
  const blob=new Blob([lines.join('\\n')+'\\n'],{type:'text/plain'});
  const a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download='w2_labels.jsonl';a.click();

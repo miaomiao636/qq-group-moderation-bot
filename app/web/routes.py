@@ -1453,8 +1453,7 @@ async def groups_page(request: Request, notice: str = "") -> Response:
 
         # 群备注与「群名称备注」统一为同一份数据（影子判定页显示的就是它）
         alias_map = {
-            row.group_openid: row.name
-            for row in (await session.scalars(select(GroupAlias))).all()
+            row.group_openid: row.name for row in (await session.scalars(select(GroupAlias))).all()
         }
         seen.update(settings_map)
         owners = {

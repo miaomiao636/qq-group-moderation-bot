@@ -47,9 +47,7 @@ async def _autoname_group_task(group_id: str) -> None:
 
             if await session.get(GroupAlias, group_id) is not None:
                 return  # 人工已备注，绝不覆盖
-            resp = await onebot_action_hub.call(
-                "get_group_info", {"group_id": int(group_id)}
-            )
+            resp = await onebot_action_hub.call("get_group_info", {"group_id": int(group_id)})
             name = str((resp or {}).get("group_name") or "").strip()
             if not name:
                 return

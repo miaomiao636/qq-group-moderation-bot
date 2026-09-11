@@ -7,6 +7,7 @@ selected image bytes to `/chat/completions` and accepts only strict JSON.
 from __future__ import annotations
 
 import base64
+import hashlib
 import json
 import time
 from typing import Any
@@ -55,6 +56,9 @@ class OpenAICompatibleTextModerator:
         self.provider = provider
         rules = extra_system_rules.strip()
         self.system_prompt = f"{SYSTEM_PROMPT}\n{rules}" if rules else SYSTEM_PROMPT
+        # R05：实际生效提示词（含外置业务规则）的摘要，必须参与缓存指纹——
+        # 否则改规则后旧缓存仍命中，审核口径漂移。
+        self.prompt_digest = hashlib.sha256(self.system_prompt.encode("utf-8")).hexdigest()[:16]
         self._client = client or httpx.AsyncClient(timeout=timeout_seconds)
         self._owns_client = client is None
 

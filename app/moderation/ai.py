@@ -676,7 +676,13 @@ class AIReviewService:
         cache_request = request.model_copy(
             update={
                 "policy_context": (
-                    request.policy_context + "|" + str(getattr(moderator, "base_url", ""))
+                    request.policy_context
+                    + "|"
+                    + str(getattr(moderator, "base_url", ""))
+                    + "|"
+                    # R05：实际生效提示词摘要（含外置业务规则）必须进入缓存指纹，
+                    # 否则改规则后旧缓存仍命中。
+                    + str(getattr(moderator, "prompt_digest", ""))
                 )
             }
         )
@@ -870,17 +876,27 @@ def merge_ai_evidence(
             and not primary.needs_review
         ):
             candidates.append(primary)
-    # 文字通道：实测广告文本不被确定性规则命中，AI 是唯一判据；若不允许直接升级，
-    # 整类文字广告会永远停在 record_only（W2 回放实测 recall 仅 52%）。仅限 ad/fraud
-    # 两类且未要求人工复核，避免泛化误伤。
+    # 文字通道（R01）：与视觉完全同一套本地保护。实测广告文本不被确定性规则命中，
+    # AI 是唯一判据，允许高置信直接升级；但规则/白名单冲突、本地类别冲突、
+    # needs_review、unknown_category 一律不升级（转人工或条件复核）。
+    # 此前仅检查类别/置信度，复现了"本地已判转人工却被升级为撤回+禁言建议"。
     for text_result in ai_results:
-        if (
-            text_result.source == "text"
+        if text_result.source != "text" or text_result.degraded_reason:
+            continue
+        reason = secondary_review_reason(
+            text_result,
+            local,
+            direct_threshold=primary_direct_threshold,
+            low_threshold=secondary_review_low,
+        )
+        if reason in ("rule_or_allowlist_conflict", "local_category_conflict"):
+            unresolved = True
+        elif (
+            reason == ""
             and text_result.category in ("ad", "fraud", "porn")
             and text_result.confidence
             >= _direct_threshold(text_result.category, primary_direct_threshold)
             and not text_result.needs_review
-            and not text_result.degraded_reason
         ):
             candidates.append(text_result)
     # An orphaned secondary can never become a new primary by filtering.
