@@ -33,7 +33,10 @@
 
 - 模型: deepseek-flash（主）+ qwen3.8-flash（灰区复核）
 - 提示词: t204-v7 + config/ai_prompt_rules.txt（严格口径: 推广外部产品=ad）
-- 模式: SAFE / SHADOW / 动作关 / DB急停激活 / action_intents=0
+- 模式: **ACTION_MODE=OFFICIAL** / `ONEBOT_ACTION_STAGE=recall_only`（仅撤回）/ `ONEBOT_ACTIONS_ENABLED=true`
+  ——负责人授权 D-025（2026-09-12）：**群级「真实动作」开关默认全关，逐群显式授权后生效**
+- 安全兜底: 急停随时可用（后台按钮 / `EMERGENCY_STOP=true` / `ONEBOT_ACTIONS_ENABLED=false`）；
+  `action_intents` 持续审计中
 
 ## 通知通道（如实表述）
 
