@@ -1,6 +1,6 @@
 # W1/T-303 影子接收窗口（2026-09-10 起）
 
-状态：**进行中**（本文件记录启动基线；24h 汇总证据待窗口结束后补充）
+状态：**已完成（W1-lite，1h 简化窗口）**——负责人 2026-09-11 决定以 1h 简单测试替代 24h 窗口，见下方「W1-lite 结果」。
 
 ## 启动基线
 
@@ -25,14 +25,36 @@
 - `/healthz`：`status=ok`、`mode=SAFE`、`onebot.state=ready`、`connected=true`、`login_state=online`、`storage_available=true`
 - 队列积压 0；NapCat 反向 WS 已连接
 
-## 待采集证据（窗口结束后填写）
+## W1-lite 结果（1h 简化窗口，负责人决定）
 
-- [ ] 逐类消息计数（text/image/gif/video/audio/file/share_card/mixed/unknown，含发送清单）
-- [ ] 接收/判定去重计数、失联窗口、按群最后事件、队列积压
-- [ ] 实际出站动作计数 = 0（`action_intents` 与 Adapter 调用双重证据）
-- [ ] 故障演练：WebSocket 断开重连、QQ 退出/恢复、重复事件
-- [ ] 正常静默群与消息断流的区分
-- [ ] 缺口量化（不能仅凭 DB 内部自洽宣称零丢失）
+**负责人决定（2026-09-11）**：「W1 重开 1h 简单测试就好」——以 1h 自然流入观察替代 24h 窗口。
+
+| 项 | 值 |
+|---|---|
+| 窗口 | 2026-09-11T10:26:47Z → 11:30Z（本地 18:26 → 19:30，约 1h） |
+| 服务状态 | `status=ok` / `mode=SAFE` / `onebot.state=ready` / `connected=true` / backlog 0 |
+| inbox 处理 | `onebot_inbox` 66 行，**全部 DONE**，无失败/重试残留 |
+| 真实群判定 | 群 `470794920` 共 **6 条**：image record_only×4、text allow×1、text record_only×1、**text violation_high×1** |
+| AI 主模型 | `deepseek-flash`：**窗口内 0 错误**（今日早间 129 次失败均属旧模型名 `deepseek-v4-flash-vision-exp` 退役期，最后一次失败 10:07:14Z，早于窗口起点 19 分钟） |
+| AI 复核模型 | `qwen3.8-flash`：5 次灰区二审全部成功（`vision_secondary` 路径首次实战验证 ✅） |
+| 动作计数 | `action_intents` 全量 = **0** ✅（SHADOW + 动作关 + DB 急停） |
+| 窗口内并行流量 | `w2-replay` 评测重放产生 208 次 AI 调用（`external_group_id='w2-replay'` 可区分，**不产生真实影子判定**） |
+
+### 结论
+
+- **接收稳定性 PASS**（1h 规模）：事件→DONE 全成功、队列零积压、判定正常落库、违规路径（violation_high）正常触发。
+- **DeepSeek 双模型配置 PASS**：主模型零错误，异源复核路径可用。
+- **动作防线 PASS**：`action_intents=0`。
+
+### NOT_TESTED（如实声明）
+
+| 项 | 原因 |
+|---|---|
+| 长时稳定性（>1h，含静默群区分、失联窗口） | 负责人决定以 1h 简化窗口替代 24h |
+| 故障演练（WS 断开重连、QQ 退出/恢复、重复事件） | 负责人早前决定「稍后安排」 |
+| 新配置下的类型覆盖（gif/video/voice/file/转发/引用） | 1h 自然流入仅出现 text/image；此前 24h mimo 窗口曾覆盖 share_card/gif/video 但属旧配置版本 |
+
+## 待采集证据（原 24h 窗口清单，仅 lite 窗口部分采集，见上）
 
 ## ⚠️ 模型切换与窗口重置（2026-09-10 晚）
 
