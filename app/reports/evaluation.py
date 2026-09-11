@@ -20,6 +20,7 @@ _FIELDS = {
     "category",
     "kind",
     "latency_ms",
+    "latency_source",
     "model_revision",
     "rule_revision",
 }
@@ -27,6 +28,7 @@ _LABELS = {"confirmed_violation", "confirmed_normal", "false_positive"}
 _VERDICTS = {"allow", "record_only", "violation_high"}
 _KINDS = {"text", "image", "gif", "video", "audio", "file", "share_card", "mixed", "unknown"}
 _CATEGORIES = {"ad", "fraud", "porn", "violence", "flood", "other"}
+_LATENCY_SOURCES = {"inbox", "none"}
 
 
 @dataclass(frozen=True)
@@ -36,7 +38,8 @@ class EvaluationSample:
     verdict: str
     category: str
     kind: str
-    latency_ms: float
+    latency_ms: float | None
+    latency_source: str
     model_revision: str
     rule_revision: str
 
@@ -56,11 +59,16 @@ class EvaluationSample:
             ("verdict", _VERDICTS),
             ("kind", _KINDS),
             ("category", _CATEGORIES),
+            ("latency_source", _LATENCY_SOURCES),
         ):
             if value[name] not in allowed:
                 raise ValueError(f"invalid {name}")
         latency = value["latency_ms"]
-        if type(latency) not in (int, float) or not math.isfinite(latency) or latency < 0:
+        if value["latency_source"] == "none":
+            # 未测就是未测：不允许用 AI 子链耗时或 0 冒充端到端延迟（R07/S07）。
+            if latency is not None:
+                raise ValueError("latency_ms must be null when latency_source is none")
+        elif type(latency) not in (int, float) or not math.isfinite(latency) or latency < 0:
             raise ValueError("invalid latency_ms")
         return cls(**value)
 
@@ -75,7 +83,7 @@ def _metrics(rows: list[EvaluationSample]) -> dict[str, Any]:
     fp = sum(r.label != "confirmed_violation" and r.verdict == "violation_high" for r in rows)
     fn = len(positives) - tp
     tn = len(rows) - tp - fp - fn
-    latency = sorted(r.latency_ms for r in rows)
+    latency = sorted(r.latency_ms for r in rows if r.latency_ms is not None)
     return {
         "samples": len(rows),
         "positive_samples": len(positives),

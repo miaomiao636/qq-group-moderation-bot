@@ -805,6 +805,29 @@ def _direct_threshold(category: str | None, base: float) -> float:
     return max(base, _FRAUD_DIRECT_MIN) if category == "fraud" else base
 
 
+def _confident_normal(result: AIModerationResult, low_threshold: float) -> bool:
+    """确定性正常结论：无违规类别、未降级、不需人工且置信度达门槛（S01）。"""
+    return (
+        not result.degraded_reason
+        and result.category is None
+        and not result.needs_review
+        and result.confidence >= low_threshold
+    )
+
+
+def _cross_modal_veto(opposite: list[AIModerationResult], low_threshold: float) -> bool:
+    """跨模态矛盾检测（S01/R01 未闭环项）。
+
+    对面模态对同一内容给出确定性正常、或明确要求人工时，本模态不得单独升罚。
+    只对确实产生过结论的模态生效：文字通道仅在文本非空时调用、
+    视觉通道仅在存在媒体时调用，因此"另一模态未参与"不构成矛盾。
+    """
+    return any(
+        not r.degraded_reason and (_confident_normal(r, low_threshold) or r.needs_review)
+        for r in opposite
+    )
+
+
 def merge_ai_evidence(
     local: ModerationDecision,
     ai_results: list[AIModerationResult],
@@ -835,6 +858,11 @@ def merge_ai_evidence(
         return local.model_copy(update={"rule_hits": local.rule_hits + hits})
     candidates: list[AIModerationResult] = []
     unresolved = any(result.degraded_reason for result in ai_results)
+    # S01：跨模态矛盾（文字判广告/图文判正常、或任一模态要求人工）不得直接升罚。
+    _text_signals = [r for r in ai_results if r.source == "text"]
+    _vision_signals = [r for r in ai_results if r.source == "vision"]
+    _text_veto = _cross_modal_veto(_text_signals, secondary_review_low)
+    _vision_veto = _cross_modal_veto(_vision_signals, secondary_review_low)
     primaries = [r for r in ai_results if r.source == "vision" and r.review_role == "primary"]
     for primary in primaries:
         secondaries = [
@@ -868,6 +896,10 @@ def merge_ai_evidence(
                 or secondary.confidence < secondary_review_high
             ):
                 unresolved = True
+            elif _text_veto:
+                # S01：文字通道对同一内容给出确定性正常或要求人工——跨模态矛盾，
+                # 视觉单通道不得升罚，保留人工。
+                unresolved = True
             else:
                 candidates.append(primary)
         elif (
@@ -875,7 +907,10 @@ def merge_ai_evidence(
             and primary.confidence >= _direct_threshold(primary.category, primary_direct_threshold)
             and not primary.needs_review
         ):
-            candidates.append(primary)
+            if _text_veto:
+                unresolved = True
+            else:
+                candidates.append(primary)
     # 文字通道（R01）：与视觉完全同一套本地保护。实测广告文本不被确定性规则命中，
     # AI 是唯一判据，允许高置信直接升级；但规则/白名单冲突、本地类别冲突、
     # needs_review、unknown_category 一律不升级（转人工或条件复核）。
@@ -898,7 +933,12 @@ def merge_ai_evidence(
             >= _direct_threshold(text_result.category, primary_direct_threshold)
             and not text_result.needs_review
         ):
-            candidates.append(text_result)
+            if _vision_veto:
+                # S01：视觉通道对同一内容给出确定性正常或要求人工——跨模态矛盾，
+                # 文字单通道不得升罚，保留人工。
+                unresolved = True
+            else:
+                candidates.append(text_result)
     # An orphaned secondary can never become a new primary by filtering.
     primary_groups = {r.review_group for r in primaries}
     if any(

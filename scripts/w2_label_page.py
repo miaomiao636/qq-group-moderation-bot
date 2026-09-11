@@ -145,7 +145,9 @@ const DATA = """
         + payload
         + """;
 const KEY='w2labels';
-let L=JSON.parse(localStorage.getItem(KEY)||'{}');
+function load(k){try{const v=JSON.parse(localStorage.getItem(k)||'{}');return v&&typeof v==='object'&&!Array.isArray(v)?v:{}}catch(e){return {}}}
+let L=load(KEY);
+let C=load(KEY+'_cat');
 function save(){localStorage.setItem(KEY,JSON.stringify(L));localStorage.setItem(KEY+'_cat',JSON.stringify(C));render();}
 function mark(id,v){L[id]=v;save();}
 function setCat(id,v){C[id]=v;save();}

@@ -49,9 +49,11 @@ def build_default_ai_review_service() -> AIReviewService:
     """根据环境配置组合AI适配器；默认返回安全禁用服务。"""
     settings = get_settings()
     enabled_groups = parse_enabled_groups(settings.ai_enabled_groups)
-    extra_rules = _load_extra_rules(settings)
     if not settings.ai_enabled:
+        # S09：禁用分支必须先返回——否则残留的失效规则路径会抛异常，
+        # 让"关闭 AI 回退纯本地规则"的降级操作反而不可用。
         return AIReviewService(enabled=False, enabled_groups=enabled_groups)
+    extra_rules = _load_extra_rules(settings)
     missing = []
     if not settings.ai_api_key:
         missing.append("AI_API_KEY")

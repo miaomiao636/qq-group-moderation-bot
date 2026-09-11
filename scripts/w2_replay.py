@@ -72,15 +72,32 @@ def _write_json(path: str, obj: dict[str, Any]) -> None:
 
 
 def _rules_digest(settings: Any) -> str:
-    """R06：外置规则的摘要，进入运行清单与缓存指纹（同步工具函数）。"""
+    """R06/S06：外置规则的摘要——必须复用运行时同款路径解析。
+
+    之前用 ``parents[2]`` 会指向仓库父目录，导致规则存在却记录 ``missing``。
+    配置了规则文件却解析不到时直接中止正式评测，禁止把缺失摘要写成通过。
+    """
     if not settings.ai_prompt_rules_file:
         return "none"
-    rules_path = Path(settings.ai_prompt_rules_file)
-    if not rules_path.is_absolute():
-        rules_path = Path(__file__).resolve().parents[2] / rules_path
+    from app.runtime.ai_wiring import _resolve_rules_path
+
+    rules_path = _resolve_rules_path(settings)
     if not rules_path.is_file():
-        return "missing"
+        raise SystemExit(
+            f"S06：规则文件已配置但无法解析: {rules_path} —— 摘要 missing 时评测结果无效，已中止"
+        )
     return hashlib.sha256(rules_path.read_text(encoding="utf-8").encode("utf-8")).hexdigest()[:16]
+
+
+def _worktree_dirty() -> bool:
+    """S06：记录是否存在未提交的工作树改动，供版本溯源核对。"""
+    try:
+        out = subprocess.run(
+            ["git", "status", "--porcelain"], capture_output=True, text=True, check=True, timeout=10
+        )
+        return bool(out.stdout.strip())
+    except Exception:  # noqa: BLE001
+        return True
 
 
 async def main() -> None:
@@ -103,6 +120,9 @@ async def main() -> None:
     rows: list[dict[str, Any]] = []
     debug: list[dict[str, Any]] = []
     failed = 0
+    degraded_count = 0
+    cached_count = 0
+    real_call_samples = 0
     async with SessionLocal() as session:
         for i, item in enumerate(labels, 1):
             mid = f"W2REPLAY_{uuid.uuid4().hex[:10]}"
@@ -138,6 +158,16 @@ async def main() -> None:
                 failed += 1
                 verdict, cat, conf = "ERROR", None, 0.0
                 error_kind = type(exc).__name__
+            # S08：供应商故障会被 AIReviewService 捕获为 degraded，不抛异常——
+            # 失败统计必须把它计入，否则失败率门禁形同虚设。
+            degraded = any(r.degraded_reason for r in _results)
+            if degraded and verdict != "ERROR":
+                degraded_count += 1
+            cached = any(r.cache_hit for r in _results)
+            if cached:
+                cached_count += 1
+            if verdict != "ERROR" and not degraded and not cached:
+                real_call_samples += 1
             latency_ai = int((time.monotonic() - started) * 1000)
             predicted = cat if cat in CATS else "other"
 
@@ -152,6 +182,11 @@ async def main() -> None:
                     "kind": item["kind"],
                     "latency_ai_ms": latency_ai,
                     "error_kind": error_kind,
+                    "degraded": degraded,
+                    "cached": cached,
+                    # S06/R06：逐样本绑定版本，合并器可直接校验，不再回退清单之外的信息。
+                    "model_revision": model_revision,
+                    "rule_revision": f"rules+{rules_digest}",
                     "results": [
                         {
                             "src": r.source,
@@ -173,19 +208,24 @@ async def main() -> None:
                     "verdict": verdict,
                     "category": predicted,
                     "kind": item["kind"],
-                    "latency_ms": float(latency_ai),
+                    # S07：回放没有 inbox 端到端证据，延迟必须显式未测；
+                    # AI 子链耗时只留在 debug 供诊断，不得进入端到端门槛。
+                    "latency_ms": None,
+                    "latency_source": "none",
                     "model_revision": model_revision,
                     "rule_revision": f"rules+{rules_digest}",
                 }
             )
-            print(f"  #{i:3d} [{verdict:14s}] {item['kind']:10s} {latency_ai}ms")
+            print(f"  #{i:3d} [{verdict:14s}] {item['kind']:10s} ai={latency_ai}ms")
 
     _write(args.out, rows)
     _write(args.debug, debug)
+    total_unusable = failed + degraded_count
     _write_json(
         args.manifest,
         {
             "code_sha": _code_sha(),
+            "worktree_dirty": _worktree_dirty(),
             "primary_model": settings.ai_vision_model,
             "review_model": settings.ai_review_model or "unconfigured",
             "prompt_version": settings.ai_prompt_version,
@@ -195,14 +235,26 @@ async def main() -> None:
             "model_revision": model_revision,
             "samples": len(rows),
             "failed": failed,
-            "fail_rate": round(failed / len(rows), 4) if rows else 0.0,
-            "note": "latency 口径=AI 子链耗时；端到端延迟须由 onebot_inbox 口径另行测量（R07）",
+            "degraded": degraded_count,
+            "cache_hit_samples": cached_count,
+            "real_call_samples": real_call_samples,
+            "unusable": total_unusable,
+            "fail_rate": round(total_unusable / len(rows), 4) if rows else 0.0,
+            "note": (
+                "S07：samples.latency_ms 显式 null（latency_source=none）——回放无端到端证据；"
+                "AI 子链耗时见 debug.latency_ai_ms，仅用于诊断。"
+                "端到端延迟须由 onebot_inbox（updated_at-created_at）另行测量。"
+            ),
         },
     )
-    print(f"\n已写出 {len(rows)} 条 → {args.out}（失败 {failed}，清单 → {args.manifest}）")
-    if rows and failed / len(rows) > FAIL_RATE_LIMIT:
+    print(
+        f"\n已写出 {len(rows)} 条 → {args.out}"
+        f"（异常 {failed}，降级 {degraded_count}，缓存命中 {cached_count}，清单 → {args.manifest}）"
+    )
+    if rows and total_unusable / len(rows) > FAIL_RATE_LIMIT:
         raise SystemExit(
-            f"R08：失败率 {failed / len(rows):.0%} 超过 {FAIL_RATE_LIMIT:.0%}，测量无效"
+            f"R08/S08：不可用（异常+降级）{total_unusable / len(rows):.0%} 超过 "
+            f"{FAIL_RATE_LIMIT:.0%}，测量无效"
         )
 
 

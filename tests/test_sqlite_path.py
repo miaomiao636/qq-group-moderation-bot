@@ -54,7 +54,12 @@ def _snapshot_data_dir() -> str:
     files: dict[str, str] = {}
     for p in sorted(PROJECT_DATA_DIR.iterdir()):
         if p.is_file():
-            files[p.name] = hashlib.sha256(p.read_bytes()).hexdigest()
+            try:
+                files[p.name] = hashlib.sha256(p.read_bytes()).hexdigest()
+            except PermissionError:
+                # 运行时单实例锁（如 moderation.db.onebot-runtime.lock）拒绝共享读：
+                # 记录存在性即可，守卫仍能检测新增/删除，不因锁文件整体失败。
+                files[p.name] = "locked"
         else:
             files[p.name + "/"] = "dir"
     return json.dumps({"exists": True, "files": files}, sort_keys=True)

@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import time
 from typing import Any
 
 import httpx
@@ -33,12 +34,16 @@ logger = logging.getLogger(__name__)
 
 # 进程内去重：每个群只尝试一次自动备注（避免新群刷屏时反复调 API）
 _alias_attempted: set[str] = set()
+# S10：失败后有限退避——避免瞬时失败被永久锁定，也避免失败风暴反复打 API
+_ALIAS_RETRY_COOLDOWN_SECONDS = 600.0
+_alias_retry_after: dict[str, float] = {}
 
 
-async def _autoname_group_task(group_id: str) -> None:
+async def _autoname_group_task(group_id: str) -> bool:
     """首次见到群时自动从 NapCat 拉取群名写入备注（人工备注永不覆盖）。
 
-    设计为后台任务：不阻塞消息审核；失败静默（这是便利功能）。
+    设计为后台任务：不阻塞消息审核。返回 True 表示已终结（成功/无需再试），
+    False 表示可重试失败（由调用方按退避策略放行重试）。
     """
     try:
         async with SessionLocal() as session:
@@ -46,11 +51,18 @@ async def _autoname_group_task(group_id: str) -> None:
             from app.runtime.onebot_actions import onebot_action_hub
 
             if await session.get(GroupAlias, group_id) is not None:
-                return  # 人工已备注，绝不覆盖
+                return True  # 人工已备注，绝不覆盖
             resp = await onebot_action_hub.call("get_group_info", {"group_id": int(group_id)})
-            name = str((resp or {}).get("group_name") or "").strip()
+            # S10：Hub 返回完整 status/retcode/data 响应，群名在 data.group_name；
+            # 直接读顶层 group_name 会永远取不到值（成功响应也不保存）。
+            payload = resp if isinstance(resp, dict) else {}
+            if payload.get("status") != "ok" or payload.get("retcode") != 0:
+                logger.debug("自动备注群 %s：非成功响应 %s", group_id, payload.get("retcode"))
+                return False
+            data = payload.get("data")
+            name = str(data.get("group_name") or "").strip() if isinstance(data, dict) else ""
             if not name:
-                return
+                return True  # 接口正常但无群名，无需重试
             existing = await session.get(GroupAlias, group_id)
             if existing is None:
                 existing = GroupAlias(group_openid=group_id)
@@ -58,8 +70,20 @@ async def _autoname_group_task(group_id: str) -> None:
             existing.name = name[:64]
             await session.commit()
             logger.info("自动备注群 %s -> %s", group_id, name[:64])
+            return True
     except Exception:  # noqa: BLE001 - 便利功能，任何失败都不影响审核主链
         logger.debug("自动备注群 %s 失败（忽略）", group_id, exc_info=True)
+        return False
+
+
+async def _autoname_with_retry_scope(group_id: str) -> None:
+    """S10：成功终结则记住，失败则允许退避后重试一次以上（有限退避）。"""
+    ok = await _autoname_group_task(group_id)
+    if ok:
+        _alias_retry_after.pop(group_id, None)
+    else:
+        _alias_attempted.discard(group_id)
+        _alias_retry_after[group_id] = time.monotonic() + _ALIAS_RETRY_COOLDOWN_SECONDS
 
 
 def build_onebot_message_source() -> MessageSource:
@@ -147,7 +171,11 @@ async def process_onebot_event(
     )
     # 100+ 群场景：首次见到群时自动拉取群名作备注（后台任务，不阻塞审核）
     group_id = str(payload.get("group_id") or "")
-    if group_id and group_id not in _alias_attempted:
+    if (
+        group_id
+        and group_id not in _alias_attempted
+        and time.monotonic() >= _alias_retry_after.get(group_id, 0.0)
+    ):
         _alias_attempted.add(group_id)
-        asyncio.create_task(_autoname_group_task(group_id))
+        asyncio.create_task(_autoname_with_retry_scope(group_id))
     return result

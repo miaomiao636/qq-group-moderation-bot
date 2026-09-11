@@ -60,7 +60,7 @@ def main() -> None:
     labels = _load_unique(Path(args.labels), "labels")
     system = _load_unique(Path(args.system), "system")
 
-    rows, missing_category, errors = [], 0, 0
+    rows, missing_category, errors, degraded = [], 0, 0, 0
     for sid, lab in labels.items():
         label = (lab.get("label") or "").strip()
         if not label:
@@ -72,26 +72,47 @@ def main() -> None:
         sysrow = system.get(sid)
         if not sysrow:
             raise SystemExit(f"system 缺失: {sid}")
+        if "model_revision" not in sysrow or "rule_revision" not in sysrow:
+            # S05：旧版 replay debug 没有逐样本版本字段（_FIELDS 契约要求）。
+            raise SystemExit(
+                f"S05：system 行缺少 model_revision/rule_revision（{sid}）—— "
+                "请使用新版 scripts/w2_replay.py 重新回放；跨版本混拼的输入不得评测"
+            )
         if sysrow.get("verdict") == "ERROR":
             errors += 1
             continue  # R08：失败样本不进入评测，避免伪装成正常放行/漏判
+        if sysrow.get("degraded"):
+            degraded += 1
+            continue  # S08：降级样本（供应商故障被捕获）同样不得进入评测
         truth_cat = (lab.get("truth_category") or "").strip()
-        if not truth_cat:
+        # S02：缺真值类别的样本不得回退 other——漏判广告会被归入 other 使类别召回虚高。
+        # 缺真值即排除，并计入 missing_category 由报告声明。
+        if truth_cat not in CATEGORIES:
             missing_category += 1
+            if args.strict:
+                raise SystemExit(f"S02/缺真值类别: {sid}")
+            continue
         kind = sysrow["kind"] if sysrow["kind"] in KINDS else "unknown"
-        # R03：category 必须是人工真值类别；无真值类别时用 other 占位并在清单中声明
-        cat = truth_cat if truth_cat in CATEGORIES else "other"
         verdict = sysrow["verdict"]
         if verdict not in VERDICTS:
             raise SystemExit(f"非法 verdict '{verdict}' @ {sid}")
+        # S07：latency_ms 只接受 inbox 端到端证据；回放口径必须显式 none/null。
+        latency_ms = sysrow.get("latency_ms")
+        latency_source = sysrow.get("latency_source") or (
+            "inbox" if isinstance(latency_ms, (int, float)) else "none"
+        )
+        if latency_source != "inbox":
+            latency_ms = None
+            latency_source = "none"
         rows.append(
             {
                 "sample_id": sid,
                 "label": label,
                 "verdict": verdict,
-                "category": cat,
+                "category": truth_cat,
                 "kind": kind,
-                "latency_ms": float(sysrow.get("latency_ai_ms") or 0),
+                "latency_ms": latency_ms,
+                "latency_source": latency_source,
                 "model_revision": sysrow["model_revision"][:128],
                 "rule_revision": sysrow["rule_revision"][:128],
             }
@@ -108,9 +129,10 @@ def main() -> None:
     )
     print(
         f"已生成 {len(rows)} 条 → {args.out}\n"
-        f"  其中缺 truth_category（类别指标不可信）: {missing_category} 条\n"
-        f"  回放失败样本（R08，已排除）: {errors} 条\n"
-        f"  注意：latency 为 AI 子链口径，端到端延迟须用 onebot_inbox 证据（R07）"
+        f"  缺 truth_category（S02，已排除而非记 other）: {missing_category} 条\n"
+        f"  回放异常样本（R08，已排除）: {errors} 条\n"
+        f"  供应商降级样本（S08，已排除）: {degraded} 条\n"
+        f"  延迟: latency_source=none（回放无端到端证据）；p95 门槛将显示为未测（S07）"
     )
 
 

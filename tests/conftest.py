@@ -39,6 +39,9 @@ os.environ["NOTIFICATION_HEARTBEAT_ENABLED"] = "false"
 # 真实令牌只允许存在于 Windows 本机环境变量或凭据存储。
 os.environ["ONEBOT_WS_ENABLED"] = "true"
 os.environ["ONEBOT_ACCESS_TOKEN"] = "test-onebot-token"
+# 本机 .env 里的真实 QQ 号绝不进入测试：self_id 不匹配会导致连接被拒，
+# 测试使用与 fixture 一致的假 self_id（环境变量优先于 .env，见 pydantic-settings）。
+os.environ["ONEBOT_SELF_ID"] = "10000001"
 
 
 @pytest.fixture(scope="session", autouse=True)

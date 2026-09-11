@@ -6,7 +6,7 @@ import pytest
 from app.reports.evaluation import EvaluationSample, summarize_samples
 
 
-def sample(identity: str, label: str, verdict: str, latency_ms: float = 10) -> EvaluationSample:
+def sample(identity: str, label: str, verdict: str, latency_ms: float | None = 10) -> EvaluationSample:
     return EvaluationSample.from_dict(
         {
             "sample_id": identity,
@@ -15,6 +15,7 @@ def sample(identity: str, label: str, verdict: str, latency_ms: float = 10) -> E
             "category": "ad",
             "kind": "image",
             "latency_ms": latency_ms,
+            "latency_source": "inbox" if latency_ms is not None else "none",
             "model_revision": "test-model",
             "rule_revision": "test-rule",
         }
