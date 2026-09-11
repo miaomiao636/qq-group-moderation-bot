@@ -6,7 +6,9 @@ import pytest
 from app.reports.evaluation import EvaluationSample, summarize_samples
 
 
-def sample(identity: str, label: str, verdict: str, latency_ms: float | None = 10) -> EvaluationSample:
+def sample(
+    identity: str, label: str, verdict: str, latency_ms: float | None = 10
+) -> EvaluationSample:
     return EvaluationSample.from_dict(
         {
             "sample_id": identity,
