@@ -10,7 +10,8 @@
 | W0 部署 | docs/evidence/2026-09-10-W0/w0-deployment.md | 迁移 ok；门禁全绿；SHADOW+急停 |
 | P1-13 历史 | docs/evidence/2026-09-09-t303-history/README.md | 原件核验通过 |
 | W1-lite | docs/evidence/2026-09-10-W1/README.md | 1h 简化窗口（负责人决定）；PASS 项与 NOT_TESTED 见该文档 |
-| W2 结果 | docs/evidence/2026-09-11-W2/w2_runF_final.json | 见下方分项 |
+| W2 结果（严格口径实验） | docs/evidence/2026-09-11-W2/w2_runF_final.json | 见下方分项 |
+| W2 结果（现行宽松口径） | docs/evidence/2026-09-11-W2/w2_runG_lenient.json | t204-v8: P/R 98.11%；2 失败逐条定性见复核报告第 9 节 |
 | W2 复核 | docs/evidence/2026-09-11-W2/w2-failure-review.md | 26 条失败逐张目验；模型 0 真实错误 |
 | 标签修订 | docs/evidence/2026-09-11-W2/label-revisions.md | 26 条修订的匿名映射、理由、批准与摘要 |
 | 模型评测 | docs/model-eval-2026-09-10.md | 延迟/精度评测与办证例外口径 |
@@ -29,10 +30,17 @@
 | release_decision | REQUIRES_HUMAN_REVIEW | 机器报告原文 |
 | 留出集独立性 | **未满足** | 同一 160 条参与过调规则/调提示词/复核标签，不能单独证明长期 100%；正式放行须用未参与调整的新样本、按近重复模板隔离后复测 |
 
+> **口径变更（负责人 2026-09-12）**：线上带卡片栏兼职推广被自动撤回后，负责人改判**宽松口径 B**
+> （带校园墙卡片栏放行；办证/诈骗/色情三例外保留）→ t204-v8 + 标签回滚 + 重放 runG：
+> **precision/recall 均 98.11%**（52/1/1/106），recall_85pct PASS、precision_99pct 差 1 例；
+> 2 个失败定性：FP×1 为保留的诈骗例外工作（宁错拦不漏放），FN×1 为灰区转人工（record_only，未放行）。
+> 上表 v7 数字保留为严格口径实验历史。代价声明：宽松口径下带卡片栏的兼职/推广内容不再自动拦截，
+> 由群管理员人工处理。详见复核报告第 9 节。
+
 ## 当前配置（生产）
 
 - 模型: deepseek-flash（主）+ qwen3.8-flash（灰区复核）
-- 提示词: t204-v7 + config/ai_prompt_rules.txt（严格口径: 推广外部产品=ad）
+- 提示词: t204-v8 + config/ai_prompt_rules.txt（宽松口径: 带校园墙卡片栏放行；办证/诈骗/色情三例外保留——负责人 2026-09-12 改判）
 - 模式: **ACTION_MODE=OFFICIAL** / `ONEBOT_ACTION_STAGE=recall_only`（仅撤回）/ `ONEBOT_ACTIONS_ENABLED=true`
   ——负责人授权 D-025（2026-09-12）：**群级「真实动作」开关默认全关，逐群显式授权后生效**
 - 安全兜底: 急停随时可用（后台按钮 / `EMERGENCY_STOP=true` / `ONEBOT_ACTIONS_ENABLED=false`）；

@@ -107,8 +107,9 @@ def test_s02_missed_ad_counts_in_ad_recall_not_other(tmp_path) -> None:
     assert report["threshold_checks"]["ad_recall_90pct"] is False
 
 
-def test_s02_missing_truth_category_is_excluded_not_other(tmp_path) -> None:
-    """S02: 缺 truth_category 的样本被排除，而不是回退 other 混入类别指标。"""
+def test_s02_missing_truth_category_kept_as_unknown(tmp_path) -> None:
+    """S02: 缺 truth_category 的样本保留进整体指标（category=unknown），
+    不回退 other 混入类别指标，也不得丢弃缩小召回分母。"""
     system = [_system_row("s1", "violation_high"), _system_row("s2", "violation_high")]
     labels = [
         {
@@ -121,9 +122,20 @@ def test_s02_missing_truth_category_is_excluded_not_other(tmp_path) -> None:
     ]
     out = _merge(tmp_path, system, labels)
     rows = _read(out)
-    assert [r["sample_id"] for r in rows] == ["s1"]
+    # 两条都保留：整体召回分母不缩小
+    assert sorted(r["sample_id"] for r in rows) == ["s1", "s2"]
+    unknown_row = next(r for r in rows if r["sample_id"] == "s2")
+    assert unknown_row["category"] == "unknown"
+    # strict 模式仍拒绝未标注真值的数据集
     with pytest.raises(SystemExit):
         _merge(tmp_path, system, labels, strict=True)
+    report = summarize_samples([EvaluationSample.from_dict(r) for r in rows])
+    # 整体召回 = 2/2 全命中 = 1.0（unknown 样本参与整体指标）
+    assert report["metrics"]["recall"] == 1.0
+    # 类别细分：ad 只含 s1；unknown 单列无门槛
+    assert report["by_category"]["ad"]["recall"] == 1.0
+    assert "unknown" in report["by_category"]
+    assert "ad_recall_90pct" in report["threshold_checks"]
 
 
 def test_s07_replay_latency_is_none_and_thresholds_unmeasured(tmp_path) -> None:

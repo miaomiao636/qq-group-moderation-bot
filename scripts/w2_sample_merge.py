@@ -79,13 +79,14 @@ def main() -> None:
                 "请使用新版 scripts/w2_replay.py 重新回放；跨版本混拼的输入不得评测"
             )
         truth_cat = (lab.get("truth_category") or "").strip()
-        # S02：缺真值类别的样本不得回退 other——漏判广告会被归入 other 使类别召回虚高。
-        # 缺真值即排除，并计入 missing_category 由报告声明。
+        # S02：缺真值类别的样本不得回退 other（漏判广告会被归入 other 使类别召回虚高），
+        # 也不得整体丢弃（会缩小端到端召回分母）。category=unknown 保留进整体指标，
+        # 仅不参与类别细分（by_category 中单列，无门槛）。
         if truth_cat not in CATEGORIES:
             missing_category += 1
             if args.strict:
                 raise SystemExit(f"S02/缺真值类别: {sid}")
-            continue
+            truth_cat = "unknown"
         kind = sysrow["kind"] if sysrow["kind"] in KINDS else "unknown"
         verdict = sysrow["verdict"]
         # A02：降级/异常样本**保留在端到端召回分母**，不得删除缩小分母。
@@ -138,7 +139,7 @@ def main() -> None:
     )
     print(
         f"已生成 {len(rows)} 条 → {args.out}\n"
-        f"  缺 truth_category（S02，已排除而非记 other）: {missing_category} 条\n"
+        f"  缺 truth_category（S02，category=unknown 保留整体指标、不进类别细分）: {missing_category} 条\n"
         f"  降级/异常样本（A02，保留在分母、标记 unavailable）: {unavailable_count} 条\n"
         f"  延迟: 无显式 inbox 声明一律未测；p95 门槛按覆盖率判定（A03）"
     )
