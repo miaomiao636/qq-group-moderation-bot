@@ -1,0 +1,69 @@
+{
+  "schema": "w2-e2e-latency-v1",
+  "latency_source": "inbox",
+  "note": "生产 SHADOW 流量端到端延迟（事件进入→处理完成）。按类型分层经判定表关联；inbox payload 已按保留策略裁剪，类型以 shadow_decisions.kind 为准。与 replay 压力口径完全分离（A03）。",
+  "since_utc": "2026-09-10 10:00:00",
+  "window_utc": {
+    "first": "2026-09-10 10:10:26.347707",
+    "last": "2026-09-11 15:17:28.690930",
+    "done_events": 1819
+  },
+  "overall": {
+    "samples": 1819,
+    "min_ms": 8,
+    "p50_ms": 15,
+    "p95_ms": 479,
+    "max_ms": 34590
+  },
+  "by_kind": {
+    "gif": {
+      "samples": 3,
+      "min_ms": 39,
+      "p50_ms": 54,
+      "p95_ms": 100,
+      "max_ms": 100
+    },
+    "image": {
+      "samples": 143,
+      "min_ms": 37,
+      "p50_ms": 41,
+      "p95_ms": 102,
+      "max_ms": 31508
+    },
+    "mixed": {
+      "samples": 55,
+      "min_ms": 37,
+      "p50_ms": 39,
+      "p95_ms": 98,
+      "max_ms": 1468
+    },
+    "share_card": {
+      "samples": 20,
+      "min_ms": 14,
+      "p50_ms": 18,
+      "p95_ms": 1777,
+      "max_ms": 2648
+    },
+    "text": {
+      "samples": 230,
+      "min_ms": 14,
+      "p50_ms": 427,
+      "p95_ms": 17373,
+      "max_ms": 34590
+    },
+    "unknown": {
+      "samples": 25,
+      "min_ms": 14,
+      "p50_ms": 33,
+      "p95_ms": 629,
+      "max_ms": 758
+    },
+    "video": {
+      "samples": 2,
+      "min_ms": 1590,
+      "p50_ms": 1590,
+      "p95_ms": 3008,
+      "max_ms": 3008
+    }
+  }
+}
