@@ -175,27 +175,14 @@ async def run_pipeline(
         await mark_failed(session, claim_key, claim.token, f"{type(exc).__name__}: {exc}")
         return None
 
-    # 按群审核开关：禁用群的消息仅记录为allow，不进入规则/AI/媒体审核
+    # 按群审核开关：管理员明确关闭审核的群 = 完全不参与监管。
+    # 负责人要求（2026-09-11）：这类群的消息不进规则/AI，也不落影子判定，
+    # 避免不需要监管的群持续污染影子列表。事件仍标记为已处理（去重防线保持）。
     from app.core.group_settings import ambiguous_legacy_rule_scope, is_moderation_enabled
 
     if not await is_moderation_enabled(session, msg.external_group_id, provider=msg.provider):
-        record = await upsert_shadow_decision(
-            session,
-            message_id=claim_key,
-            external_message_id=msg.external_message_id,
-            group_openid=msg.external_group_id,
-            member_openid=msg.external_user_id,
-            provider=msg.provider,
-            external_group_id=msg.external_group_id,
-            external_user_id=msg.external_user_id,
-            sender_name=(msg.sender.username or "")[:64],
-            kind=msg.kind,
-            verdict="allow",
-            reason="群审核已禁用（管理员设置），仅记录",
-            detail_json=json.dumps({"moderation_disabled": True}, ensure_ascii=False),
-        )
         await mark_processed(session, claim_key, claim.token)
-        return record
+        return None
 
     try:
         rule_version_ids: tuple[int, ...] = ()

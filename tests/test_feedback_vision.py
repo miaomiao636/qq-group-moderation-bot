@@ -121,7 +121,7 @@ async def test_empty_feedback_context_when_no_records() -> None:
 
 def test_prompt_version_bumped_for_feedback() -> None:
     """反馈上下文注入后 PROMPT_VERSION 必须升级（缓存键含版本号）。"""
-    assert PROMPT_VERSION == "t204-v4"
+    assert PROMPT_VERSION == "t204-v6"
 
 
 def test_request_carries_feedback_context() -> None:

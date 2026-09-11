@@ -47,7 +47,7 @@ def test_safe_agent_defaults_and_call_limit() -> None:
     settings = Settings(_env_file=None)
     assert settings.agent_api_write_scopes == "project:read"
     assert settings.ai_daily_call_limit == 1000
-    assert settings.ai_prompt_version == "t204-v4"
+    assert settings.ai_prompt_version == "t204-v6"
     assert settings.admin_session_ttl_seconds == 3600
 
 
