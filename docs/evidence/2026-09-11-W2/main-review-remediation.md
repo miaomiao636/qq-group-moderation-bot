@@ -24,3 +24,10 @@
 - 同 SHA 远程 CI（主审建议）：待推送后创建 PR。
 - 通知送达证据：待补充（当前为实施方自述接通）。
 - 延迟端到端口径证据：需 onebot_inbox 独立测量（W3 期间采集）。
+
+## 合并与远程 CI（2026-09-11 晚）
+
+- 与 origin/main (d77ea60) 合并，解决 9 个文件冲突（保留本分支 v6 规则/群备注统一/批量导入/跨模态 S01 逻辑；
+  main 侧自动合并保留），并修复合并引入的 review_vision_moderator 重复定义。
+- 合并后全量 pytest 通过（exit 0；13 项 data 守卫在服务运行中按设计跳过，CI 环境全跑）。
+- 推送后 GitHub Actions 触发并 **success**（run 34608272484，6m17s）。PR #7 状态 CLEAN / MERGEABLE。
