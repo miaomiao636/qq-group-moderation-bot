@@ -46,6 +46,10 @@ os.environ["ONEBOT_SELF_ID"] = "10000001"
 # 否则保留期相关的清理/边界测试会随部署配置漂移（测试必须独立于部署配置）。
 os.environ["RAW_RETENTION_DAYS"] = "30"
 os.environ["DECISION_RETENTION_DAYS"] = "180"
+# 同理：生产切换 OFFICIAL/真实动作后，测试环境必须强制影子模式——
+# 测试永不真实处罚（项目原则），且 OFFICIAL+test 的组合会被配置校验拒绝。
+os.environ["ACTION_MODE"] = "SHADOW"
+os.environ["ONEBOT_ACTIONS_ENABLED"] = "false"
 
 
 @pytest.fixture(scope="session", autouse=True)

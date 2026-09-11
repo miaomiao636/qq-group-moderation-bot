@@ -19,6 +19,7 @@ import urllib.parse
 from contextlib import suppress
 from datetime import datetime
 from pathlib import Path
+from typing import Any
 
 import httpx
 
@@ -125,19 +126,28 @@ async def _stream_download(
     try:
         for _hop in range(_MAX_REDIRECT_HOPS + 1):
             pinned = await _pin_media_url(current_url)
-            if pinned is None:
-                return False, "URL被SSRF防护拦截", 0
-            target, host_header, server_hostname = pinned
-            async with client.stream(
-                "GET",
-                target,
-                timeout=30,
-                follow_redirects=False,
+            request_host = (urllib.parse.urlparse(current_url).hostname or "").lower()
+            stream_kwargs: dict[str, Any] = {
+                "timeout": 30,
+                "follow_redirects": False,
+                "headers": {"Connection": "close"},
+            }
+            stream_url: str
+            if pinned is not None:
+                target, host_header, server_hostname = pinned
+                stream_url = str(target)
                 # Do not pool one IP's TLS connection across different logical
                 # hosts: each request must verify its own original hostname.
-                headers={"Host": host_header, "Connection": "close"},
-                extensions={"sni_hostname": server_hostname},
-            ) as resp:
+                stream_kwargs["headers"]["Host"] = host_header
+                stream_kwargs["extensions"] = {"sni_hostname": server_hostname}
+            elif _is_trusted_media_host(request_host):
+                # R-107 追加：Fake-IP/代理 DNS 环境下官方 CDN 域名按域名连接
+                # （系统解析/代理兼容）；scheme/端口/重定向校验保持。
+                logger.info("官方CDN域名跳过IP锁定（代理DNS环境）: %s", request_host)
+                stream_url = current_url
+            else:
+                return False, "URL被SSRF防护拦截", 0
+            async with client.stream("GET", stream_url, **stream_kwargs) as resp:
                 if resp.status_code in (301, 302, 303, 307, 308):
                     location = resp.headers.get("location", "")
                     if not location:
@@ -206,6 +216,33 @@ _BLOCKED_NETWORKS = [
 ]
 
 _ALLOWED_PORTS = {80, 443}  # P1-6: 仅允许标准HTTP/HTTPS端口
+
+# R-107 追加：QQ 官方媒体 CDN 域名。代理（Clash 等）的 Fake-IP DNS 会把这些域名
+# 解析为 198.18.0.0/15 假地址，触发 SSRF 拦截导致图片下载间歇失败。
+# 对下列官方域名跳过 IP 锁定、按域名连接（系统解析/代理均兼容）；
+# scheme/端口/重定向逐跳校验保留，非官方域名的 SSRF 防护不变。
+_TRUSTED_MEDIA_HOSTS = (
+    "multimedia.nt.qq.com.cn",
+    "gchat.qpic.cn",
+    "qpic.cn",
+    "group.e.qq.com",
+    "qq.com",
+    "qq.com.cn",
+)
+
+
+def _is_trusted_media_host(host: str) -> bool:
+    """QQ 官方媒体 CDN 域名（含子域，忽略大小写与末尾点）。"""
+    host = host.lower().rstrip(".")
+    return any(host == t or host.endswith("." + t) for t in _TRUSTED_MEDIA_HOSTS)
+
+
+def _is_fake_ip(ip_str: str) -> bool:
+    """代理 Fake-IP DNS 产生的 198.18.0.0/15 基准段地址。"""
+    try:
+        return ipaddress.ip_address(ip_str) in ipaddress.ip_network("198.18.0.0/15")
+    except ValueError:
+        return False
 
 
 def _is_safe_ip(ip: ipaddress.IPv4Address | ipaddress.IPv6Address) -> bool:
