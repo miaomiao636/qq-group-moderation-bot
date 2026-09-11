@@ -90,11 +90,15 @@ def main() -> None:
         verdict = sysrow["verdict"]
         # A02：降级/异常样本**保留在端到端召回分母**，不得删除缩小分母。
         # 其真实结果就是"未自动识别/转人工"，以 unavailable 标记并在报告中单列。
-        unavailable = ""
+        # replay 的默认元数据出口使用 unavailable；debug 出口使用 ERROR/degraded。
+        # 两者均可在补入人工类别后评测，不能在二次合并时抹掉已有故障证据。
+        unavailable = sysrow.get("unavailable", "")
+        if not isinstance(unavailable, str) or unavailable not in ("", "degraded", "error"):
+            raise SystemExit(f"非法 unavailable @ {sid}")
         if verdict == "ERROR":
             unavailable = "error"
             verdict = "record_only"
-        elif sysrow.get("degraded"):
+        elif sysrow.get("degraded") and not unavailable:
             unavailable = "degraded"
         if verdict not in VERDICTS:
             raise SystemExit(f"非法 verdict '{verdict}' @ {sid}")

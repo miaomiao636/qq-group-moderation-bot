@@ -359,7 +359,11 @@ async def download_attachment(
 
 
 def purge_media(media_dir: Path, retention_days: int = 30, now: float | None = None) -> int:
-    """删除超过保留期的媒体文件，返回删除文件数。"""
+    """删除过期媒体并返回计数；真实 I/O 失败向上传播，不伪报清理成功。
+
+    文件可能已被并发清理，FileNotFoundError 可忽略。其他错误必须交给
+    maintenance 记录固定失败码；此前已删除的文件不会随数据库回滚而恢复。
+    """
     if not media_dir.exists():
         return 0
     cutoff = (now or time.time()) - retention_days * 86400
@@ -369,9 +373,9 @@ def purge_media(media_dir: Path, retention_days: int = 30, now: float | None = N
             continue
         try:
             if f.stat().st_mtime < cutoff:
-                f.unlink(missing_ok=True)
+                f.unlink()
                 deleted += 1
-        except OSError:
+        except FileNotFoundError:
             continue
     return deleted
 

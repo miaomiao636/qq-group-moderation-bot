@@ -45,10 +45,10 @@ D-023/R-106已替代D-015“仅后台”限制，新增默认关闭的QQ管理�
 本机 JSONL 每行仅允许以下元数据；示例是虚构的格式示范，**不可计入验收**：
 
 ```json
-{"sample_id":"synthetic-example","label":"confirmed_normal","verdict":"allow","category":"ad","kind":"image","latency_ms":1200,"model_revision":"frozen-model-id","rule_revision":"frozen-rule-id"}
+{"sample_id":"synthetic-example","label":"confirmed_normal","verdict":"allow","category":"ad","category_source":"manual_truth","kind":"image","latency_ms":1200,"latency_source":"inbox","unavailable":"","model_revision":"frozen-model-id","rule_revision":"frozen-rule-id"}
 ```
 
-`label` 允许 confirmed_violation/confirmed_normal/false_positive；`verdict` 允许 allow/record_only/violation_high；类别允许 ad/fraud/porn/violence/flood/other；类型允许 text/image/gif/video/audio/file/share_card/mixed/unknown。类别表示人工设定的评测类别，不能只用模型预测类别给漏报分类。latency_ms 从事件进入系统到最终判定，包含排队、下载与条件复核；动作延迟另表测量。
+`label` 允许 confirmed_violation/confirmed_normal/false_positive；`verdict` 允许 allow/record_only/violation_high；类别允许 ad/fraud/porn/violence/flood/other；类型允许 text/image/gif/video/audio/file/share_card/mixed/unknown。类别表示人工设定的评测类别，`category_source` 必须为 manual_truth；model_predicted 回放产物必须先合并人工真值，不能直接正式聚合。`unavailable` 为 "" / degraded / error；非空时 verdict 必须为 record_only，仍保留在自动召回分母。`latency_source` 为 inbox / none；none 必须搭配 `latency_ms=null`，inbox 数值包含排队、下载与条件复核；动作延迟另表测量。报告单列延迟覆盖及不可用数量，不能只选择有利样本。
 
 ```powershell
 uv run python -m app.reports.evaluation --input <本机脱敏样本.jsonl> --output <新的报告.json>

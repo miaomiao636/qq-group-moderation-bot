@@ -59,6 +59,8 @@
 
 ### Windows运行与恢复
 
+→ `docs/pr7-r107-review.md`（ddf1f73 复验、评测/延迟工具及清理修复、D-024 的 15 天取舍、Windows 剩余门禁；不是 W3/W4 放行报告）。
+
 → `docs/proactive-notifications.md`（R-106/D-023主动通知、接手/升级、独立健康探针、安全配置、Windows实测与回退；默认关闭，实机送达尚未证明）。
 
 → `docs/pr5-r105-acceptance.md`（PR #5 原17项逐项核对、两轴复核与验证边界）。

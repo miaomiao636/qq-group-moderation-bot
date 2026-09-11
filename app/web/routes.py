@@ -775,7 +775,7 @@ async def shadow_detail(request: Request, message_id: str = "") -> Response:
     if not media_parts:
         media_parts.append(
             '<p class=muted>本条无媒体，或该记录早于"媒体文件名存档"功能上线'
-            "（30天内原件仍在 data/media/，暂无法逐条对应）。</p>"
+            "；原件也可能已按配置保留期清理，详情以当前记录为准。</p>"
         )
 
     seg_items = (

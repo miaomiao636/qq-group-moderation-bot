@@ -8,6 +8,10 @@
   **不含**排队/下载/判定，与主口径不可混用。
 - `latency_source` 字段标明来源（inbox / ai_fallback / missing）。
 
+版本口径：必须显式传入采样窗口冻结的 model/rule revision；数据库没有逐消息的
+完整版本证据，本工具仅记录人工声明（operator_declared），不验证其真实性。
+正式验收前须另行核验窗口内的实际部署、提示词与规则版本，不能声明当前版本代替。
+
 脱敏：输出不含群ID/用户ID/原始事件；media 仅给本机相对路径（供盲标人查看）。
 
 输出：
@@ -72,16 +76,39 @@ def _ai_summary(detail: dict[str, Any]) -> list[dict[str, Any]]:
     return out
 
 
+def _revision(value: str) -> str:
+    value = value.strip()
+    if not value or len(value) > 128:
+        raise argparse.ArgumentTypeError("冻结版本声明须为 1–128 个字符，不能留空")
+    return value
+
+
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--since", required=True, help="窗口起点 UTC，如 '2026-09-10 10:00:00'")
     ap.add_argument("--out", default="data/w2_candidates")
-    ap.add_argument("--model-revision", default="mimo-v2.5@t204-v2")
-    ap.add_argument("--rule-revision", default="ruleset6-v3")
+    ap.add_argument(
+        "--model-revision",
+        required=True,
+        type=_revision,
+        help="人工声明的冻结模型/提示词版本，须另行核验",
+    )
+    ap.add_argument(
+        "--rule-revision", required=True, type=_revision, help="人工声明的冻结规则版本，须另行核验"
+    )
     ap.add_argument("--limit", type=int, default=0, help="0=全部")
     args = ap.parse_args()
 
-    c = sqlite3.connect("data/moderation.db")
+    output_paths = [
+        Path(f"{args.out}-labeling.jsonl"),
+        Path(f"{args.out}-system.jsonl"),
+        Path(f"{args.out}-manifest.json"),
+    ]
+    for path in output_paths:
+        if path.exists():
+            raise SystemExit(f"输出文件已存在：{path}；请更换 --out，避免覆盖人工标注或已有证据")
+
+    c = sqlite3.connect("file:data/moderation.db?mode=ro", uri=True)
     sql = (
         "SELECT s.provider, s.external_group_id, s.external_message_id, s.message_id, "
         "s.kind, s.verdict, s.category, s.confidence, s.detail_json, s.created_at "
@@ -99,6 +126,9 @@ def main() -> None:
         "by_kind": {},
         "by_verdict": {},
         "latency_src": {},
+        "model_revision": args.model_revision,
+        "rule_revision": args.rule_revision,
+        "revision_source": "operator_declared",
     }
     for provider, group, ext_mid, mid, kind, verdict, cat, conf, detail_raw, _created in rows:
         try:
@@ -107,9 +137,10 @@ def main() -> None:
             detail = {}
         sid = _sid(provider or "?", group or "?", ext_mid or mid)
 
-        # 延迟：优先 inbox 端到端
+        # 仅 DONE 的更新时间代表处理完成；PROCESSING/PENDING/DEAD 不能作为端到端证据。
         inbox = c.execute(
-            "SELECT created_at, updated_at FROM onebot_inbox WHERE event_key = ?", (mid,)
+            "SELECT created_at, updated_at FROM onebot_inbox WHERE event_key = ? AND status = 'DONE'",
+            (mid,),
         ).fetchone()
         latency_ms, latency_src = None, "missing"
         if inbox:
@@ -135,6 +166,7 @@ def main() -> None:
                 "text": text,
                 "media": media,
                 "label": "",  # 待人工填写
+                "truth_category": "",  # 待人工填写，不暴露系统预测类别
             }
         )
         system.append(
@@ -148,6 +180,12 @@ def main() -> None:
                 "latency_ai_ms": latency_ai,
                 "latency_source": latency_src,
                 "ai": _ai_summary(detail),
+                "unavailable": "degraded"
+                if any(
+                    isinstance(result, dict) and result.get("degraded_reason")
+                    for result in detail.get("ai_results") or []
+                )
+                else "",
                 "model_revision": args.model_revision,
                 "rule_revision": args.rule_revision,
             }
@@ -157,17 +195,18 @@ def main() -> None:
         stats["by_verdict"][verdict] = stats["by_verdict"].get(verdict, 0) + 1
         stats["latency_src"][latency_src] = stats["latency_src"].get(latency_src, 0) + 1
 
-    Path(f"{args.out}-labeling.jsonl").write_text(
-        "\n".join(json.dumps(x, ensure_ascii=False) for x in labeling) + ("\n" if labeling else ""),
-        encoding="utf-8",
-    )
-    Path(f"{args.out}-system.jsonl").write_text(
-        "\n".join(json.dumps(x, ensure_ascii=False) for x in system) + ("\n" if system else ""),
-        encoding="utf-8",
-    )
-    Path(f"{args.out}-manifest.json").write_text(
-        json.dumps(stats, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
-    )
+    # 独占创建，防止导出读取期间新建的文件被覆盖。
+    with output_paths[0].open("x", encoding="utf-8") as f:
+        f.write(
+            "\n".join(json.dumps(x, ensure_ascii=False) for x in labeling)
+            + ("\n" if labeling else "")
+        )
+    with output_paths[1].open("x", encoding="utf-8") as f:
+        f.write(
+            "\n".join(json.dumps(x, ensure_ascii=False) for x in system) + ("\n" if system else "")
+        )
+    with output_paths[2].open("x", encoding="utf-8") as f:
+        f.write(json.dumps(stats, ensure_ascii=False, indent=2) + "\n")
     print(json.dumps(stats, ensure_ascii=False, indent=2))
 
 

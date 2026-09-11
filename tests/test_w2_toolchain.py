@@ -6,6 +6,7 @@ import importlib.util
 import json
 import sys
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 from app.reports.evaluation import EvaluationSample, summarize_samples
@@ -304,3 +305,103 @@ def test_a03_latency_gate_requires_coverage() -> None:
     assert report["metrics"]["latency_missing_samples"] == 99
     assert report["metrics"]["latency_coverage"] == 0.01
     assert report["threshold_checks"]["text_latency"] is None
+
+
+@pytest.mark.parametrize("system_filename", ["w2_debug.jsonl", "w2_samples.jsonl"])
+async def test_r107_replay_outputs_keep_unavailable_through_formal_merge(
+    tmp_path, monkeypatch, system_filename
+) -> None:
+    """Both real replay exports must preserve unavailable markers through merge/eval."""
+    replay = _load_script("w2_replay")
+    task_data = tmp_path / "data"
+    task_data.mkdir()
+    labels = [
+        {
+            "sample_id": f"s{i}",
+            "label": "confirmed_violation" if i < 3 else "confirmed_normal",
+            "truth_category": "ad",
+            "kind": "text",
+            "text": f"synthetic sample {i}",
+            "media": [],
+        }
+        for i in range(10)
+    ]
+    _write(task_data / "w2_labels_all.jsonl", labels)
+
+    class FakeSession:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *args):
+            return None
+
+    class FakeService:
+        vision_moderator = object()
+        calls = 0
+
+        async def review_message(self, session, msg, local, **kwargs):
+            self.calls += 1
+            if self.calls == 3:
+                raise RuntimeError("synthetic unavailable")
+            degraded = self.calls == 2
+            verdict = (
+                "violation_high" if self.calls == 1 else "record_only" if degraded else "allow"
+            )
+            category = "ad" if self.calls == 1 else None
+            result = SimpleNamespace(
+                source="text",
+                review_role="primary",
+                model_id="test-primary",
+                category=category,
+                confidence=0.95,
+                needs_review=degraded,
+                cache_hit=False,
+                degraded_reason="provider_call_failed" if degraded else "",
+            )
+            return SimpleNamespace(verdict=verdict, category=category, confidence=0.95), [result]
+
+    settings = SimpleNamespace(
+        ai_vision_model="test-primary",
+        ai_review_model="test-review",
+        ai_prompt_version="test-v1",
+        ai_prompt_rules_file="",
+        ai_primary_direct_threshold=0.90,
+        ai_secondary_review_low=0.60,
+    )
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(sys, "argv", ["w2_replay.py"])
+    monkeypatch.setattr(replay, "get_settings", lambda: settings)
+    monkeypatch.setattr(replay, "SessionLocal", FakeSession)
+    monkeypatch.setattr(replay, "build_default_ai_review_service", FakeService)
+    await replay.main()
+
+    manifest = json.loads((task_data / "w2_manifest.json").read_text(encoding="utf-8"))
+    assert manifest["unusable"] == 2
+    assert manifest["fail_rate"] == 0.2
+    predicted = [EvaluationSample.from_dict(row) for row in _read(task_data / "w2_samples.jsonl")]
+    with pytest.raises(ValueError, match="model-predicted"):
+        summarize_samples(predicted)
+
+    output = _merge(tmp_path, _read(task_data / system_filename), labels, strict=True)
+    report = summarize_samples([EvaluationSample.from_dict(row) for row in _read(output)])
+    assert report["metrics"]["samples"] == 10
+    assert report["metrics"]["positive_samples"] == 3
+    assert report["metrics"]["recall"] == pytest.approx(1 / 3)
+    assert report["metrics"]["unavailable_samples"] == 2
+    assert report["threshold_checks"]["measurement_complete"] is False
+
+
+@pytest.mark.parametrize("unavailable", [None, True, "unknown_failure"])
+def test_r107_merge_rejects_invalid_unavailable_markers(tmp_path, unavailable) -> None:
+    """Malformed failure metadata cannot be silently converted into availability."""
+    system = [{**_system_row("s1", "record_only"), "unavailable": unavailable}]
+    labels = [
+        {
+            "sample_id": "s1",
+            "label": "confirmed_violation",
+            "truth_category": "ad",
+            "kind": "text",
+        }
+    ]
+    with pytest.raises(SystemExit, match="unavailable"):
+        _merge(tmp_path, system, labels, strict=True)
