@@ -1,5 +1,14 @@
 # 外部模型延迟/精度评测（2026-09-10）
 
+> **⚠️ 追记（2026-09-11）：官方模型退役与更名。**
+> DeepSeek 官方公告（2026-09-10）：**V4 Flash 与 V4 Flash Vision Exp 已退役**，
+> `deepseek-v4-flash-vision-exp` 仅**临时路由**至 V4.1 Flash；新模型名 **`deepseek-flash`**
+> （原生多模态、价格更低）为官方推荐。
+> 影响：① 本文第 1 节的 A/B（v4-flash-vision-exp vs deepseek-flash）实为**同一模型自比**
+> （旧名已路由至同一后端），两者精确率 96.3%/100% 的差异属测量方差，不构成选型依据；
+> ② 生产已切换为 `deepseek-flash`（复核仍为 qwen3.8-flash），切换是纯更名、无行为变化；
+> ③ 缓存键已含 `prompt_digest` 与 model_id，旧缓存自动失效（R05）。
+
 > 目的：评估更快的模型能否同时解决 W2 延迟门槛（text p95 ≤3s / image p95 ≤15s）与图片判定精度。
 > 测试在部署机本地进行，密钥仅经环境变量传入，未写入任何文件。
 

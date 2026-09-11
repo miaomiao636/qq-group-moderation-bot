@@ -10,7 +10,7 @@
 | 窗口开始（本地 UTC+8） | 2026-09-11 18:26（服务 ready 时刻） |
 | 窗口开始（UTC） | 2026-09-11T10:26:47Z（`last_connect_at`） |
 | 计划结束 | 至少 2026-09-12 18:26（本地），即连续 ≥24h |
-| AI 主模型 | `deepseek-v4-flash-vision-exp` |
+| AI 主模型 | `deepseek-flash`（2026-09-11 由 `deepseek-v4-flash-vision-exp` 更名迁移；官方公告旧名已退役、临时路由至同一模型 V4.1 Flash，行为不变） |
 | AI 复核模型 | `qwen3.8-flash`（异源独立，仅灰区触发） |
 | 提示词版本 | `t204-v6` + 业务规则 `config/ai_prompt_rules.txt` |
 | 模式 | SAFE / `ACTION_MODE=SHADOW` |
