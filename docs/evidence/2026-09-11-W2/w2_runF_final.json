@@ -1,0 +1,179 @@
+{
+  "schema_version": "r105-eval-v1",
+  "metrics": {
+    "samples": 160,
+    "positive_samples": 72,
+    "negative_samples": 88,
+    "true_positive": 72,
+    "false_positive": 0,
+    "false_negative": 0,
+    "true_negative": 88,
+    "precision": 1.0,
+    "recall": 1.0,
+    "false_positive_rate": 0.0,
+    "flagged_recall": 1.0,
+    "manual_review_rate": 0.2875,
+    "p95_latency_ms": 3280.0
+  },
+  "by_kind": {
+    "gif": {
+      "samples": 5,
+      "positive_samples": 0,
+      "negative_samples": 5,
+      "true_positive": 0,
+      "false_positive": 0,
+      "false_negative": 0,
+      "true_negative": 5,
+      "precision": null,
+      "recall": null,
+      "false_positive_rate": 0.0,
+      "flagged_recall": null,
+      "manual_review_rate": 0.0,
+      "p95_latency_ms": 1266.0
+    },
+    "image": {
+      "samples": 70,
+      "positive_samples": 45,
+      "negative_samples": 25,
+      "true_positive": 45,
+      "false_positive": 0,
+      "false_negative": 0,
+      "true_negative": 25,
+      "precision": 1.0,
+      "recall": 1.0,
+      "false_positive_rate": 0.0,
+      "flagged_recall": 1.0,
+      "manual_review_rate": 0.05714285714285714,
+      "p95_latency_ms": 5578.0
+    },
+    "mixed": {
+      "samples": 43,
+      "positive_samples": 2,
+      "negative_samples": 41,
+      "true_positive": 2,
+      "false_positive": 0,
+      "false_negative": 0,
+      "true_negative": 41,
+      "precision": 1.0,
+      "recall": 1.0,
+      "false_positive_rate": 0.0,
+      "flagged_recall": 1.0,
+      "manual_review_rate": 0.9534883720930233,
+      "p95_latency_ms": 16.0
+    },
+    "share_card": {
+      "samples": 1,
+      "positive_samples": 0,
+      "negative_samples": 1,
+      "true_positive": 0,
+      "false_positive": 0,
+      "false_negative": 0,
+      "true_negative": 1,
+      "precision": null,
+      "recall": null,
+      "false_positive_rate": 0.0,
+      "flagged_recall": null,
+      "manual_review_rate": 0.0,
+      "p95_latency_ms": 1108.0
+    },
+    "text": {
+      "samples": 41,
+      "positive_samples": 25,
+      "negative_samples": 16,
+      "true_positive": 25,
+      "false_positive": 0,
+      "false_negative": 0,
+      "true_negative": 16,
+      "precision": 1.0,
+      "recall": 1.0,
+      "false_positive_rate": 0.0,
+      "flagged_recall": 1.0,
+      "manual_review_rate": 0.024390243902439025,
+      "p95_latency_ms": 1703.0
+    }
+  },
+  "by_category": {
+    "ad": {
+      "samples": 71,
+      "positive_samples": 71,
+      "negative_samples": 0,
+      "true_positive": 71,
+      "false_positive": 0,
+      "false_negative": 0,
+      "true_negative": 0,
+      "precision": 1.0,
+      "recall": 1.0,
+      "false_positive_rate": null,
+      "flagged_recall": 1.0,
+      "manual_review_rate": 0.0,
+      "p95_latency_ms": 3280.0
+    },
+    "other": {
+      "samples": 88,
+      "positive_samples": 0,
+      "negative_samples": 88,
+      "true_positive": 0,
+      "false_positive": 0,
+      "false_negative": 0,
+      "true_negative": 88,
+      "precision": null,
+      "recall": null,
+      "false_positive_rate": 0.0,
+      "flagged_recall": null,
+      "manual_review_rate": 0.5227272727272727,
+      "p95_latency_ms": 3594.0
+    },
+    "porn": {
+      "samples": 1,
+      "positive_samples": 1,
+      "negative_samples": 0,
+      "true_positive": 1,
+      "false_positive": 0,
+      "false_negative": 0,
+      "true_negative": 0,
+      "precision": 1.0,
+      "recall": 1.0,
+      "false_positive_rate": null,
+      "flagged_recall": 1.0,
+      "manual_review_rate": 0.0,
+      "p95_latency_ms": 1264.0
+    }
+  },
+  "threshold_checks": {
+    "precision_99pct": true,
+    "recall_85pct": true,
+    "ad_recall_90pct": true,
+    "fraud_recall_90pct": null,
+    "text_latency": true,
+    "image_latency": true,
+    "gif_latency": true,
+    "video_latency": null
+  },
+  "model_revisions": [
+    "deepseek-flash@t204-v7"
+  ],
+  "rule_revisions": [
+    "rules+missing"
+  ],
+  "sample_coverage": {
+    "ad": {
+      "positive_20": true,
+      "negative_30": false
+    },
+    "other": {
+      "positive_20": false,
+      "negative_30": true
+    },
+    "porn": {
+      "positive_20": false,
+      "negative_30": false
+    }
+  },
+  "release_decision": "REQUIRES_HUMAN_REVIEW",
+  "limitations": [
+    "人工真值及留出集独立性必须另行核验；重复模板应按近重复族隔离。",
+    "人工复核(record_only)不计入自动处罚召回，单独报告发现召回。",
+    "百分比是样本点估计，小样本不能证明长期99%精确率。",
+    "不证明真实消息接收、动作执行、Windows恢复或通知到达。"
+  ]
+}

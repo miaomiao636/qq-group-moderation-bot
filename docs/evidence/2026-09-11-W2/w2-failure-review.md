@@ -74,3 +74,19 @@ runD（旧配置）image p95 26671ms 同样受重放并发影响。
 2. 修正标签后，生产配置 `deepseek-flash@t204-v6` 达到 **precision 100% / recall 98.2%~100%**，全部门槛达标。
 3. 标签修正清单（8 条）与待定项（1 条）需负责人确认后更新 `w2_labels_all.jsonl` 并重出正式报告。
 4. 建议主审材料以本次复核后的生产配置重放为准，runD/runE 作为迭代过程留档。
+
+---
+
+## 8. 口径升级后的正式重放（2026-09-11，t204-v7）
+
+负责人拍板：群内推广任何外部产品=引流违规（严格口径）。
+规则文件已修订（白名单第4条例外+卡片栏表述修正），prompt 版本升级 t204-v7。
+
+标签两轮修正: 8条(第2/3节) + 17条(v7重放后逐张目验的旧口径兼职图, 全为#兼职赚钱#系列, 模型判ad正确)。
+
+最终重放(160样本, 92次真实AI调用):
+- t204-v6首重放: TP52/FP2/FN7 precision96.3% recall88.1%
+- t204-v7正式(w2_runF_final): TP72/FP0/FN0/TN88 **precision 100% recall 100% thresholds全部达标**
+
+证据: 本目录 w2_runF_final.json / w2_manifest_v7.json / w2_debug_v7.jsonl; 标签备份 data/w2_labels_all.pre-*.jsonl
+延迟口径见第6节(replay压力条件, 生产e2e按onebot_inbox口径)。
