@@ -42,6 +42,10 @@ os.environ["ONEBOT_ACCESS_TOKEN"] = "test-onebot-token"
 # 本机 .env 里的真实 QQ 号绝不进入测试：self_id 不匹配会导致连接被拒，
 # 测试使用与 fixture 一致的假 self_id（环境变量优先于 .env，见 pydantic-settings）。
 os.environ["ONEBOT_SELF_ID"] = "10000001"
+# 保留期固定为软件默认值（30/180），不继承部署机 .env 的运营选择（如生产 15/15）——
+# 否则保留期相关的清理/边界测试会随部署配置漂移（测试必须独立于部署配置）。
+os.environ["RAW_RETENTION_DAYS"] = "30"
+os.environ["DECISION_RETENTION_DAYS"] = "180"
 
 
 @pytest.fixture(scope="session", autouse=True)
