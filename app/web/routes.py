@@ -17,7 +17,7 @@ from urllib.parse import quote
 
 from fastapi import APIRouter, Form, HTTPException, Request, Response
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse
-from sqlalchemy import select, text, update
+from sqlalchemy import func, select, text, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.cases.case_sm import IllegalTransitionError
@@ -29,7 +29,6 @@ from app.reports.cleanup import purge_expired
 from app.reports.service import build_daily, build_weekly, pending_manual_review
 from app.reports.stats import build_stats
 from app.web import auth
-from app.web.confirm import generate, verify_and_consume
 
 router = APIRouter(prefix="/admin", include_in_schema=False)
 
@@ -285,28 +284,154 @@ async def logout_page(request: Request) -> RedirectResponse:
 
 # ---------- 案件列表 ----------
 
+# 案件状态中文名（未知状态回退英文原文）
+STATUS_ZH = {
+    "PENDING_REVIEW": "待处理",
+    "APPROVED_MANUAL": "已批准人工",
+    "MANUAL_PENDING": "待确认踢出",
+    "APPROVED_NAPCAT": "已批准自动",
+    "CONFIRM_PENDING": "待执行确认",
+    "EXECUTING": "执行中",
+    "KICKED": "已踢出",
+    "FAILED": "执行失败",
+    "CANCELLED": "已取消",
+    "KEEP": "保留不处罚",
+    "FALSE_POSITIVE": "误判",
+    "STRIKE_REVOKED": "违规已撤销",
+    "CLOSED": "已关闭",
+}
+
+
+def _status_zh(status: str) -> str:
+    return STATUS_ZH.get(status, status)
+
+
+async def _alias_map(session: AsyncSession) -> dict[str, str]:
+    """group_openid -> 群备注名（案件/群管理列表共用）。"""
+    from app.models import GroupAlias
+
+    return {
+        row.group_openid: row.name
+        for row in (await session.scalars(select(GroupAlias))).all()
+        if row.name.strip()
+    }
+
+
+def _group_display(alias_map: dict[str, str], group: str) -> str:
+    """群名优先，无备注回退群号。"""
+    name = alias_map.get(group or "")
+    return name if name else (group or "-")
+
 
 @router.get("/", response_class=HTMLResponse)
-async def dashboard(request: Request) -> Response:
+async def dashboard(
+    request: Request,
+    notice: str = "",
+    page: int = 1,
+    status: str = "",
+    group: str = "",
+    date_from: str = "",
+    date_to: str = "",
+) -> Response:
     if not await _require_login(request):
         return _login_redirect()
+    page = max(1, page)
+    page_size = 50
     async with SessionLocal() as session:
         pending = await pending_manual_review(session)
-        stmt = select(Case).order_by(Case.created_at.desc()).limit(50)
-        cases = (await session.execute(stmt)).scalars().all()
+        alias_map = await _alias_map(session)
+        conditions = []
+        if status:
+            conditions.append(Case.status == status)
+        if group.strip():
+            # 支持群号或群名（含别名模糊匹配）
+            needle = group.strip()
+            matched = {gid for gid, name in alias_map.items() if needle in name}
+            if needle.isdigit() or needle not in matched:
+                matched.add(needle)
+            conditions.append(Case.group_openid.in_(matched))
+        if date_from:
+            conditions.append(Case.created_at >= f"{date_from} 00:00:00")
+        if date_to:
+            conditions.append(Case.created_at <= f"{date_to} 23:59:59")
+        where = [*conditions] if conditions else []
+        base = select(Case)
+        if where:
+            base = base.where(*where)
+        total = (await session.execute(select(func.count()).select_from(base.subquery()))).scalar() or 0
+        cases = (
+            (
+                await session.execute(
+                    base.order_by(Case.created_at.desc())
+                    .limit(page_size)
+                    .offset((page - 1) * page_size)
+                )
+            )
+            .scalars()
+            .all()
+        )
+    total_pages = max(1, (total + page_size - 1) // page_size)
+
+    def _qs(p: int) -> str:
+        from urllib.parse import urlencode
+
+        return "?" + urlencode(
+            {k: v for k, v in {
+                "page": p, "status": status, "group": group,
+                "date_from": date_from, "date_to": date_to,
+            }.items() if v}
+        ) or "?"
+
     rows = "".join(
-        f"<tr><td>{_esc(c.case_no)}</td><td>{_esc(c.member_openid)}</td>"
-        f"<td>{_esc(c.status)}</td><td>{_esc(f'{c.created_at:%m-%d %H:%M}')}</td>"
+        f"<tr><td><input type=checkbox name=case_ids value={c.id}></td>"
+        f"<td><a href=/admin/cases/{c.id}>{_esc(c.case_no)}</a></td>"
+        f"<td>{_esc(_group_display(alias_map, c.group_openid))}<span class=muted> {_esc(c.group_openid)}</span></td>"
+        f"<td>{_esc(c.member_openid)}</td>"
+        f"<td>{_esc(_status_zh(c.status))}</td><td>{_esc(f'{c.created_at:%m-%d %H:%M}')}</td>"
         f'<td><a href="/admin/cases/{c.id}">查看</a></td></tr>'
         for c in cases
     )
+    status_opts = "".join(
+        f'<option value="{code}" {"selected" if status == code else ""}>{zh}</option>'
+        for code, zh in sorted(STATUS_ZH.items())
+    )
+    filter_form = (
+        '<form method=get class=card style="display:flex;gap:12px;flex-wrap:wrap;align-items:end">'
+        "<label>状态 <select name=status><option value=''>全部</option>"
+        f"{status_opts}</select></label>"
+        f'<label>群（群号或群名） <input name=group value="{_esc(group)}" style=width:140px></label>'
+        f'<label>从 <input type=date name=date_from value="{_esc(date_from)}"></label>'
+        f'<label>至 <input type=date name=date_to value="{_esc(date_to)}"></label>'
+        "<button class=btn>筛选</button>"
+        '<a class=btn href="/admin">重置</a></form>'
+    )
+    batch_form = (
+        '<form method=post action="/admin/cases/batch-delete" '
+        'onsubmit="return confirm(\'确定删除勾选的案件吗？将同时删除其违规证据记录，不可恢复。\')">'
+        f"<table><tr><th></th><th>批次号</th><th>群</th><th>成员</th><th>状态</th><th>创建</th><th></th></tr>{rows}</table>"
+        f'<p style=margin-top:8px><button class="btn danger">删除勾选案件</button>'
+        f'<span class=muted>（共 {total} 条，第 {page}/{total_pages} 页）</span></p></form>'
+    )
+    pager = (
+        '<p>'
+        + (f'<a class=btn href="/admin{_qs(page - 1)}">上一页</a>' if page > 1 else "")
+        + (f'<a class=btn href="/admin{_qs(page + 1)}">下一页</a>' if page < total_pages else "")
+        + "</p>"
+        if total_pages > 1
+        else ""
+    )
     pending_rows = (
-        "".join(f"<li>{_esc(p['case_no'])} 成员{_esc(p['member_openid'])}</li>" for p in pending)
+        "".join(
+            f"<li>{_esc(p['case_no'])}　群 {_esc(_group_display(alias_map, p.get('group_openid') or ''))}　"
+            f"成员{_esc(p['member_openid'])}</li>"
+            for p in pending
+        )
         or "<li>无</li>"
     )
+    notice_html = f'<p class=warn>{_esc(notice)}</p>' if notice else ""
     body = (
-        f"<h2>待人工处理（{len(pending)}）</h2><ul>{pending_rows}</ul>"
-        f"<h2>最近案件</h2><table><tr><th>批次号</th><th>成员</th><th>状态</th><th>创建</th><th></th></tr>{rows}</table>"
+        f"{notice_html}<h2>待人工处理（{len(pending)}）</h2><ul>{pending_rows}</ul>"
+        f"<h2>案件</h2>{filter_form}{batch_form}{pager}"
     )
     return _page("案件列表", body)
 
@@ -363,10 +488,13 @@ async def case_detail(request: Request, case_id: int, code: str = "", notice: st
         return _login_redirect()
     csrf = _csrf_field(token)
     case, records = await _load_case(case_id)
-    show_code = (
-        f'<p>一次性确认码（5分钟有效，仅显示一次）：<b style="font-size:22px">{_esc(code)}</b></p>'
-        if code
-        else ""
+    async with SessionLocal() as session:
+        alias_map = await _alias_map(session)
+    group_name = alias_map.get(case.group_openid or "", "")
+    group_html = (
+        f"{_esc(group_name)} <code>{_esc(case.group_openid)}</code>"
+        if group_name
+        else f"<code>{_esc(case.group_openid)}</code>"
     )
     notice_html = f"<p class=warn>{_esc(notice)}</p>" if notice else ""
     evidence = _evidence_html(records)
@@ -374,31 +502,36 @@ async def case_detail(request: Request, case_id: int, code: str = "", notice: st
     if case.status == "PENDING_REVIEW":
         buttons = (
             '<form method=post style="display:inline" action="'
-            + f"/admin/cases/{case.id}/approve-manual"
-            + f'">{csrf}<button class=btn ok>① 人工处理：预览并生成确认码</button></form>'
+            + f"/admin/cases/{case.id}/manual-kick"
+            + f'" onsubmit="return confirm(\'确认人工处理：已在QQ客户端踢出该成员？点击后案件记为已踢出并结案。\')'
+            + f'">{csrf}<button class="btn danger">人工处理（确认踢出并结案）</button></form>'
             '<form method=post style="display:inline" action="'
             + f"/admin/cases/{case.id}/keep"
+            + f'" onsubmit="return confirm(\'确认保留该成员、不做处罚？\')'
             + f'">{csrf}<button class=btn>保留（不处罚）</button></form>'
             '<form method=post style="display:inline" action="'
             + f"/admin/cases/{case.id}/false-positive"
+            + f'" onsubmit="return confirm(\'确认为误判？将撤销该案件全部违规记录。\')'
             + f'">{csrf}<button class=btn>标记误判（撤销违规）</button></form>'
         )
     elif case.status == "MANUAL_PENDING":
+        # 存量案件兼容：旧流程（已批准、待确认码）仍可确认/取消
         buttons = (
             f'<form method=post action="/admin/cases/{case.id}/confirm-kick">'
             f"{csrf}已在QQ客户端手动踢出？输入确认码：<input name=code maxlength=6 style=width:90px> "
-            '<button class="btn danger">② 确认已踢出</button></form>'
-            f'<form method=post action="/admin/cases/{case.id}/cancel" style="margin-top:8px">'
+            '<button class="btn danger">确认已踢出</button></form>'
+            f'<form method=post action="/admin/cases/{case.id}/cancel" style="margin-top:8px" '
+            f'onsubmit="return confirm(\'确认取消该案件？\')">'
             f"{csrf}<button class=btn>无法确认成员/取消</button></form>"
         )
     audit = _esc(json.dumps(json.loads(case.audit_json), ensure_ascii=False, indent=1))
     body = (
-        f"<h2>案件 {_esc(case.case_no)}</h2>{notice_html}{show_code}"
-        f"<div class=card><p>状态：<b>{_esc(case.status)}</b>　成员OpenID：<code>{_esc(case.member_openid)}</code> "
-        "<span class=warn>（未验证QQ号）</span>　群：<code>"
-        + _esc(case.group_openid)
-        + "</code></p>"
-        f"<p>证据：</p>{evidence}</div>"
+        f"<h2>案件 {_esc(case.case_no)}</h2>{notice_html}"
+        f"<div class=card><p>状态：<b>{_esc(_status_zh(case.status))}</b>　成员OpenID：<code>{_esc(case.member_openid)}</code> "
+        "<span class=warn>（未验证QQ号）</span>　群："
+        + group_html
+        + "</p>"
+        f"<p>证据（{len(records)} 条）：</p>{evidence}</div>"
         f"<div class=card><h3>操作</h3>{buttons or '<p class=muted>案件已终态，无可用操作</p>'}</div>"
         f"<div class=card><h3>审计记录</h3><pre>{audit}</pre></div>"
     )
@@ -408,31 +541,55 @@ async def case_detail(request: Request, case_id: int, code: str = "", notice: st
 # ---------- 审批动作 ----------
 
 
-@router.post("/cases/{case_id}/approve-manual")
-async def approve_manual(request: Request, case_id: int, csrf: str = Form("")) -> Response:
+def _transition_error_html(case_id: int, exc: IllegalTransitionError) -> str:
+    """友好化状态机报错：给出原因解释与当前可执行的操作入口。"""
+    msg = str(exc)
+    hint = ""
+    if "KEEP" in msg or "FALSE_POSITIVE" in msg:
+        if "MANUAL_PENDING" in msg:
+            hint = "该案件已在人工处理流程中（已批准待踢出），不能再改为保留/误判。"
+        hint += "请刷新案件页后按当前状态选择可用操作。"
+    elif "CLOSED" in msg:
+        hint = "该案件已关闭（终态），不能再变更。"
+    return (
+        f'<div class=card><p class=warn>操作未执行：{_esc(msg)}</p>'
+        f"<p class=muted>{_esc(hint)}</p>"
+        f'<p><a href="/admin/cases/{case_id}">返回案件页（页面已按最新状态显示可用操作）</a>　'
+        f'<a href="/admin">返回案件列表</a></p></div>'
+    )
+
+
+@router.post("/cases/{case_id}/manual-kick")
+async def manual_kick(request: Request, case_id: int, csrf: str = Form("")) -> Response:
+    """人工处理一键确认：记录为已踢出并结案（负责人 2026-09-12 简化，取消确认码）。"""
     await _require_admin_post(request, csrf)
     operator = await _operator(request)
     case, _ = await _load_case(case_id)
     try:
-        await transition_with_session(case_id, "APPROVED_MANUAL", operator)
-        await transition_with_session(case_id, "MANUAL_PENDING", operator)
-        await record_admin_audit(operator, "case_approve_manual", "case", str(case_id))
-    except IllegalTransitionError as exc:
-        return _page(
-            "错误",
-            f'<div class=card><p class=warn>{_esc(str(exc))}</p><a href="/admin/cases/{case_id}">返回</a></div>',
+        for target in ("APPROVED_MANUAL", "MANUAL_PENDING", "KICKED", "CLOSED"):
+            await transition_with_session(case_id, target, operator)
+        await record_admin_audit(
+            operator,
+            "case_manual_kick",
+            "case",
+            str(case_id),
+            {"case_no": case.case_no, "mode": "one_click"},
         )
-    code = generate(case_id)
-    return await case_detail(request, case_id, code=code)
+    except IllegalTransitionError as exc:
+        return _page("操作未执行", _transition_error_html(case_id, exc))
+    return RedirectResponse(f"/admin/cases/{case_id}?notice=已记录为人工踢出并结案", status_code=303)
 
 
 @router.post("/cases/{case_id}/confirm-kick")
 async def confirm_kick(
     request: Request, case_id: int, code: str = Form(""), csrf: str = Form("")
 ) -> Response:
+    """存量案件兼容：旧流程（已批准待确认码）的确认入口。"""
+    from app.web.confirm import verify_and_consume
+
     await _require_admin_post(request, csrf)
     if not verify_and_consume(case_id, code):
-        return await case_detail(request, case_id, notice="确认码错误或已过期，请重新生成预览")
+        return await case_detail(request, case_id, notice="确认码错误或已过期")
     try:
         await transition_with_session(case_id, "KICKED", await _operator(request))
         await transition_with_session(case_id, "CLOSED", await _operator(request))
@@ -440,10 +597,7 @@ async def confirm_kick(
             await _operator(request), "case_confirm_manual_kick", "case", str(case_id)
         )
     except IllegalTransitionError as exc:
-        return _page(
-            "错误",
-            f'<div class=card><p class=warn>{_esc(str(exc))}</p><a href="/admin/cases/{case_id}">返回</a></div>',
-        )
+        return _page("操作未执行", _transition_error_html(case_id, exc))
     return RedirectResponse(
         f"/admin/cases/{case_id}?notice=已记录为人工踢出并结案", status_code=303
     )
@@ -457,7 +611,7 @@ async def keep_case(request: Request, case_id: int, csrf: str = Form("")) -> Res
         await transition_with_session(case_id, "CLOSED", await _operator(request))
         await record_admin_audit(await _operator(request), "case_keep", "case", str(case_id))
     except IllegalTransitionError as exc:
-        return _page("错误", f"<div class=card><p class=warn>{_esc(str(exc))}</p></div>")
+        return _page("操作未执行", _transition_error_html(case_id, exc))
     return RedirectResponse("/admin", status_code=303)
 
 
@@ -484,7 +638,7 @@ async def false_positive(request: Request, case_id: int, csrf: str = Form("")) -
             {"case_no": case.case_no, "records": len(records)},
         )
     except IllegalTransitionError as exc:
-        return _page("错误", f"<div class=card><p class=warn>{_esc(str(exc))}</p></div>")
+        return _page("操作未执行", _transition_error_html(case_id, exc))
     return RedirectResponse("/admin", status_code=303)
 
 
@@ -496,8 +650,49 @@ async def cancel_case(request: Request, case_id: int, csrf: str = Form("")) -> R
         await transition_with_session(case_id, "CLOSED", await _operator(request))
         await record_admin_audit(await _operator(request), "case_cancel", "case", str(case_id))
     except IllegalTransitionError as exc:
-        return _page("错误", f"<div class=card><p class=warn>{_esc(str(exc))}</p></div>")
+        return _page("操作未执行", _transition_error_html(case_id, exc))
     return RedirectResponse("/admin", status_code=303)
+
+
+@router.post("/cases/batch-delete")
+async def batch_delete_cases(request: Request, csrf: str = Form(""), case_ids: list[str] = Form([])) -> Response:
+    """勾选批量删除案件（含其违规证据记录）——负责人授权的清理功能，不可恢复。"""
+    await _require_admin_post(request, csrf)
+    operator = await _operator(request)
+    ids = []
+    for raw in case_ids:
+        try:
+            ids.append(int(raw))
+        except ValueError:
+            continue
+    if not ids:
+        return RedirectResponse("/admin?notice=" + quote("未勾选任何案件"), status_code=303)
+    deleted_cases = 0
+    deleted_records = 0
+    async with SessionLocal() as session:
+        for cid in ids:
+            case = await session.get(Case, cid)
+            if case is None:
+                continue
+            for vid in json.loads(case.violation_ids_json):
+                record = await session.get(ViolationRecord, int(vid))
+                if record is not None:
+                    await session.delete(record)
+                    deleted_records += 1
+            await session.delete(case)
+            deleted_cases += 1
+        await session.commit()
+    await record_admin_audit(
+        operator,
+        "case_batch_delete",
+        "case",
+        ",".join(str(i) for i in ids),
+        {"cases": deleted_cases, "violation_records": deleted_records},
+    )
+    return RedirectResponse(
+        "/admin?notice=" + quote(f"已删除 {deleted_cases} 个案件（含 {deleted_records} 条违规证据）"),
+        status_code=303,
+    )
 
 
 async def _operator(request: Request) -> str:
@@ -1428,14 +1623,14 @@ async def _ensure_action_routes(
 
 
 @router.get("/groups", response_class=HTMLResponse)
-async def groups_page(request: Request, notice: str = "") -> Response:
+async def groups_page(request: Request, notice: str = "", show_hidden: str = "") -> Response:
     """Provider-qualified controls with an explicit, human-approved action owner."""
     token = await _require_login(request)
     if not token:
         return _login_redirect()
     csrf = _csrf_field(token)
     from app.core.emergency_stop import emergency_stop_active
-    from app.models import GroupActionOwner, ProviderGroupSettings
+    from app.models import GroupActionOwner, HiddenGroup, ProviderGroupSettings
     from app.runtime.models import ShadowDecision
 
     async with SessionLocal() as session:
@@ -1460,14 +1655,50 @@ async def groups_page(request: Request, notice: str = "") -> Response:
             row.external_group_id: row.provider
             for row in (await session.scalars(select(GroupActionOwner))).all()
         }
+        hidden = set(
+            (row.provider, row.external_group_id)
+            for row in (await session.scalars(select(HiddenGroup))).all()
+        )
         stopped = await emergency_stop_active(session)
     rows = []
     for provider, group in sorted(seen):
         if not group:
             continue
-        gs = settings_map.get((provider, group))
+        key = (provider, group)
+        is_hidden = key in hidden
+        # 正常视图隐藏已隐藏群；show_hidden=1 只显示已隐藏群（可恢复/彻底删除）
+        if (not show_hidden and is_hidden) or (show_hidden and not is_hidden):
+            continue
+        gs = settings_map.get(key)
+        if show_hidden:
+            action_buttons = (
+                f'<form method=post style="display:inline" action="/admin/groups/unhide">{csrf}'
+                f'<input type=hidden name=provider value="{_esc(provider)}">'
+                f'<input type=hidden name=group_openid value="{_esc(group)}">'
+                '<button class=btn>取消隐藏</button></form> '
+                f'<form method=post style="display:inline" action="/admin/groups/delete" '
+                f'onsubmit="return confirm(\'彻底删除该群的后台数据？此操作不可恢复。\')">{csrf}'
+                f'<input type=hidden name=provider value="{_esc(provider)}">'
+                f'<input type=hidden name=group_openid value="{_esc(group)}">'
+                '<button class="btn danger">彻底删除</button></form>'
+            )
+        else:
+            action_buttons = (
+                f'<form method=post style="display:inline" action="/admin/groups/hide" '
+                f'onsubmit="return confirm(\'从后台隐藏该群？（数据保留，可随时在「查看已隐藏群」中恢复）\')">{csrf}'
+                f'<input type=hidden name=provider value="{_esc(provider)}">'
+                f'<input type=hidden name=group_openid value="{_esc(group)}">'
+                '<button class=btn>隐藏</button></form> '
+                f'<form method=post style="display:inline" action="/admin/groups/delete" '
+                f'onsubmit="return confirm(\'彻底删除该群的后台数据？此操作不可恢复。\')">{csrf}'
+                f'<input type=hidden name=provider value="{_esc(provider)}">'
+                f'<input type=hidden name=group_openid value="{_esc(group)}">'
+                '<button class="btn danger">删除</button></form>'
+            )
+        display_name = alias_map.get(group) or (gs.name if gs else "")
         rows.append(
-            f"<tr><td>{_esc(provider)}<br><code>{_esc(group)}</code></td>"
+            f"<tr><td>{_esc(provider)}<br>{f'<b>{_esc(display_name)}</b><br>' if display_name else ''}"
+            f"<code>{_esc(group)}</code>{' <span class=warn>（已隐藏）</span>' if is_hidden else ''}</td>"
             f"<td>{_esc(owners.get(group) or '未选择 / 有歧义')}</td><td>"
             f'<form method=post action="/admin/groups/settings">{csrf}'
             f'<input type=hidden name=provider value="{_esc(provider)}">'
@@ -1476,19 +1707,29 @@ async def groups_page(request: Request, notice: str = "") -> Response:
             f'{_esc(alias_map.get(group) or (gs.name if gs else ""))}"></label> '
             f"<label><input type=checkbox name=moderation_enabled value=1 {'checked' if gs is None or gs.moderation_enabled else ''}>审核</label> "
             f"<label><input type=checkbox name=action_enabled value=1 {'checked' if gs and gs.action_enabled else ''}>真实动作</label> "
-            "<button class=btn>保存 / 预览高风险变更</button></form></td></tr>"
+            '<button class=btn>保存 / 预览高风险变更</button></form>'
+            f"<div style=margin-top:6px>{action_buttons}</div></td></tr>"
         )
+    hidden_toggle = (
+        '<a class=btn href="/admin/groups">返回正常视图</a>'
+        if show_hidden
+        else '<a class=btn href="/admin/groups?show_hidden=1">查看已隐藏群</a>'
+    )
     body = (
         "<h2>群管理</h2><p>群设置按来源和群 ID 隔离。开启真实动作或改变出口需预览并由登录管理员确认；"
         "选择出口会关闭同 ID 其他来源的动作。不同通道 ID 不做猜测映射。</p>"
         f"<div role=status>{_esc(notice)}</div>"
+        f"<p>{hidden_toggle}</p>"
         f"<div class=card><strong>急停：{'已开启，禁止外部动作' if stopped else '未开启'}</strong>"
         f'<form method=post action="/admin/emergency-stop">{csrf}'
         '<button class="btn danger">立即停止全部外部动作</button></form>'
         f'<form method=post action="/admin/emergency-resume">{csrf}'
         "<button class=btn>预览解除急停</button></form></div>"
         "<table><tr><th>群身份</th><th>唯一动作出口</th><th>设置</th></tr>"
-        + ("".join(rows) or "<tr><td colspan=3>暂无群消息。可在下方明确添加群来源。</td></tr>")
+        + (
+            "".join(rows)
+            or f"<tr><td colspan=3>{'没有已隐藏的群。' if show_hidden else '暂无群消息。可在下方明确添加群来源。'}</td></tr>"
+        )
         + f'</table><div class=card><h3>添加明确的群身份</h3><form method=post action="/admin/groups/settings">{csrf}'
         "<label>来源 <select name=provider><option value=onebot>onebot</option>"
         "<option value=qq_official>qq_official</option></select></label> "
@@ -1498,6 +1739,108 @@ async def groups_page(request: Request, notice: str = "") -> Response:
         "<button class=btn>添加（仅审核，动作关闭）</button></form></div>"
     )
     return _page("群管理", body)
+
+
+@router.post("/groups/hide")
+async def hide_group(
+    request: Request,
+    provider: str = Form(""),
+    group_openid: str = Form(""),
+    csrf: str = Form(""),
+) -> Response:
+    """软删除：从后台列表隐藏该群，数据全部保留，可恢复。"""
+    from app.models import HiddenGroup
+
+    await _require_admin_post(request, csrf)
+    if not group_openid.strip():
+        return RedirectResponse("/admin/groups?notice=" + quote("群 ID 为空"), status_code=303)
+    async with SessionLocal() as session:
+        key = (provider or "onebot", group_openid.strip())
+        existing = await session.get(HiddenGroup, key)
+        if existing is None:
+            session.add(HiddenGroup(provider=key[0], external_group_id=key[1]))
+            await session.commit()
+    await record_admin_audit(
+        await _operator(request), "group_hide", "group", f"{provider}:{group_openid}"
+    )
+    return RedirectResponse("/admin/groups?notice=" + quote("该群已隐藏（数据保留，可在「查看已隐藏群」中恢复）"), status_code=303)
+
+
+@router.post("/groups/unhide")
+async def unhide_group(
+    request: Request,
+    provider: str = Form(""),
+    group_openid: str = Form(""),
+    csrf: str = Form(""),
+) -> Response:
+    """恢复隐藏的群。"""
+    from app.models import HiddenGroup
+
+    await _require_admin_post(request, csrf)
+    async with SessionLocal() as session:
+        existing = await session.get(HiddenGroup, (provider or "onebot", group_openid.strip()))
+        if existing is not None:
+            await session.delete(existing)
+            await session.commit()
+    await record_admin_audit(
+        await _operator(request), "group_unhide", "group", f"{provider}:{group_openid}"
+    )
+    return RedirectResponse(
+        "/admin/groups?show_hidden=1&notice=" + quote("该群已恢复显示"), status_code=303
+    )
+
+
+@router.post("/groups/delete")
+async def delete_group(
+    request: Request,
+    provider: str = Form(""),
+    group_openid: str = Form(""),
+    csrf: str = Form(""),
+) -> Response:
+    """彻底删除该群在后台的痕迹：设置、备注、动作出口、（可选）历史判定。
+
+    不删除案件与违规记录（独立审计数据，可在案件列表单独清理）。
+    """
+    from app.models import GroupActionOwner, GroupAlias, HiddenGroup, ProviderGroupSettings
+    from app.runtime.models import ShadowDecision
+
+    await _require_admin_post(request, csrf)
+    gid = group_openid.strip()
+    if not gid:
+        return RedirectResponse("/admin/groups?notice=" + quote("群 ID 为空"), status_code=303)
+    async with SessionLocal() as session:
+        gs = await session.get(ProviderGroupSettings, (provider or "onebot", gid))
+        if gs is not None:
+            await session.delete(gs)
+        alias = await session.get(GroupAlias, gid)
+        if alias is not None:
+            await session.delete(alias)
+        owner = await session.get(GroupActionOwner, gid)
+        if owner is not None:
+            await session.delete(owner)
+        hidden = await session.get(HiddenGroup, (provider or "onebot", gid))
+        if hidden is not None:
+            await session.delete(hidden)
+        result = await session.execute(
+            text(
+                "DELETE FROM shadow_decisions WHERE provider = :p AND external_group_id = :g"
+            ),
+            {"p": provider or "onebot", "g": gid},
+        )
+        await session.commit()
+        deleted_decisions = result.rowcount or 0
+    await record_admin_audit(
+        await _operator(request),
+        "group_delete",
+        "group",
+        f"{provider}:{gid}",
+        {"shadow_decisions": deleted_decisions},
+    )
+    return RedirectResponse(
+        "/admin/groups?notice="
+        + quote(f"已彻底删除该群（含 {deleted_decisions} 条历史判定记录；案件不受影响）"),
+        status_code=303,
+    )
 
 
 @router.post("/groups/settings")

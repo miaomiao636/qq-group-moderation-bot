@@ -273,33 +273,13 @@ def test_full_manual_kick_flow(logged_in: TestClient) -> None:
     group, member = unique_ids()
     case_id = make_case(group, member, f"WEB_MSG_{uuid.uuid4().hex[:6]}")
 
-    # ① 预览并生成确认码（页面仅显示一次，从第一次响应提取）
+    # 2026-09-12 简化（负责人决定）：人工处理一键确认踢出，无确认码
     page = logged_in.get(f"/admin/cases/{case_id}")
     csrf = extract_csrf(page.text)
-    resp = logged_in.post(f"/admin/cases/{case_id}/approve-manual", data={"csrf": csrf})
-    assert resp.status_code == 200
-    assert "一次性确认码" in resp.text
-    assert "未验证QQ号" in resp.text  # 证据页标注
-    import re
-
-    match = re.search(r"<b style=\"font-size:22px\">(\d{6})</b>", resp.text)
-    assert match, "预览页应显示确认码"
-    code = match.group(1)
-
-    # 错误确认码被拒
-    resp = logged_in.post(
-        f"/admin/cases/{case_id}/confirm-kick", data={"code": "000000", "csrf": csrf}
-    )
-    assert "错误或已过期" in resp.text
-
-    # ② 凭码确认已人工踢出 → 结案（TestClient 默认跟随重定向，最终应回到详情页并带结案通知）
-    resp = logged_in.post(f"/admin/cases/{case_id}/confirm-kick", data={"code": code, "csrf": csrf})
+    assert "人工处理（确认踢出并结案）" in page.text
+    resp = logged_in.post(f"/admin/cases/{case_id}/manual-kick", data={"csrf": csrf})
     assert resp.status_code == 200
     assert "已记录为人工踢出并结案" in resp.text
-
-    # 确认码一次性：重放被拒
-    resp = logged_in.post(f"/admin/cases/{case_id}/confirm-kick", data={"code": code, "csrf": csrf})
-    assert "错误或已过期" in resp.text
 
     from app.cases.models import Case
     from app.db import SessionLocal
@@ -313,6 +293,21 @@ def test_full_manual_kick_flow(logged_in: TestClient) -> None:
     import asyncio
 
     assert asyncio.run(_get()) == "CLOSED"
+
+
+def test_manual_kick_rejected_after_closed(logged_in: TestClient) -> None:
+    """终态案件再提交一键踢出：友好报错而非 500。"""
+    group, member = unique_ids()
+    case_id = make_case(group, member, f"WEB_MSG_{uuid.uuid4().hex[:6]}")
+    page = logged_in.get(f"/admin/cases/{case_id}")
+    csrf = extract_csrf(page.text)
+    resp = logged_in.post(f"/admin/cases/{case_id}/manual-kick", data={"csrf": csrf})
+    assert resp.status_code == 200
+    # 已 CLOSED，再次提交应得到友好错误页
+    resp = logged_in.post(f"/admin/cases/{case_id}/manual-kick", data={"csrf": csrf})
+    assert resp.status_code == 200
+    assert "操作未执行" in resp.text
+    assert "返回案件页" in resp.text
 
 
 def test_keep_flow(logged_in: TestClient) -> None:

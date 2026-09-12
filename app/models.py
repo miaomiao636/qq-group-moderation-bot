@@ -116,6 +116,17 @@ class GroupActionOwner(Base):
     provider: Mapped[str] = mapped_column(String(16), default="")
 
 
+class HiddenGroup(Base):
+    """后台隐藏的群（软删除）：仅影响群管理列表显示，不删除任何数据。"""
+
+    __tablename__ = "hidden_groups"
+
+    provider: Mapped[str] = mapped_column(String(16), primary_key=True)
+    external_group_id: Mapped[str] = mapped_column(String(128), primary_key=True)
+    reason: Mapped[str] = mapped_column(String(255), default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
+
+
 class AdminChangePlan(Base):
     """Immutable, short-lived management plan approved by a logged-in human."""
 
