@@ -408,13 +408,9 @@ async def dashboard(
         '<a class=btn href="/admin">重置</a></form>'
     )
     batch_form = (
-        '<form method=post action="/admin/cases/batch-delete" '
-        'onsubmit="return confirm(\'确定删除勾选的案件吗？将同时删除其违规证据记录，不可恢复。\')">'
-        f"{csrf}"
-        f"<table><tr><th><input type=checkbox onclick=\"document.querySelectorAll('input[name=case_ids]').forEach(c=>c.checked=this.checked)\" title=全选></th>"
-        f"<th>批次号</th><th>群</th><th>成员</th><th>状态</th><th>创建</th><th></th></tr>{rows}</table>"
-        f'<p style=margin-top:8px><button class="btn danger">删除勾选案件</button>'
-        f'<span class=muted>（共 {total} 条，第 {page}/{total_pages} 页）</span></p></form>'
+        f"<table><tr><th></th><th>批次号</th><th>群</th><th>成员</th><th>状态</th><th>创建</th><th></th></tr>{rows}</table>"
+        f'<p class=muted style=margin-top:8px>批量删除功能已按主审要求停用（R02/R03：硬删除破坏共用违规记录与编号/通知契约）；'
+        f'共 {total} 条，第 {page}/{total_pages} 页</p>'
     )
     pager = (
         '<p>'
@@ -659,43 +655,18 @@ async def cancel_case(request: Request, case_id: int, csrf: str = Form("")) -> R
 
 
 @router.post("/cases/batch-delete")
-async def batch_delete_cases(request: Request, csrf: str = Form(""), case_ids: list[str] = Form([])) -> Response:
-    """勾选批量删除案件（含其违规证据记录）——负责人授权的清理功能，不可恢复。"""
+async def batch_delete_cases(request: Request, csrf: str = Form("")) -> Response:
+    """主审 R02/R03（ad323b6）：硬删除案件破坏共用违规记录与编号/通知契约，已停用。
+
+    将在整改中改为「归档」语义；此处保留路由并显式拒绝，防止旧页面/脚本绕过。
+    """
     await _require_admin_post(request, csrf)
-    operator = await _operator(request)
-    ids = []
-    for raw in case_ids:
-        try:
-            ids.append(int(raw))
-        except ValueError:
-            continue
-    if not ids:
-        return RedirectResponse("/admin?notice=" + quote("未勾选任何案件"), status_code=303)
-    deleted_cases = 0
-    deleted_records = 0
-    async with SessionLocal() as session:
-        for cid in ids:
-            case = await session.get(Case, cid)
-            if case is None:
-                continue
-            for vid in json.loads(case.violation_ids_json):
-                record = await session.get(ViolationRecord, int(vid))
-                if record is not None:
-                    await session.delete(record)
-                    deleted_records += 1
-            await session.delete(case)
-            deleted_cases += 1
-        await session.commit()
-    await record_admin_audit(
-        operator,
-        "case_batch_delete",
-        "case",
-        ",".join(str(i) for i in ids),
-        {"cases": deleted_cases, "violation_records": deleted_records},
-    )
-    return RedirectResponse(
-        "/admin?notice=" + quote(f"已删除 {deleted_cases} 个案件（含 {deleted_records} 条违规证据）"),
-        status_code=303,
+    return _page(
+        "功能已停用",
+        '<div class=card><p class=warn>批量删除案件已按主审整改要求停用'
+        "（硬删除会破坏其他案件共用的违规记录、案件编号与通知游标契约）。</p>"
+        '<p>数据清理将改为「归档」语义后重新提供。</p>'
+        '<p><a href="/admin">返回案件列表</a></p></div>',
     )
 
 
@@ -1685,12 +1656,7 @@ async def groups_page(request: Request, notice: str = "", show_hidden: str = "")
                 f'<form method=post style="display:inline" action="/admin/groups/unhide">{csrf}'
                 f'<input type=hidden name=provider value="{_esc(provider)}">'
                 f'<input type=hidden name=group_openid value="{_esc(group)}">'
-                '<button class=btn>取消隐藏</button></form> '
-                f'<form method=post style="display:inline" action="/admin/groups/delete" '
-                f'onsubmit="return confirm(\'彻底删除该群的后台数据？此操作不可恢复。\')">{csrf}'
-                f'<input type=hidden name=provider value="{_esc(provider)}">'
-                f'<input type=hidden name=group_openid value="{_esc(group)}">'
-                '<button class="btn danger">彻底删除</button></form>'
+                '<button class=btn>取消隐藏</button></form>'
             )
         else:
             action_buttons = (
@@ -1698,12 +1664,7 @@ async def groups_page(request: Request, notice: str = "", show_hidden: str = "")
                 f'onsubmit="return confirm(\'从后台隐藏该群？（数据保留，可随时在「查看已隐藏群」中恢复）\')">{csrf}'
                 f'<input type=hidden name=provider value="{_esc(provider)}">'
                 f'<input type=hidden name=group_openid value="{_esc(group)}">'
-                '<button class=btn>隐藏</button></form> '
-                f'<form method=post style="display:inline" action="/admin/groups/delete" '
-                f'onsubmit="return confirm(\'彻底删除该群的后台数据？此操作不可恢复。\')">{csrf}'
-                f'<input type=hidden name=provider value="{_esc(provider)}">'
-                f'<input type=hidden name=group_openid value="{_esc(group)}">'
-                '<button class="btn danger">删除</button></form>'
+                '<button class=btn>隐藏</button></form>'
             )
         display_name = alias_map.get(group) or (gs.name if gs else "")
         rows.append(
@@ -1807,49 +1768,18 @@ async def delete_group(
     group_openid: str = Form(""),
     csrf: str = Form(""),
 ) -> Response:
-    """彻底删除该群在后台的痕迹：设置、备注、动作出口、（可选）历史判定。
+    """主审 R04/R10（ad323b6）：彻底删群破坏误判撤销与跨通道动作归属，已停用。
 
-    不删除案件与违规记录（独立审计数据，可在案件列表单独清理）。
+    判定记录是误判反馈撤销（feedback）的身份映射来源，删除会让撤销静默失败；
+    GroupActionOwner 按群 ID 全局唯一，跨 provider 误删。整改前保留路由显式拒绝。
     """
-    from app.models import GroupActionOwner, GroupAlias, HiddenGroup, ProviderGroupSettings
-    from app.runtime.models import ShadowDecision
-
     await _require_admin_post(request, csrf)
-    gid = group_openid.strip()
-    if not gid:
-        return RedirectResponse("/admin/groups?notice=" + quote("群 ID 为空"), status_code=303)
-    async with SessionLocal() as session:
-        gs = await session.get(ProviderGroupSettings, (provider or "onebot", gid))
-        if gs is not None:
-            await session.delete(gs)
-        alias = await session.get(GroupAlias, gid)
-        if alias is not None:
-            await session.delete(alias)
-        owner = await session.get(GroupActionOwner, gid)
-        if owner is not None:
-            await session.delete(owner)
-        hidden = await session.get(HiddenGroup, (provider or "onebot", gid))
-        if hidden is not None:
-            await session.delete(hidden)
-        result = await session.execute(
-            text(
-                "DELETE FROM shadow_decisions WHERE provider = :p AND external_group_id = :g"
-            ),
-            {"p": provider or "onebot", "g": gid},
-        )
-        await session.commit()
-        deleted_decisions = result.rowcount or 0
-    await record_admin_audit(
-        await _operator(request),
-        "group_delete",
-        "group",
-        f"{provider}:{gid}",
-        {"shadow_decisions": deleted_decisions},
-    )
-    return RedirectResponse(
-        "/admin/groups?notice="
-        + quote(f"已彻底删除该群（含 {deleted_decisions} 条历史判定记录；案件不受影响）"),
-        status_code=303,
+    return _page(
+        "功能已停用",
+        '<div class=card><p class=warn>「彻底删除群」已按主审整改要求停用'
+        "（删除判定记录会使后续误判反馈无法撤销原违规次数）。</p>"
+        '<p>请使用「隐藏」——效果相同（列表不再显示），数据保留、可恢复。</p>'
+        '<p><a href="/admin/groups">返回群管理</a></p></div>',
     )
 
 

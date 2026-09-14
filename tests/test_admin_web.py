@@ -139,8 +139,9 @@ def test_case_dashboard_renders(logged_in: TestClient) -> None:
     resp = logged_in.get("/admin/")
     assert resp.status_code == 200
     assert "待人工处理" in resp.text
-    assert "删除勾选案件" in resp.text
-    assert "name=csrf" in resp.text or 'name="csrf"' in resp.text
+    # R02/R03：批量删除已停用，页面不得再出现删除表单
+    assert "删除勾选案件" not in resp.text
+    assert "/admin/cases/batch-delete" not in resp.text
     # 筛选参数渲染
     resp2 = logged_in.get("/admin/", params={"status": "CLOSED", "page": "1"})
     assert resp2.status_code == 200
