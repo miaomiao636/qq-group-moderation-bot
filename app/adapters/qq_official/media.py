@@ -125,7 +125,11 @@ async def _stream_download(
     current_url = url
     try:
         for _hop in range(_MAX_REDIRECT_HOPS + 1):
+            # R01（ad323b6 主审）：pinned 失败必须区分原因——仅「DNS 全部解析为
+            # 代理 Fake-IP（198.18.0.0/15）」允许受信 CDN 按域名连接的兼容出口；
+            # 私网/回环/链路本地等 unsafe 结果与 DNS 失败一律拒绝，不被白名单豁免。
             pinned = await _pin_media_url(current_url)
+            pin_reason = "" if pinned is not None else await _classify_pin_failure(current_url)
             request_host = (urllib.parse.urlparse(current_url).hostname or "").lower()
             stream_kwargs: dict[str, Any] = {
                 "timeout": 30,
@@ -140,10 +144,16 @@ async def _stream_download(
                 # hosts: each request must verify its own original hostname.
                 stream_kwargs["headers"]["Host"] = host_header
                 stream_kwargs["extensions"] = {"sni_hostname": server_hostname}
-            elif _is_trusted_media_host(request_host):
+            elif (
+                _is_trusted_media_host(request_host)
+                and pin_reason == "fake_ip"
+                # 每一跳（含重定向目标）都必须通过 scheme/端口/凭据/字面IP 检查——
+                # 兼容分支不豁免端口白名单等基础校验（主审 R01 复现的 8088 绕过）。
+                and _is_safe_media_url_sync(current_url)
+            ):
                 # R-107 追加：Fake-IP/代理 DNS 环境下官方 CDN 域名按域名连接
                 # （系统解析/代理兼容）；scheme/端口/重定向校验保持。
-                logger.info("官方CDN域名跳过IP锁定（代理DNS环境）: %s", request_host)
+                logger.info("官方CDN域名跳过IP锁定（Fake-IP代理DNS环境）: %s", request_host)
                 stream_url = current_url
             else:
                 return False, "URL被SSRF防护拦截", 0
@@ -312,6 +322,46 @@ async def _resolve_public_addresses(host: str) -> list[str]:
     return addresses
 
 
+async def _resolve_addresses_reasoned(host: str) -> tuple[list[str], str]:
+    """R01: 解析域名并分类失败原因，供 Fake-IP 兼容出口精确豁免。
+
+    返回 (addresses, reason)：
+    - ("", 成功)  -> 至少一个公网地址；
+    - ("fake_ip",) -> 有解析结果但**全部**为 198.18.0.0/15 代理假地址（无真实地址混杂）；
+    - ("unsafe",)  -> 任一地址解析到私网/回环/链路本地等被拒段（含 Fake-IP 与真内网混杂）；
+    - ("dns",)     -> 解析失败/无结果。
+    """
+    loop = asyncio.get_event_loop()
+    try:
+        infos = await asyncio.wait_for(loop.getaddrinfo(host, None, type=socket.SOCK_STREAM), 5)
+    except (socket.gaierror, OSError, TimeoutError):
+        return [], "dns"
+    addresses: list[str] = []
+    saw_unsafe = False
+    all_unsafe_are_fake = True
+    for info in infos:
+        ip_str = info[4][0]
+        try:
+            ip = ipaddress.ip_address(ip_str)
+        except ValueError:
+            return [], "unsafe"
+        if _is_fake_ip(str(ip)):
+            saw_unsafe = True
+            continue
+        if not _is_safe_ip(ip):
+            return [], "unsafe"
+        all_unsafe_are_fake = all_unsafe_are_fake and saw_unsafe
+        if str(ip) not in addresses:
+            addresses.append(str(ip))
+    if addresses:
+        return addresses, ""
+    if saw_unsafe and all_unsafe_are_fake:
+        return [], "fake_ip"
+    if saw_unsafe:
+        return [], "unsafe"
+    return [], "dns"
+
+
 async def _is_safe_media_url(url: str) -> bool:
     """P1-6: 完整SSRF检查——scheme/端口/字面IP/DNS解析后全地址。"""
     return await _pin_media_url(url) is not None
@@ -335,10 +385,39 @@ async def _pin_media_url(url: str) -> tuple[httpx.URL, str, str] | None:
             addresses = await _resolve_public_addresses(host)
         if not addresses:
             return None
+        # R01 纵深防御：pinning 的最终 IP 逐个复核——即使上游解析过滤被绕过
+        # （或未来回归），Fake-IP/内网地址也绝不会被直接连接。
+        for a in addresses:
+            ip = ipaddress.ip_address(a)
+            if not _is_safe_ip(ip):
+                return None
         host_header = original.netloc.decode("ascii")
         return original.copy_with(host=addresses[0]), host_header, host
     except (ValueError, httpx.InvalidURL):
         return None
+
+
+async def _classify_pin_failure(url: str) -> str:
+    """R01: 对 `_pin_media_url` 返回 None 的原因分类。
+
+    reason: "url" URL 形状不合规（scheme/端口/凭据/字面IP）/
+    "unsafe" DNS 含被拒地址（私网/回环/混杂）/ "fake_ip" 全部为 198.18.0.0/15
+    代理假地址 / "dns" 解析失败。仅 fake_ip 可进入受信 CDN 兼容出口。
+    """
+    if not _is_safe_media_url_sync(url):
+        return "url"
+    try:
+        host = httpx.URL(url).host
+    except (ValueError, httpx.InvalidURL):
+        return "url"
+    if not host:
+        return "url"
+    try:
+        ipaddress.ip_address(host)
+        return "unsafe"  # 字面IP通过 sync 检查却 pin 失败：矛盾，按不安全处理
+    except ValueError:
+        _addresses, reason = await _resolve_addresses_reasoned(host)
+        return reason or "dns"
 
 
 async def download_attachment(

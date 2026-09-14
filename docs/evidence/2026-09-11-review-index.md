@@ -86,12 +86,13 @@
 > 上表 v7 数字保留为严格口径实验历史。代价声明：宽松口径下带卡片栏的兼职/推广内容不再自动拦截，
 > 由群管理员人工处理。详见复核报告第 9 节。
 
-## 当前配置（生产）
+## 当前配置（生产，2026-09-14 主审复核后更新）
 
 - 模型: deepseek-flash（主）+ qwen3.8-flash（灰区复核）
-- 提示词: t204-v8 + config/ai_prompt_rules.txt（宽松口径: 带校园墙卡片栏放行；办证/诈骗/色情三例外保留——负责人 2026-09-12 改判）
-- 模式: **ACTION_MODE=OFFICIAL** / `ONEBOT_ACTION_STAGE=recall_only`（仅撤回）/ `ONEBOT_ACTIONS_ENABLED=true`
-  ——负责人授权 D-025（2026-09-12）：**群级「真实动作」开关默认全关，逐群显式授权后生效**
+- 提示词: **t204-v11** + config/ai_prompt_rules.txt（校园墙特征绝对放行 v10；办证类放行 v9 并已贯穿本地规则层 R07；紧邻文字配对豁免 v11 已按 R05/R06/R09 加固）
+- **真实动作已暂停（负责人 2026-09-14 决定）**：`ONEBOT_ACTIONS_ENABLED=false`——影子采集照常，
+  待 R05 等整改复验后再议恢复；恢复前 stage 仍为 recall_only（D-025 五群授权记录保留）
+- **批量删除案件与彻底删除群已停用**（R02/R03/R04/R10 整改落地后以「归档」语义重新提供）
 - 安全兜底: 急停随时可用（后台按钮 / `EMERGENCY_STOP=true` / `ONEBOT_ACTIONS_ENABLED=false`）；
   `action_intents` 持续审计中
 

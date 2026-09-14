@@ -336,7 +336,6 @@ async def dashboard(
     token = await _require_login(request)
     if not token:
         return _login_redirect()
-    csrf = _csrf_field(token)
     page = max(1, page)
     page_size = 50
     async with SessionLocal() as session:
@@ -360,7 +359,9 @@ async def dashboard(
         base = select(Case)
         if where:
             base = base.where(*where)
-        total = (await session.execute(select(func.count()).select_from(base.subquery()))).scalar() or 0
+        total = (
+            await session.execute(select(func.count()).select_from(base.subquery()))
+        ).scalar() or 0
         cases = (
             (
                 await session.execute(
@@ -377,12 +378,23 @@ async def dashboard(
     def _qs(p: int) -> str:
         from urllib.parse import urlencode
 
-        return "?" + urlencode(
-            {k: v for k, v in {
-                "page": p, "status": status, "group": group,
-                "date_from": date_from, "date_to": date_to,
-            }.items() if v}
-        ) or "?"
+        return (
+            "?"
+            + urlencode(
+                {
+                    k: v
+                    for k, v in {
+                        "page": p,
+                        "status": status,
+                        "group": group,
+                        "date_from": date_from,
+                        "date_to": date_to,
+                    }.items()
+                    if v
+                }
+            )
+            or "?"
+        )
 
     rows = "".join(
         f"<tr><td><input type=checkbox name=case_ids value={c.id}></td>"
@@ -409,11 +421,11 @@ async def dashboard(
     )
     batch_form = (
         f"<table><tr><th></th><th>批次号</th><th>群</th><th>成员</th><th>状态</th><th>创建</th><th></th></tr>{rows}</table>"
-        f'<p class=muted style=margin-top:8px>批量删除功能已按主审要求停用（R02/R03：硬删除破坏共用违规记录与编号/通知契约）；'
-        f'共 {total} 条，第 {page}/{total_pages} 页</p>'
+        f"<p class=muted style=margin-top:8px>批量删除功能已按主审要求停用（R02/R03：硬删除破坏共用违规记录与编号/通知契约）；"
+        f"共 {total} 条，第 {page}/{total_pages} 页</p>"
     )
     pager = (
-        '<p>'
+        "<p>"
         + (f'<a class=btn href="/admin{_qs(page - 1)}">上一页</a>' if page > 1 else "")
         + (f'<a class=btn href="/admin{_qs(page + 1)}">下一页</a>' if page < total_pages else "")
         + "</p>"
@@ -428,7 +440,7 @@ async def dashboard(
         )
         or "<li>无</li>"
     )
-    notice_html = f'<p class=warn>{_esc(notice)}</p>' if notice else ""
+    notice_html = f"<p class=warn>{_esc(notice)}</p>" if notice else ""
     body = (
         f"{notice_html}<h2>待人工处理（{len(pending)}）</h2><ul>{pending_rows}</ul>"
         f"<h2>案件</h2>{filter_form}{batch_form}{pager}"
@@ -503,15 +515,15 @@ async def case_detail(request: Request, case_id: int, code: str = "", notice: st
         buttons = (
             '<form method=post style="display:inline" action="'
             + f"/admin/cases/{case.id}/manual-kick"
-            + f'" onsubmit="return confirm(\'确认人工处理：已在QQ客户端踢出该成员？点击后案件记为已踢出并结案。\')'
+            + "\" onsubmit=\"return confirm('确认人工处理：已在QQ客户端踢出该成员？点击后案件记为已踢出并结案。')"
             + f'">{csrf}<button class="btn danger">人工处理（确认踢出并结案）</button></form>'
             '<form method=post style="display:inline" action="'
             + f"/admin/cases/{case.id}/keep"
-            + f'" onsubmit="return confirm(\'确认保留该成员、不做处罚？\')'
+            + "\" onsubmit=\"return confirm('确认保留该成员、不做处罚？')"
             + f'">{csrf}<button class=btn>保留（不处罚）</button></form>'
             '<form method=post style="display:inline" action="'
             + f"/admin/cases/{case.id}/false-positive"
-            + f'" onsubmit="return confirm(\'确认为误判？将撤销该案件全部违规记录。\')'
+            + "\" onsubmit=\"return confirm('确认为误判？将撤销该案件全部违规记录。')"
             + f'">{csrf}<button class=btn>标记误判（撤销违规）</button></form>'
         )
     elif case.status == "MANUAL_PENDING":
@@ -521,16 +533,14 @@ async def case_detail(request: Request, case_id: int, code: str = "", notice: st
             f"{csrf}已在QQ客户端手动踢出？输入确认码：<input name=code maxlength=6 style=width:90px> "
             '<button class="btn danger">确认已踢出</button></form>'
             f'<form method=post action="/admin/cases/{case.id}/cancel" style="margin-top:8px" '
-            f'onsubmit="return confirm(\'确认取消该案件？\')">'
+            f"onsubmit=\"return confirm('确认取消该案件？')\">"
             f"{csrf}<button class=btn>无法确认成员/取消</button></form>"
         )
     audit = _esc(json.dumps(json.loads(case.audit_json), ensure_ascii=False, indent=1))
     body = (
         f"<h2>案件 {_esc(case.case_no)}</h2>{notice_html}"
         f"<div class=card><p>状态：<b>{_esc(_status_zh(case.status))}</b>　成员OpenID：<code>{_esc(case.member_openid)}</code> "
-        "<span class=warn>（未验证QQ号）</span>　群："
-        + group_html
-        + "</p>"
+        "<span class=warn>（未验证QQ号）</span>　群：" + group_html + "</p>"
         f"<p>证据（{len(records)} 条）：</p>{evidence}</div>"
         f"<div class=card><h3>操作</h3>{buttons or '<p class=muted>案件已终态，无可用操作</p>'}</div>"
         f"<div class=card><h3>审计记录</h3><pre>{audit}</pre></div>"
@@ -552,7 +562,7 @@ def _transition_error_html(case_id: int, exc: IllegalTransitionError) -> str:
     elif "CLOSED" in msg:
         hint = "该案件已关闭（终态），不能再变更。"
     return (
-        f'<div class=card><p class=warn>操作未执行：{_esc(msg)}</p>'
+        f"<div class=card><p class=warn>操作未执行：{_esc(msg)}</p>"
         f"<p class=muted>{_esc(hint)}</p>"
         f'<p><a href="/admin/cases/{case_id}">返回案件页（页面已按最新状态显示可用操作）</a>　'
         f'<a href="/admin">返回案件列表</a></p></div>'
@@ -577,7 +587,9 @@ async def manual_kick(request: Request, case_id: int, csrf: str = Form("")) -> R
         )
     except IllegalTransitionError as exc:
         return _page("操作未执行", _transition_error_html(case_id, exc))
-    return RedirectResponse(f"/admin/cases/{case_id}?notice=已记录为人工踢出并结案", status_code=303)
+    return RedirectResponse(
+        f"/admin/cases/{case_id}?notice=已记录为人工踢出并结案", status_code=303
+    )
 
 
 @router.post("/cases/{case_id}/confirm-kick")
@@ -663,9 +675,9 @@ async def batch_delete_cases(request: Request, csrf: str = Form("")) -> Response
     await _require_admin_post(request, csrf)
     return _page(
         "功能已停用",
-        '<div class=card><p class=warn>批量删除案件已按主审整改要求停用'
+        "<div class=card><p class=warn>批量删除案件已按主审整改要求停用"
         "（硬删除会破坏其他案件共用的违规记录、案件编号与通知游标契约）。</p>"
-        '<p>数据清理将改为「归档」语义后重新提供。</p>'
+        "<p>数据清理将改为「归档」语义后重新提供。</p>"
         '<p><a href="/admin">返回案件列表</a></p></div>',
     )
 
@@ -1547,7 +1559,7 @@ async def reports_page(request: Request, notice: str = "") -> Response:
         daily = await build_daily(session)
         weekly = await build_weekly(session)
         pending = await pending_manual_review(session)
-    notice_html = f'<p class=warn role=status>{_esc(notice)}</p>' if notice else ""
+    notice_html = f"<p class=warn role=status>{_esc(notice)}</p>" if notice else ""
     body = (
         notice_html
         + "<div class=card><h3>昨日日报</h3><pre>"
@@ -1570,9 +1582,7 @@ async def cleanup_now(request: Request, csrf: str = Form("")) -> RedirectRespons
     await _require_admin_post(request, csrf)
     async with SessionLocal() as session:
         stats = await purge_expired(session)
-    await record_admin_audit(
-        await _operator(request), "cleanup_now", "retention", "manual", stats
-    )
+    await record_admin_audit(await _operator(request), "cleanup_now", "retention", "manual", stats)
     summary = "、".join(f"{k}={v}" for k, v in stats.items() if v)
     notice = quote(f"清理完成：{summary or '无过期数据需要清理（各保留期内）'}")
     return RedirectResponse(f"/admin/reports?notice={notice}", status_code=303)
@@ -1656,15 +1666,15 @@ async def groups_page(request: Request, notice: str = "", show_hidden: str = "")
                 f'<form method=post style="display:inline" action="/admin/groups/unhide">{csrf}'
                 f'<input type=hidden name=provider value="{_esc(provider)}">'
                 f'<input type=hidden name=group_openid value="{_esc(group)}">'
-                '<button class=btn>取消隐藏</button></form>'
+                "<button class=btn>取消隐藏</button></form>"
             )
         else:
             action_buttons = (
                 f'<form method=post style="display:inline" action="/admin/groups/hide" '
-                f'onsubmit="return confirm(\'从后台隐藏该群？（数据保留，可随时在「查看已隐藏群」中恢复）\')">{csrf}'
+                f"onsubmit=\"return confirm('从后台隐藏该群？（数据保留，可随时在「查看已隐藏群」中恢复）')\">{csrf}"
                 f'<input type=hidden name=provider value="{_esc(provider)}">'
                 f'<input type=hidden name=group_openid value="{_esc(group)}">'
-                '<button class=btn>隐藏</button></form>'
+                "<button class=btn>隐藏</button></form>"
             )
         display_name = alias_map.get(group) or (gs.name if gs else "")
         rows.append(
@@ -1678,7 +1688,7 @@ async def groups_page(request: Request, notice: str = "", show_hidden: str = "")
             f'{_esc(alias_map.get(group) or (gs.name if gs else ""))}"></label> '
             f"<label><input type=checkbox name=moderation_enabled value=1 {'checked' if gs is None or gs.moderation_enabled else ''}>审核</label> "
             f"<label><input type=checkbox name=action_enabled value=1 {'checked' if gs and gs.action_enabled else ''}>真实动作</label> "
-            '<button class=btn>保存 / 预览高风险变更</button></form>'
+            "<button class=btn>保存 / 预览高风险变更</button></form>"
             f"<div style=margin-top:6px>{action_buttons}</div></td></tr>"
         )
     hidden_toggle = (
@@ -1734,7 +1744,10 @@ async def hide_group(
     await record_admin_audit(
         await _operator(request), "group_hide", "group", f"{provider}:{group_openid}"
     )
-    return RedirectResponse("/admin/groups?notice=" + quote("该群已隐藏（数据保留，可在「查看已隐藏群」中恢复）"), status_code=303)
+    return RedirectResponse(
+        "/admin/groups?notice=" + quote("该群已隐藏（数据保留，可在「查看已隐藏群」中恢复）"),
+        status_code=303,
+    )
 
 
 @router.post("/groups/unhide")
@@ -1776,9 +1789,9 @@ async def delete_group(
     await _require_admin_post(request, csrf)
     return _page(
         "功能已停用",
-        '<div class=card><p class=warn>「彻底删除群」已按主审整改要求停用'
+        "<div class=card><p class=warn>「彻底删除群」已按主审整改要求停用"
         "（删除判定记录会使后续误判反馈无法撤销原违规次数）。</p>"
-        '<p>请使用「隐藏」——效果相同（列表不再显示），数据保留、可恢复。</p>'
+        "<p>请使用「隐藏」——效果相同（列表不再显示），数据保留、可恢复。</p>"
         '<p><a href="/admin/groups">返回群管理</a></p></div>',
     )
 

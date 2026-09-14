@@ -335,6 +335,9 @@ async def run_pipeline(
         decision = await maybe_wall_text_pairing(session, msg, decision)
         detail = {
             "external_message_id": msg.external_message_id,
+            # R06（ad323b6 主审）：记录消息发送时间，供紧邻配对按真实发送顺序校验，
+            # 不再依赖处理完成时间（并发 worker 下会颠倒先图后文）。
+            "sent_at": (msg.sent_at.isoformat() if msg.sent_at else ""),
             "rule_hits": [h.model_dump() for h in decision.rule_hits],
             "recommended_actions": list(decision.recommended_actions),
             "is_protected_sender": decision.is_protected_sender,

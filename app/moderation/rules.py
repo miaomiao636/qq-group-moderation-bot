@@ -68,6 +68,33 @@ AD_INTENT_MARKERS: tuple[str, ...] = (
 ALLOWED_SHARE_SOURCES: tuple[str, ...] = ("万能校园墙",)
 SEVERE_CATEGORIES: set[str] = {"porn", "violence", "fraud"}
 
+# R07（ad323b6 主审）：办证/学历类内容的本地规则例外。
+# 负责人 2026-09-12 口径「办证类一律正常处理」此前只写入 AI 提示词（t204-v9），
+# 本地硬规则（R001 黑名单/联系方式组合）在 AI 之前就判 violation_high，口径未生效。
+# 此处与提示词同源实现：命中办证类词且仅命中 ad 类内置规则时，不撤回、转记录；
+# 动态规则（DR_,管理员显式发布）与严重类别（fraud/porn/violence）不享受例外。
+_CERTIFICATE_SERVICE_TERMS: tuple[str, ...] = (
+    "办证",
+    "代做学历",
+    "学信网",
+    "代做档案",
+    "代做学籍",
+    "代考",
+    "毕业设计代做",
+    "证书设计定制",
+    "毕业证",
+    "学历证书",
+)
+
+
+def _is_certificate_service_content(text: str) -> bool:
+    """R07: 文本是否属于办证/学历类服务内容（与 ai_prompt_rules.txt 同源口径）。"""
+    if not text:
+        return False
+    variant = apply_variants(text)
+    return any(term in variant for term in _CERTIFICATE_SERVICE_TERMS)
+
+
 # 明确黑名单词（命中即贡献0.70，覆盖实测样本与常见违法词）。
 # R-103 后，兼职/刷单/一单等语境敏感词不会单独形成硬证据，
 # 必须结合广告意图且不处于反诈/询问/拒绝语境。
@@ -450,6 +477,17 @@ class TextRuleEngine:
             confidence = max(confidence, 0.95)
             actions = list(_HIGH_ACTIONS)
             reason = "未知来源分享卡片含明确引流或违规证据"
+        elif (
+            _is_certificate_service_content(msg.text)
+            and category == "ad"
+            and not any(h.rule_id.startswith("DR_") for h in hits)
+        ):
+            # R07：办证/学历类口径（负责人 2026-09-12）与 AI 提示词一致实现——
+            # 仅豁免内置 ad 类本地规则；fraud/porn 等严重类别与动态规则不豁免。
+            # 不撤回不立案，转 record_only 留痕供人工复核。
+            verdict = "record_only"
+            actions = []
+            reason = "办证/学历类内容按负责人口径放行（不撤回），转记录"
         elif has_hard_blacklist:
             # R-102 审计选项A：命中明确黑名单词（R001）即硬证据，直接高置信违规
             verdict = "violation_high"
