@@ -174,3 +174,75 @@ def test_scenario3_control_high_confidence_needs_review_to_human() -> None:
     decision = merge_ai_evidence(_local("无明显本地信号"), results)
     assert decision.verdict == "record_only"
     assert decision.recommended_actions == []
+
+
+# ---------- 边界回归（主审关闭验收要求第 2 条） ----------
+
+
+def test_boundary_plain_ad_mixed_with_severe_punished_as_severe() -> None:
+    """普通广告词与严重类别混合：按严重类别处罚（广告词不掩盖严重类别）。"""
+    engine = TextRuleEngine()
+    cases = [
+        ("刷单兼职日结 另外出售枪支弹药", "violence"),
+        ("代发一条 加我微信 顺带推广博彩渠道", "fraud"),
+    ]
+    for text, expected_category in cases:
+        decision = engine.evaluate(_msg(text))
+        assert decision.verdict == "violation_high", text
+        assert decision.category == expected_category, text
+        assert decision.recommended_actions == HIGH_ACTIONS, text
+
+
+def test_boundary_local_violation_not_overridden_by_ai_normal() -> None:
+    """本地高置信处罚 + AI 错误判正常：不得覆盖本地处罚（AI 关闭/失败等价路径）。"""
+    local = _local("本地硬证据处罚", verdict="violation_high")
+    local = local.model_copy(update={"category": "violence"})
+    ai_normal = [
+        AIModerationResult(
+            category=None,
+            confidence=0.99,
+            evidence="model says normal (erroneous)",
+            model_id="text-model",
+            source="text",
+            needs_review=False,
+        )
+    ]
+    decision = merge_ai_evidence(local, ai_normal)
+    assert decision.verdict == "violation_high"
+    assert decision.category == "violence"
+
+
+def test_boundary_single_model_high_confidence_severe_punished() -> None:
+    """单模型高置信严重（needs_review=false、无二审）：照常进入处罚流程（B-2）。"""
+    for category in ("fraud", "porn"):
+        results = [
+            AIModerationResult(
+                category=category,  # type: ignore[arg-type]
+                confidence=0.95,
+                evidence="high confidence",
+                model_id="text-model",
+                source="text",
+                needs_review=False,
+            )
+        ]
+        decision = merge_ai_evidence(_local("无明显本地信号"), results)
+        assert decision.verdict == "violation_high", category
+        assert decision.recommended_actions == HIGH_ACTIONS, category
+
+
+def test_boundary_protected_sender_never_punished() -> None:
+    """受保护成员（群主/管理员）：即使高置信严重类别也只记录不处罚。"""
+    local = _local("保护角色").model_copy(update={"is_protected_sender": True})
+    results = [
+        AIModerationResult(
+            category="fraud",  # type: ignore[arg-type]
+            confidence=0.99,
+            evidence="high confidence",
+            model_id="text-model",
+            source="text",
+            needs_review=False,
+        )
+    ]
+    decision = merge_ai_evidence(local, results)
+    assert decision.verdict != "violation_high"
+    assert decision.recommended_actions == []
