@@ -246,3 +246,107 @@ def test_boundary_protected_sender_never_punished() -> None:
     decision = merge_ai_evidence(local, results)
     assert decision.verdict != "violation_high"
     assert decision.recommended_actions == []
+
+
+# ---------- P2 修复回归（主审 2026-09-15 复验：严重疑似不得被 ad 类别掩盖） ----------
+
+
+def _cert_record_local() -> ModerationDecision:
+    """本地办证路径：record_only + 类别 ad + 高置信（0.95）。"""
+    return _local("办证内容").model_copy(
+        update={"verdict": "record_only", "category": "ad", "confidence": 0.95}
+    )
+
+
+def _severe_suspect(category: str, confidence: float = 0.40) -> AIModerationResult:
+    return AIModerationResult(
+        category=category,  # type: ignore[arg-type]
+        confidence=confidence,
+        evidence="low-confidence severe suspect",
+        model_id="text-model",
+        source="text",
+        needs_review=True,
+    )
+
+
+def test_p2_local_ad_not_masking_severe_suspect() -> None:
+    """组A（本地办证 ad + AI 低置信严重）：严重类别与置信度同源保留；
+    仍 record_only 且无处罚建议——负责人底线：办证不判违规。"""
+    for category in ("fraud", "porn", "violence"):
+        decision = merge_ai_evidence(_cert_record_local(), [_severe_suspect(category)])
+        assert decision.verdict == "record_only", category
+        assert decision.category == category, category
+        assert decision.confidence == 0.40, category  # 不得冒充本地广告 0.95
+        assert decision.recommended_actions == [], category
+
+
+def test_p2_text_ad_not_masking_vision_severe() -> None:
+    """组B（文字 ad 0.75 先出现 + 视觉严重 0.40 在后）：严重类别胜出。"""
+    for category in ("fraud", "porn", "violence"):
+        results = [
+            AIModerationResult(
+                category="ad",
+                confidence=0.75,
+                evidence="text ad",
+                model_id="text-model",
+                source="text",
+                needs_review=False,
+            ),
+            _severe_suspect(category),
+        ]
+        decision = merge_ai_evidence(_local("无明显本地信号"), results)
+        assert decision.verdict == "record_only", category
+        assert decision.category == category, category
+        assert decision.confidence == 0.40, category
+        assert decision.recommended_actions == [], category
+
+
+def test_p2_reverse_order_keeps_severe() -> None:
+    """相反顺序（严重在前、ad 在后）：结果与正序一致。"""
+    for category in ("fraud", "porn", "violence"):
+        results = [
+            _severe_suspect(category),
+            AIModerationResult(
+                category="ad",
+                confidence=0.75,
+                evidence="text ad",
+                model_id="text-model",
+                source="text",
+                needs_review=False,
+            ),
+        ]
+        decision = merge_ai_evidence(_local("无明显本地信号"), results)
+        assert decision.category == category, category
+        assert decision.confidence == 0.40, category
+
+
+def test_p2_multiple_severe_deterministic_selection() -> None:
+    """多严重类别：置信高者优先；同置信按固定顺序（fraud<porn<violence）。"""
+    decision = merge_ai_evidence(
+        _local("无明显本地信号"), [_severe_suspect("fraud"), _severe_suspect("porn", 0.55)]
+    )
+    assert decision.category == "porn"
+    assert decision.confidence == 0.55
+    decision = merge_ai_evidence(
+        _local("无明显本地信号"), [_severe_suspect("violence"), _severe_suspect("fraud")]
+    )
+    assert decision.category == "fraud"
+    assert decision.confidence == 0.40
+
+
+def test_p2_control_no_severe_keeps_previous_behavior() -> None:
+    """控制：无严重疑似时不改变既有类别选择（本地办证 ad + AI ad → 保持 ad/0.95）。"""
+    results = [
+        AIModerationResult(
+            category="ad",
+            confidence=0.40,
+            evidence="ad",
+            model_id="text-model",
+            source="text",
+            needs_review=True,
+        )
+    ]
+    decision = merge_ai_evidence(_cert_record_local(), results)
+    assert decision.verdict == "record_only"
+    assert decision.category == "ad"
+    assert decision.confidence == 0.95

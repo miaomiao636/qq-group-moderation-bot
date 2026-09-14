@@ -994,9 +994,25 @@ def merge_ai_evidence(
         or local.verdict == "record_only"
         or local.is_protected_sender
     ):
-        category = local.category or (usable[0].category if usable else None)
-        if category is None and severe_suspects:
-            category = max(severe_suspects, key=lambda r: r.confidence).category
+        # v13.1（主审 P2 修复）：转人工分支的类别选择——严重疑似优先于普通广告
+        # 类别（本地办证 record_only/ad 或先出现的广告结果不得掩盖严重疑似）；
+        # 多个严重类别用确定性规则（置信度降序，同置信按固定顺序）；
+        # 类别与置信度必须同源——不得把本地广告的高置信度充当严重疑似置信度。
+        # verdict 恒为 record_only、recommended_actions 恒为空：本分支只做
+        # 类别标记供人工核对，绝不改变处罚判定（办证内容底线不变）。
+        severe_rank = {"fraud": 0, "porn": 1, "violence": 2}
+        if severe_suspects:
+            best_severe = sorted(
+                severe_suspects,
+                key=lambda r: (-r.confidence, severe_rank.get(r.category or "", 9)),
+            )[0]
+            category = best_severe.category
+            confidence = best_severe.confidence
+        else:
+            category = local.category or (usable[0].category if usable else None)
+            confidence = max(
+                local.confidence, min(max((r.confidence for r in usable), default=0), 0.85)
+            )
         if unresolved:
             reason = "AI复核未形成一致有效证据，转人工"
         elif severe_suspects and not meaningful:
@@ -1007,9 +1023,7 @@ def merge_ai_evidence(
             update={
                 "verdict": "record_only",
                 "category": category,
-                "confidence": max(
-                    local.confidence, min(max((r.confidence for r in usable), default=0), 0.85)
-                ),
+                "confidence": confidence,
                 "rule_hits": local.rule_hits + hits,
                 "recommended_actions": [],
                 "reason": (local.reason + "；" if local.reason else "") + reason,

@@ -794,6 +794,15 @@ async def transition_with_session(case_id: int, target: str, operator: str) -> N
 
 
 VERDICT_ZH = {"allow": "放行", "record_only": "转人工复核", "violation_high": "高置信违规"}
+# 人工反馈的违规类别（可核对/纠正下拉；与 ai.py 的候选类别一致）
+FEEDBACK_CATEGORY_ZH = {
+    "ad": "广告引流",
+    "fraud": "诈骗",
+    "porn": "色情低俗",
+    "violence": "暴力违禁品",
+    "flood": "刷屏",
+    "other": "其他",
+}
 KIND_ZH = {
     "text": "文字",
     "image": "图片",
@@ -822,10 +831,24 @@ def _beijing(naive_utc: Any) -> str:
 
 
 def _feedback_form_html(
-    record: Any, csrf: str, saved_label: str = "", saved_reason: str = ""
+    record: Any,
+    csrf: str,
+    saved_label: str = "",
+    saved_reason: str = "",
+    saved_category: str = "",
 ) -> str:
-    """人工反馈表单；已保存时回显（下拉选中、原因带默认值、按钮为更新）。"""
-    category = _esc(record.category or "other")
+    """人工反馈表单；已保存时回显（下拉选中、原因带默认值、按钮为更新）。
+
+    类别为可核对/纠正的可编辑下拉（主审建议第 4 条）：默认取人工上次保存的
+    类别，其次取系统判定类别——避免「确认违规」被误当作「同时确认了系统
+    猜测的类别」。后端白名单校验，非法值回退 other。
+    """
+    system_category = (record.category or "other").strip().lower()
+    if system_category not in FEEDBACK_CATEGORY_ZH:
+        system_category = "other"
+    default_category = saved_category.strip().lower()
+    if default_category not in FEEDBACK_CATEGORY_ZH:
+        default_category = system_category
     has_saved = bool(saved_label)
     options = [
         ("confirmed_violation", "确认违规"),
@@ -838,11 +861,16 @@ def _feedback_form_html(
         f"<option value={v}{' selected' if v == saved_label else ''}>{t}</option>"
         for v, t in options
     )
+    cat_options = "".join(
+        f"<option value={v}{' selected' if v == default_category else ''}>{t}</option>"
+        for v, t in FEEDBACK_CATEGORY_ZH.items()
+    )
     return (
         '<form method=post action="/admin/feedback" style="display:grid;gap:4px">'
         f"{csrf}"
         f'<input type=hidden name=message_id value="{_esc(record.message_id)}">'
-        f'<input type=hidden name=category value="{category}">'
+        f'<label class=muted title="系统判定：{system_category}；请核对，可纠正">类别'
+        f"<select name=category style=width:110px>{cat_options}</select></label>"
         f"<select name=label>{sel}</select>"
         f'<input name=reason list=feedback-reasons value="{_esc(saved_reason)}" '
         f'data-default="{_esc(saved_reason)}" placeholder="原因，可选" style="width:140px">'
@@ -870,8 +898,8 @@ async def shadow_page(request: Request, verdict: str = "") -> Response:
             select(GroupAlias).where(GroupAlias.group_openid.in_(distinct_groups))
         )
         group_names = {g.group_openid: g.name for g in group_rows.scalars()}
-        # 已保存的人工反馈：用于回显（保存后下拉/原因保持，不再被刷新重置）
-        saved_map: dict[str, tuple[str, str]] = {}
+        # 已保存的人工反馈：用于回显（保存后下拉/原因/类别保持，不再被刷新重置）
+        saved_map: dict[str, tuple[str, str, str]] = {}
         if records:
             from app.moderation.feedback import FeedbackRecord
 
@@ -881,7 +909,7 @@ async def shadow_page(request: Request, verdict: str = "") -> Response:
                 )
             )
             for f in fb_rows.scalars():
-                saved_map.setdefault(f.message_id, (f.label, f.reason or ""))
+                saved_map.setdefault(f.message_id, (f.label, f.reason or "", f.category or ""))
 
     counts: dict[str, int] = {}
     for r in records:
@@ -899,8 +927,8 @@ async def shadow_page(request: Request, verdict: str = "") -> Response:
         return _esc(name) if name else f"<code>{_esc(openid[:10])}…</code>"
 
     def _feedback_form(record: Any) -> str:
-        saved_label, saved_reason = saved_map.get(record.message_id, ("", ""))
-        return _feedback_form_html(record, csrf, saved_label, saved_reason)
+        saved_label, saved_reason, saved_category = saved_map.get(record.message_id, ("", "", ""))
+        return _feedback_form_html(record, csrf, saved_label, saved_reason, saved_category)
 
     rows = "".join(
         "<tr>"
@@ -1106,6 +1134,7 @@ async def shadow_detail(request: Request, message_id: str = "") -> Response:
             csrf,
             fb.label if fb is not None else "",
             fb.reason if fb is not None else "",
+            fb.category if fb is not None else "",
         )
         + "</div>"
     )
@@ -1602,6 +1631,9 @@ async def record_feedback_submit(
 ) -> Response:
     await _require_admin_post(request, csrf)
     operator = await _operator(request)
+    # 类别白名单校验：人工可纠正类别，但非法值不得进入反馈/候选规则
+    if category.strip().lower() not in FEEDBACK_CATEGORY_ZH:
+        category = "other"
     from app.moderation.feedback import record_feedback
 
     try:

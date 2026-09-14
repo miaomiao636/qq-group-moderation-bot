@@ -501,3 +501,92 @@ async def test_cleanup_replaces_old_snapshot_but_keeps_metadata() -> None:
         assert '"purged": true' in record.message_snapshot_json
         assert "敏感原文" not in record.message_snapshot_json
         assert record.category == "ad"  # 元数据保留供统计
+
+
+def make_shadow(mid: str, category: str, group: str, member: str) -> None:
+    """造一条影子判定记录（record_only + 指定类别），用于反馈表单一致性回归。"""
+    import asyncio
+
+    from app.db import SessionLocal
+    from app.runtime.models import ShadowDecision
+
+    async def _run() -> None:
+        async with SessionLocal() as session:
+            session.add(
+                ShadowDecision(
+                    message_id=mid,
+                    provider="onebot",
+                    external_group_id=group,
+                    group_openid=group,
+                    member_openid=member,
+                    kind="text",
+                    verdict="record_only",
+                    category=category,
+                    confidence=0.40,
+                    reason="AI疑似严重类别（低置信），保留类别转人工核对",
+                )
+            )
+            await session.commit()
+
+    asyncio.run(_run())
+
+
+def _feedback_block(html: str, mid: str) -> str:
+    anchor = html.find(f'name=message_id value="{mid}"')
+    assert anchor != -1, f"影子页应包含 {mid} 的反馈表单"
+    return html[anchor : anchor + 1500]
+
+
+def test_feedback_form_category_matches_persisted(logged_in: TestClient) -> None:
+    """主审 P2 回归：持久化的严重类别 → 反馈表单默认选中（不被 ad 掩盖）。"""
+    group, member = unique_ids()
+    mid = f"MSG_SHADOW_{uuid.uuid4().hex[:8]}"
+    make_shadow(mid, "fraud", group, member)
+
+    resp = logged_in.get("/admin/shadow")
+    assert resp.status_code == 200
+    block = _feedback_block(resp.text, mid)
+    assert "name=category" in block
+    assert "<option value=fraud selected>诈骗</option>" in block
+
+
+def test_feedback_form_category_editable_and_validated(logged_in: TestClient) -> None:
+    """人工可核对/纠正类别；非法值被白名单拦截为 other（防注入）。"""
+    group, member = unique_ids()
+    mid_fix = f"MSG_SHADOW_{uuid.uuid4().hex[:8]}"
+    mid_bad = f"MSG_SHADOW_{uuid.uuid4().hex[:8]}"
+    make_shadow(mid_fix, "fraud", group, member)
+    make_shadow(mid_bad, "violence", group, member)
+
+    resp = logged_in.get("/admin/shadow")
+    csrf = extract_csrf(resp.text)
+
+    # 人工核对后纠正类别：fraud → porn，保存后回显纠正值
+    resp2 = logged_in.post(
+        "/admin/feedback",
+        data={
+            "message_id": mid_fix,
+            "label": "confirmed_violation",
+            "category": "porn",
+            "reason": "人工核对：色情而非诈骗",
+            "csrf": csrf,
+        },
+    )
+    assert resp2.status_code == 200
+    block = _feedback_block(logged_in.get("/admin/shadow").text, mid_fix)
+    assert "<option value=porn selected>色情低俗</option>" in block
+
+    # 非法类别注入被拦截为 other
+    resp3 = logged_in.post(
+        "/admin/feedback",
+        data={
+            "message_id": mid_bad,
+            "label": "confirmed_violation",
+            "category": "evil;drop",
+            "reason": "",
+            "csrf": csrf,
+        },
+    )
+    assert resp3.status_code == 200
+    block = _feedback_block(logged_in.get("/admin/shadow").text, mid_bad)
+    assert "<option value=other selected>其他</option>" in block
