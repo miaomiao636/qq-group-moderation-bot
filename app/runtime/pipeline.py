@@ -328,6 +328,11 @@ async def run_pipeline(
                     "reason": "；".join(dict.fromkeys(evidence_vetoes)) + "，转人工",
                 }
             )
+        # 校园墙紧邻文字配对豁免（负责人 2026-09-14 口径）：2 分钟内同成员
+        # 校园墙图后的相似文字（>=60%）不撤回，降为 record_only 转记录。
+        from app.moderation.wall_pair import maybe_wall_text_pairing
+
+        decision = await maybe_wall_text_pairing(session, msg, decision)
         detail = {
             "external_message_id": msg.external_message_id,
             "rule_hits": [h.model_dump() for h in decision.rule_hits],
