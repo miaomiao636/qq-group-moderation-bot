@@ -333,8 +333,10 @@ async def dashboard(
     date_from: str = "",
     date_to: str = "",
 ) -> Response:
-    if not await _require_login(request):
+    token = await _require_login(request)
+    if not token:
         return _login_redirect()
+    csrf = _csrf_field(token)
     page = max(1, page)
     page_size = 50
     async with SessionLocal() as session:

@@ -134,6 +134,18 @@ def test_stats_dashboard_renders(logged_in: TestClient) -> None:
     assert "AI 调用（按模型）" in resp.text
 
 
+def test_case_dashboard_renders(logged_in: TestClient) -> None:
+    """回归：案件主页必须可渲染（批量删除表单含 CSRF，曾是 NameError 事故点）。"""
+    resp = logged_in.get("/admin/")
+    assert resp.status_code == 200
+    assert "待人工处理" in resp.text
+    assert "删除勾选案件" in resp.text
+    assert "name=csrf" in resp.text or 'name="csrf"' in resp.text
+    # 筛选参数渲染
+    resp2 = logged_in.get("/admin/", params={"status": "CLOSED", "page": "1"})
+    assert resp2.status_code == 200
+
+
 def test_state_changing_post_requires_csrf(logged_in: TestClient) -> None:
     resp = logged_in.post(
         "/admin/groups/alias",
