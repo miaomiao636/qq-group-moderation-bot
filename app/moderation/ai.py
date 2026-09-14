@@ -982,18 +982,37 @@ def merge_ai_evidence(
             }
         )
     meaningful = [r for r in usable if r.confidence >= secondary_review_low]
-    if unresolved or meaningful or local.verdict == "record_only" or local.is_protected_sender:
+    # v13（负责人 2026-09-15 方案 B-2 + 场景③小修）：低置信的严重类别疑似
+    # （诈骗/色情/暴力违禁品）不得静默放行——保留类别转人工记录（不处罚不
+    # 撤回），交人工核对。此处到达的严重结果均未通过候选条件（低置信/需人工/
+    # 有冲突），静默丢弃类别会让疑似高危内容完全失去护栏。
+    severe_suspects = [r for r in usable if r.category in ("fraud", "porn", "violence")]
+    if (
+        unresolved
+        or meaningful
+        or severe_suspects
+        or local.verdict == "record_only"
+        or local.is_protected_sender
+    ):
+        category = local.category or (usable[0].category if usable else None)
+        if category is None and severe_suspects:
+            category = max(severe_suspects, key=lambda r: r.confidence).category
+        if unresolved:
+            reason = "AI复核未形成一致有效证据，转人工"
+        elif severe_suspects and not meaningful:
+            reason = "AI疑似严重类别（低置信），保留类别转人工核对"
+        else:
+            reason = "AI软证据，转人工复核"
         return local.model_copy(
             update={
                 "verdict": "record_only",
-                "category": local.category or (usable[0].category if usable else None),
+                "category": category,
                 "confidence": max(
                     local.confidence, min(max((r.confidence for r in usable), default=0), 0.85)
                 ),
                 "rule_hits": local.rule_hits + hits,
                 "recommended_actions": [],
-                "reason": (local.reason + "；" if local.reason else "")
-                + ("AI复核未形成一致有效证据，转人工" if unresolved else "AI软证据，转人工复核"),
+                "reason": (local.reason + "；" if local.reason else "") + reason,
             }
         )
     return local.model_copy(update={"rule_hits": local.rule_hits + hits})
