@@ -96,9 +96,10 @@ async def test_case_auto_archive_after_15d() -> None:
 @pytest.mark.asyncio
 async def test_purged_cases_keep_id_monotonic_for_notifications() -> None:
     """R03 契约：清除=逻辑清除（案件壳与 ID 保留，内容引用清空）——
-    新案件 ID 单调递增不被 rowid 复用破坏，违规记录物理删除。"""
+    新案件 ID 单调递增不被 rowid 复用破坏，违规最小行保留供审计。"""
     g = "GB-" + uuid.uuid4().hex[:10]
-    old = await _make_closed_case(days_ago=16, group=g)
+    # 归档必须晚于结案；不能构造“16 天前结案、91 天前归档”的逆序历史。
+    old = await _make_closed_case(days_ago=120, group=g)
     await _force_archive(old.id, days_ago=91)
     stats = await _run_cleanup()
     assert stats["cases_purged"] >= 1

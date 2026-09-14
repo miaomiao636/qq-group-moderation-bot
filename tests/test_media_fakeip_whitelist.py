@@ -6,11 +6,12 @@ R01（ad323b6 主审）：兼容出口只允许「受信 CDN 域名 + DNS 全部
 
 from __future__ import annotations
 
+import asyncio
+import socket
 from pathlib import Path
 
 import httpx
 import pytest
-from app.adapters.qq_official import media as media_mod
 from app.adapters.qq_official.media import (
     _is_fake_ip,
     _is_trusted_media_host,
@@ -27,10 +28,11 @@ PAYLOAD = b"\xff\xd8\xff" + b"x" * 128
     [
         ("multimedia.nt.qq.com.cn", True),
         ("MULTIMEDIA.NT.QQ.COM.CN.", True),
-        ("img.gchat.qpic.cn", True),
+        ("gchat.qpic.cn", True),
+        ("img.gchat.qpic.cn", False),
         ("group.e.qq.com", True),
-        ("news.qq.com", True),
-        ("sub.qq.com.cn", True),
+        ("news.qq.com", False),
+        ("sub.qq.com.cn", False),
         ("evil.com", False),
         ("multimedia.nt.qq.com.cn.evil.com", False),
         ("qq.com.cn.evil.com", False),
@@ -64,7 +66,7 @@ async def _download_follow(
 
     def handler(request: httpx.Request) -> httpx.Response:
         seen.append(str(request.url))
-        if follow and str(request.url) == url:
+        if follow and len(seen) == 1:
             return httpx.Response(302, headers={"Location": follow})
         return httpx.Response(200, content=PAYLOAD)
 
@@ -82,36 +84,25 @@ async def _download_follow(
 
 
 def _patch_reason(monkeypatch: pytest.MonkeyPatch, reason: str) -> None:
-    """patch 底层 DNS 解析：把期望原因映射到 `_resolve_public_addresses` 行为。
+    """Stub actual DNS answers, not application security decisions."""
+    answers = {
+        "fake_ip": [FAKE_IP],
+        "unsafe": ["10.10.10.10"],
+        "mixed": [FAKE_IP, "10.10.10.10"],
+        "public": [PUBLIC_IP],
+    }
 
-    - fake_ip: 全部解析为 198.18.0.0/15（旧过滤后为空 → 分类 fake_ip）
-    - unsafe: 解析出真实内网地址（10.x）→ 全拒
-    - dns:    解析失败（空且无 unsafe）
-    """
+    async def getaddrinfo(host, port, **kwargs):
+        if reason in ("dns", "url"):
+            raise socket.gaierror("synthetic DNS failure")
+        return [(socket.AF_INET, socket.SOCK_STREAM, 6, "", (ip, 0)) for ip in answers[reason]]
 
-    async def _resolve(host: str) -> list[str]:
-        if reason == "fake_ip":
-            return [FAKE_IP]
-        if reason == "unsafe":
-            return ["10.10.10.10"]
-        return []
-
-    monkeypatch.setattr(media_mod, "_resolve_public_addresses", _resolve)
-
-    # _classify_pin_failure 走 _resolve_addresses_reasoned；让它复用同一映射
-    async def _reasoned(host: str) -> tuple[list[str], str]:
-        if reason == "fake_ip":
-            return [], "fake_ip"
-        if reason == "unsafe":
-            return [], "unsafe"
-        return [], "dns"
-
-    monkeypatch.setattr(media_mod, "_resolve_addresses_reasoned", _reasoned)
+    monkeypatch.setattr(asyncio.get_running_loop(), "getaddrinfo", getaddrinfo)
 
 
 @pytest.mark.asyncio
 async def test_whitelist_download_succeeds_under_fakeip_dns(tmp_path, monkeypatch) -> None:
-    """官方 CDN 域名 + DNS 全部解析为 Fake-IP：兼容出口按域名连接，下载成功。"""
+    """官方 CDN + 全 Fake-IP：固定已验证地址，保留兼容出口。"""
     _patch_reason(monkeypatch, "fake_ip")
     ok, reason, _ = await _download_follow(
         tmp_path, "https://multimedia.nt.qq.com.cn/a.jpg", monkeypatch, None
@@ -146,10 +137,9 @@ async def test_r01_whitelist_domain_with_unsafe_or_dns_failure_rejected(
 async def test_r01_mixed_fake_and_private_rejected(tmp_path, monkeypatch) -> None:
     """Fake-IP 与真实内网混杂解析：unsafe，不得豁免。"""
 
-    async def _mixed(host: str) -> tuple[list[str], str]:
-        return [], "unsafe"
-
-    monkeypatch.setattr(media_mod, "_resolve_addresses_reasoned", _mixed)
+    # The old test mocked only the second lookup and accidentally used live DNS
+    # for the first. CI resolved a public address and bypassed that mock entirely.
+    _patch_reason(monkeypatch, "mixed")
     ok, reason, _ = await _download_follow(
         tmp_path, "https://multimedia.nt.qq.com.cn/a.jpg", monkeypatch, None
     )
@@ -187,14 +177,7 @@ async def test_non_whitelist_fakeip_still_rejected(tmp_path, monkeypatch) -> Non
 async def test_public_ip_pinned_download_unaffected(tmp_path, monkeypatch) -> None:
     """回归: 真实公网 IP 的锁定直连路径不受白名单改动影响。"""
 
-    async def _public_resolve(host: str) -> tuple[list[str], str]:
-        return [PUBLIC_IP], ""
-
-    async def _public_list(host: str) -> list[str]:
-        return [PUBLIC_IP]
-
-    monkeypatch.setattr(media_mod, "_resolve_addresses_reasoned", _public_resolve)
-    monkeypatch.setattr(media_mod, "_resolve_public_addresses", _public_list)
+    _patch_reason(monkeypatch, "public")
 
     def handler(request: httpx.Request) -> httpx.Response:
         assert request.url.host == PUBLIC_IP

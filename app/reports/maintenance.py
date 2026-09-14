@@ -42,6 +42,7 @@ _COUNT_KEYS = frozenset(
         "notification_deliveries_deleted",
         "cases_archived",
         "cases_purged",
+        "cases_cleanup_deferred",
         "violation_records_purged",
         "ai_usage_logs_deleted",
         "candidates_expired",

@@ -15,6 +15,9 @@ Verdict = Literal["allow", "record_only", "violation_high"]
 RecommendedAction = Literal["recall", "mute", "warn"]
 Category = Literal["ad", "fraud", "porn", "violence", "flood", "other", None]
 
+# Deterministic local policy marker, never inferred from an AI explanation.
+CERTIFICATE_AD_ALLOW_RULE_ID = "POLICY_CERTIFICATE_AD_ALLOW"
+
 
 class RuleHit(BaseModel):
     """单条规则命中记录。"""

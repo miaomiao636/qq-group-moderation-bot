@@ -99,6 +99,16 @@ def _shadow_metadata(raw: str) -> str:
         "ai_results": ai_metadata,
         "action_intents": _metadata_items(detail.get("action_intents"), _ACTION_METADATA),
     }
+    # Message chronology is non-content metadata. Keep only a parsed, canonical
+    # timestamp; never preserve an arbitrary original string under a time key.
+    raw_sent = detail.get("sent_at")
+    if isinstance(raw_sent, str) and len(raw_sent) <= 64:
+        try:
+            sent = datetime.fromisoformat(raw_sent)
+            sent = sent.replace(tzinfo=UTC) if sent.tzinfo is None else sent.astimezone(UTC)
+            cleaned["sent_at"] = sent.isoformat()
+        except (ValueError, OverflowError):
+            pass
     versions = detail.get("rule_version_ids")
     if isinstance(versions, list):
         cleaned["rule_version_ids"] = [item for item in versions if type(item) is int]
@@ -112,6 +122,125 @@ def _shadow_metadata(raw: str) -> str:
     # No media filenames/URLs or segment text survive. Message identity remains
     # in columns, so feedback correction does not depend on a raw-content blob.
     return json.dumps(cleaned, ensure_ascii=False, sort_keys=True)
+
+
+def _case_reference_ids(raw: str) -> set[int] | None:
+    """A malformed reference is not an empty reference or authority to erase."""
+    value = _parse_json(raw, None)
+    if not isinstance(value, list) or any(type(item) is not int or item < 1 for item in value):
+        return None
+    return set(value)
+
+
+def _case_audit_metadata(audit: dict[str, Any], now: datetime) -> str:
+    """Keep accountability, not free-form originals/confirmation codes in extras."""
+    cleaned: dict[str, Any] = {"lifecycle_purged_at": now.replace(tzinfo=UTC).isoformat()}
+    if type(audit.get("evidence_count")) is int:
+        cleaned["evidence_count"] = audit["evidence_count"]
+    if isinstance(audit.get("revoked_by"), str):
+        cleaned["revoked_by"] = audit["revoked_by"][:64]
+    if audit.get("revoke_reason"):
+        cleaned["revoke_reason"] = _PURGED_REASON
+    cleaned["transitions"] = _metadata_items(
+        audit.get("transitions"), frozenset({"from", "to", "operator", "at"})
+    )
+    return json.dumps(cleaned, ensure_ascii=False, sort_keys=True)
+
+
+async def _purge_case_lifecycle(
+    session: AsyncSession, *, now: datetime, raw_cutoff: datetime
+) -> dict[str, int]:
+    """Hide completed cases after 15d; clear eligible content after 90d archived.
+
+    Case and violation IDs remain durable: both are referenced by audit/feedback,
+    and SQLite may reuse a physically deleted maximum ID. Neither archive age
+    nor a case's JSON list proves that a violation has no other live consumers.
+    Raw-source redaction has its own TTL above and is never deferred here.
+    """
+    archive_cutoff = now - timedelta(days=15)
+    result = await session.execute(
+        update(Case)
+        .where(
+            Case.archived.is_(False),
+            Case.status == "CLOSED",
+            Case.closed_at.is_not(None),
+            Case.closed_at < archive_cutoff,
+        )
+        .values(archived=True, archived_at=now)
+        .execution_options(synchronize_session=False)
+    )
+    counts = {
+        "cases_archived": int(getattr(result, "rowcount", 0) or 0),
+        "cases_purged": 0,
+        "cases_cleanup_deferred": 0,
+        "violation_records_purged": 0,
+    }
+    old_cases = (
+        await session.scalars(
+            select(Case).where(
+                Case.archived.is_(True),
+                Case.archived_at.is_not(None),
+                Case.archived_at < now - timedelta(days=90),
+            )
+        )
+    ).all()
+    if not old_cases:
+        return counts
+    reference_owners: dict[int, set[int]] = {}
+    malformed_cases: set[int] = set()
+    for case_id, raw_ids in await session.execute(select(Case.id, Case.violation_ids_json)):
+        ids = _case_reference_ids(raw_ids)
+        if ids is None:
+            malformed_cases.add(case_id)
+            continue
+        for violation_id in ids:
+            reference_owners.setdefault(violation_id, set()).add(case_id)
+    for case in old_cases:
+        audit = _parse_json(case.audit_json, None)
+        if isinstance(audit, dict) and audit.get("lifecycle_purged_at"):
+            continue  # Count only an actual first transition, not each cron visit.
+        ids = _case_reference_ids(case.violation_ids_json)
+        if (
+            case.status != "CLOSED"
+            or case.closed_at is None
+            or case.archived_at is None
+            or case.closed_at.replace(tzinfo=None) >= archive_cutoff
+            or case.archived_at.replace(tzinfo=None) < case.closed_at.replace(tzinfo=None)
+            or ids is None
+            or not isinstance(audit, dict)
+            or malformed_cases
+        ):
+            counts["cases_cleanup_deferred"] += 1
+            continue
+        records = (
+            await session.scalars(
+                select(ViolationRecord).where(
+                    or_(ViolationRecord.id.in_(ids), ViolationRecord.case_id == case.id)
+                )
+            )
+        ).all()
+        # Include reverse links: later violations may use an existing case while
+        # its original JSON evidence list remains unchanged.
+        unsafe = ids - {record.id for record in records}
+        for record in records:
+            if (
+                record.created_at.replace(tzinfo=None) >= min(raw_cutoff, now - timedelta(days=30))
+                or record.case_id not in (None, case.id)
+                or reference_owners.get(record.id, set()) - {case.id}
+                or record.provider != case.provider
+                or (record.external_group_id or record.group_openid)
+                != (case.external_group_id or case.group_openid)
+                or (record.external_user_id or record.member_openid)
+                != (case.external_user_id or case.member_openid)
+            ):
+                unsafe.add(record.id)
+        if unsafe:
+            counts["cases_cleanup_deferred"] += 1
+            continue
+        case.violation_ids_json = "[]"
+        case.audit_json = _case_audit_metadata(audit, now)
+        counts["cases_purged"] += 1
+    return counts
 
 
 async def _purge_content_copies(
@@ -271,7 +400,10 @@ async def purge_expired(session: AsyncSession, now: datetime | None = None) -> d
     SQLite 不保留时区（读取为 naive UTC）， cutoff 一律使用 naive UTC 比较。
     """
     settings = get_settings()
-    now = (now or datetime.now(UTC)).replace(tzinfo=None)
+    now = now or datetime.now(UTC)
+    now = (now.replace(tzinfo=UTC) if now.tzinfo is None else now.astimezone(UTC)).replace(
+        tzinfo=None
+    )
     raw_cutoff = now - timedelta(days=settings.raw_retention_days)
     decision_cutoff = now - timedelta(days=settings.decision_retention_days)
 
@@ -341,74 +473,13 @@ async def purge_expired(session: AsyncSession, now: datetime | None = None) -> d
 
     notification_counts = await purge_notifications(session, before=decision_cutoff)
 
-    # 6) 案件生命周期（负责人 2026-09-14 口径）：
-    #    终态(CLOSED) 满 15 天 → 归档（列表隐藏、数据保留）；
-    #    归档满 3 个月且原文已脱敏（15 天保留期已完成）→ 合规清除（连带其违规记录——
-    #    此时窗口早已关闭，不会再有其他案件引用；编号/通知游标契约不受影响：
-    #    只删最老案件，不会触发当日编号冲突，也不会把 rowid 拉回到通知游标之下）。
-    from datetime import timedelta as _td
+    # 6) Archive lifecycle is separate from raw-content expiry.
+    case_counts = await _purge_case_lifecycle(session, now=now, raw_cutoff=raw_cutoff)
 
-    from app.cases.models import Case as _Case
-    from app.cases.models import ViolationRecord as _ViolationRecord
-
-    archive_cutoff = now - _td(days=15)
-    archive_cutoff_naive = archive_cutoff.replace(tzinfo=None)
-    closed_states = ("CLOSED",)
-    archive_base = (
-        update(_Case)
-        .where(
-            _Case.archived.is_(False),
-            _Case.status.in_(closed_states),
-            _Case.closed_at.is_not(None),
-            _Case.closed_at < archive_cutoff_naive,
-        )
-        .values(archived=True, archived_at=now)
-        .execution_options(synchronize_session=False)
-    )
-    r_arch = await session.execute(archive_base)
-    cases_archived = int(getattr(r_arch, "rowcount", 0) or 0)
-
-    purge_cutoff = (now - _td(days=90)).replace(tzinfo=None)
-    old_cases = (
-        await session.execute(
-            select(_Case.id, _Case.violation_ids_json).where(
-                _Case.archived.is_(True),
-                _Case.archived_at.is_not(None),
-                _Case.archived_at < purge_cutoff,
-            )
-        )
-    ).all()
-    cases_purged = 0
-    records_purged = 0
-    for _cid, _vids_json in old_cases:
-        # R03 主审实测：SQLite rowid 会复用已删最大 ID——若物理删除案件，
-        # 新案件 ID 可能回退到通知游标之下，导致新案件永远不发通知。
-        # 因此「清除」= 逻辑清除：案件壳与 ID 保留（游标/编号安全），
-        # 仅解除违规引用并清空内容字段；对应违规记录行物理删除
-        # （其 ID 无游标依赖，且 90 天后已无任何案件引用，30 天合并窗口早已关闭）。
-        try:
-            vid_list = [int(x) for x in json.loads(_vids_json)]
-        except (TypeError, ValueError):
-            vid_list = []
-        for vid in vid_list:
-            r_del_v = await session.execute(
-                delete(_ViolationRecord)
-                .where(_ViolationRecord.id == vid)
-                .execution_options(synchronize_session=False)
-            )
-            records_purged += int(getattr(r_del_v, "rowcount", 0) or 0)
-        r_clr = await session.execute(
-            update(_Case)
-            .where(_Case.id == _cid)
-            .values(violation_ids_json="[]", audit_json="{}")
-            .execution_options(synchronize_session=False)
-        )
-        cases_purged += int(getattr(r_clr, "rowcount", 0) or 0)
-
-    # 7) AI 用量日志（脱敏纯统计）：90 天清理（负责人 2026-09-14 决定）
+    # 7) AI 调用明细元数据（含群/消息标识）：90 天删除，不含长期汇总承诺。
     from app.moderation.ai import AIUsageLog as _AIUsageLog
 
-    ai_log_cutoff = (now - _td(days=90)).replace(tzinfo=None)
+    ai_log_cutoff = now - timedelta(days=90)
     r_ai = await session.execute(
         delete(_AIUsageLog)
         .where(_AIUsageLog.created_at < ai_log_cutoff)
@@ -419,20 +490,19 @@ async def purge_expired(session: AsyncSession, now: datetime | None = None) -> d
     # 8) 候选规则过期（R-103 评审管理）：PROPOSED 超 30 天未处理 → DISMISSED
     from app.moderation.feedback import RuleCandidate as _RuleCandidate
 
-    cand_cutoff = (now - _td(days=30)).replace(tzinfo=None)
-    r_cand = await session.execute(
-        update(_RuleCandidate)
-        .where(
-            _RuleCandidate.status == "PROPOSED",
-            _RuleCandidate.created_at < cand_cutoff,
+    cand_cutoff = now - timedelta(days=30)
+    candidates_expired = 0
+    for candidate in await session.scalars(
+        select(_RuleCandidate).where(
+            _RuleCandidate.status == "PROPOSED", _RuleCandidate.created_at < cand_cutoff
         )
-        .values(
-            status="DISMISSED",
-            replay_report_json='{"invalidation_reason": "expired_30d_unhandled"}',
-        )
-        .execution_options(synchronize_session=False)
-    )
-    candidates_expired = int(getattr(r_cand, "rowcount", 0) or 0)
+    ):
+        report = _parse_json(candidate.replay_report_json, {})
+        report = report if isinstance(report, dict) else {}
+        report["invalidation_reason"] = "expired_30d_unhandled"
+        candidate.status = "DISMISSED"
+        candidate.replay_report_json = json.dumps(report, ensure_ascii=False)
+        candidates_expired += 1
 
     await session.commit()
     return {
@@ -442,9 +512,7 @@ async def purge_expired(session: AsyncSession, now: datetime | None = None) -> d
         "case_reasons_purged": purged_case_reasons,
         "action_logs_deleted": deleted_logs,
         "media_files_deleted": deleted_media,
-        "cases_archived": cases_archived,
-        "cases_purged": cases_purged,
-        "violation_records_purged": records_purged,
+        **case_counts,
         "ai_usage_logs_deleted": ai_logs_deleted,
         "candidates_expired": candidates_expired,
         **copy_counts,

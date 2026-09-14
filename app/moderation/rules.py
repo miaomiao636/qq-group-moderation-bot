@@ -17,7 +17,7 @@ from collections import defaultdict, deque
 from typing import TYPE_CHECKING, Any
 
 from app.core.contracts import StandardMessage
-from app.moderation.decision import ModerationDecision, RuleHit
+from app.moderation.decision import CERTIFICATE_AD_ALLOW_RULE_ID, ModerationDecision, RuleHit
 from app.moderation.extract import extract_signals
 from app.moderation.normalization import apply_variants, has_variant_trick
 
@@ -313,19 +313,23 @@ def _evaluate_text_rules(
         if porn_word in variant_text:
             category = "porn"
             break
-    if explicit_hits and explicit_hits[0] in (
-        "枪支",
-        "弹药",
-        "毒品",
-        "麻古",
-        "冰粉",
-        "赌球",
-        "网赌",
-        "博彩",
-    ):
-        category = (
-            "violence" if explicit_hits[0] in ("枪支", "弹药", "毒品", "麻古", "冰粉") else "fraud"
-        )
+    # An earlier ad keyword must not hide another explicit severe hit. Preserve
+    # the existing taxonomy and porn precedence; only remove the first-hit blind spot.
+    if category != "porn":
+        severe_categories = {
+            "枪支": "violence",
+            "弹药": "violence",
+            "毒品": "violence",
+            "麻古": "violence",
+            "冰粉": "violence",
+            "赌球": "fraud",
+            "网赌": "fraud",
+            "博彩": "fraud",
+        }
+        for hit in explicit_hits:
+            if hit in severe_categories:
+                category = severe_categories[hit]
+                break
 
     return hits, min(total, 1.0), category
 
@@ -488,6 +492,14 @@ class TextRuleEngine:
             verdict = "record_only"
             actions = []
             reason = "办证/学历类内容按负责人口径放行（不撤回），转记录"
+            hits.append(
+                RuleHit(
+                    rule_id=CERTIFICATE_AD_ALLOW_RULE_ID,
+                    rule_name="certificate_ad_scope",
+                    category="ad",
+                    evidence_masked="本地办证广告例外；AI 不得覆盖，严重类别和显式动态规则另判",
+                )
+            )
         elif has_hard_blacklist:
             # R-102 审计选项A：命中明确黑名单词（R001）即硬证据，直接高置信违规
             verdict = "violation_high"

@@ -79,12 +79,11 @@ def _wall_detail(
             "sent_at": sent_at,
             "ai_results": [
                 {
-                    "src": "vision",
                     "source": "vision",
                     "evidence": vision_evidence or f"校园墙白名单|文案:{wall_text}",
-                    "cat": vision_cat,
-                    "nr": vision_nr,
-                    "deg": "",
+                    "category": vision_cat,
+                    "needs_review": vision_nr,
+                    "degraded_reason": "",
                 }
             ],
             PAIRED_KEY: paired,
@@ -165,7 +164,9 @@ async def _insert_text_row(group: str, seconds_ago: float) -> None:
                 category="",
                 confidence=0.9,
                 reason="普通消息",
-                detail_json="{}",
+                detail_json=json.dumps(
+                    {"sent_at": (datetime.now(UTC) - timedelta(seconds=seconds_ago)).isoformat()}
+                ),
             )
         )
         await session.commit()
@@ -202,7 +203,7 @@ def test_similarity_threshold() -> None:
 def test_extract_wall_text_prefix_only() -> None:
     """R09: 仅前缀匹配构成许可，否定表述与子串不构成。"""
     assert extract_wall_text("校园墙白名单|文案:招兼职") == "招兼职"
-    assert extract_wall_text("校园墙白名单来源") == ""
+    assert extract_wall_text("校园墙白名单来源") is None
     assert extract_wall_text("不符合校园墙白名单|文案:招兼职") is None
     assert extract_wall_text("图片为广告：校园墙白名单|文案:x") is None
     assert extract_wall_text("") is None

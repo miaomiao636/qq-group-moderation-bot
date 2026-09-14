@@ -21,7 +21,12 @@ from sqlalchemy.orm import Mapped, mapped_column
 from app.config import Settings
 from app.core.contracts import StandardMessage
 from app.db import Base
-from app.moderation.decision import Category, ModerationDecision, RuleHit
+from app.moderation.decision import (
+    CERTIFICATE_AD_ALLOW_RULE_ID,
+    Category,
+    ModerationDecision,
+    RuleHit,
+)
 
 AIContentKind = Literal[
     "text",
@@ -774,6 +779,10 @@ def secondary_review_reason(
     """Only trusted local policy chooses whether a second opinion is required."""
     if primary.degraded_reason:
         return "primary_degraded"
+    if primary.category == "ad" and any(
+        hit.rule_id == CERTIFICATE_AD_ALLOW_RULE_ID for hit in local.rule_hits
+    ):
+        return "rule_or_allowlist_conflict"
     allow_hit = any(hit.rule_id.startswith("DR_ALLOW_") for hit in local.rule_hits)
     if "冲突" in local.reason or (allow_hit and primary.category is not None):
         return "rule_or_allowlist_conflict"
