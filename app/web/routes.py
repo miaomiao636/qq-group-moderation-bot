@@ -408,7 +408,9 @@ async def dashboard(
     batch_form = (
         '<form method=post action="/admin/cases/batch-delete" '
         'onsubmit="return confirm(\'确定删除勾选的案件吗？将同时删除其违规证据记录，不可恢复。\')">'
-        f"<table><tr><th></th><th>批次号</th><th>群</th><th>成员</th><th>状态</th><th>创建</th><th></th></tr>{rows}</table>"
+        f"{csrf}"
+        f"<table><tr><th><input type=checkbox onclick=\"document.querySelectorAll('input[name=case_ids]').forEach(c=>c.checked=this.checked)\" title=全选></th>"
+        f"<th>批次号</th><th>群</th><th>成员</th><th>状态</th><th>创建</th><th></th></tr>{rows}</table>"
         f'<p style=margin-top:8px><button class="btn danger">删除勾选案件</button>'
         f'<span class=muted>（共 {total} 条，第 {page}/{total_pages} 页）</span></p></form>'
     )
@@ -1563,7 +1565,7 @@ async def copy_candidate_to_draft_submit(
 
 
 @router.get("/reports", response_class=HTMLResponse)
-async def reports_page(request: Request) -> Response:
+async def reports_page(request: Request, notice: str = "") -> Response:
     token = await _require_login(request)
     if not token:
         return _login_redirect()
@@ -1572,8 +1574,10 @@ async def reports_page(request: Request) -> Response:
         daily = await build_daily(session)
         weekly = await build_weekly(session)
         pending = await pending_manual_review(session)
+    notice_html = f'<p class=warn role=status>{_esc(notice)}</p>' if notice else ""
     body = (
-        "<div class=card><h3>昨日日报</h3><pre>"
+        notice_html
+        + "<div class=card><h3>昨日日报</h3><pre>"
         + _esc(json.dumps(daily, ensure_ascii=False, indent=1))
         + "</pre></div>"
         "<div class=card><h3>近7天周报</h3><pre>"
@@ -1592,9 +1596,13 @@ async def reports_page(request: Request) -> Response:
 async def cleanup_now(request: Request, csrf: str = Form("")) -> RedirectResponse:
     await _require_admin_post(request, csrf)
     async with SessionLocal() as session:
-        await purge_expired(session)
-    await record_admin_audit(await _operator(request), "cleanup_now", "retention", "manual")
-    return RedirectResponse("/admin/reports", status_code=303)
+        stats = await purge_expired(session)
+    await record_admin_audit(
+        await _operator(request), "cleanup_now", "retention", "manual", stats
+    )
+    summary = "、".join(f"{k}={v}" for k, v in stats.items() if v)
+    notice = quote(f"清理完成：{summary or '无过期数据需要清理（各保留期内）'}")
+    return RedirectResponse(f"/admin/reports?notice={notice}", status_code=303)
 
 
 # ---------- 群管理（P0：按群审核/动作开关） ----------
