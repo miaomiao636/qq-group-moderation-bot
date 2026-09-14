@@ -14,7 +14,7 @@ import json
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
-from sqlalchemy import delete, func, or_, select
+from sqlalchemy import delete, func, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.cases.models import Case, ViolationRecord
@@ -341,6 +341,99 @@ async def purge_expired(session: AsyncSession, now: datetime | None = None) -> d
 
     notification_counts = await purge_notifications(session, before=decision_cutoff)
 
+    # 6) 案件生命周期（负责人 2026-09-14 口径）：
+    #    终态(CLOSED) 满 15 天 → 归档（列表隐藏、数据保留）；
+    #    归档满 3 个月且原文已脱敏（15 天保留期已完成）→ 合规清除（连带其违规记录——
+    #    此时窗口早已关闭，不会再有其他案件引用；编号/通知游标契约不受影响：
+    #    只删最老案件，不会触发当日编号冲突，也不会把 rowid 拉回到通知游标之下）。
+    from datetime import timedelta as _td
+
+    from app.cases.models import Case as _Case
+    from app.cases.models import ViolationRecord as _ViolationRecord
+
+    archive_cutoff = now - _td(days=15)
+    archive_cutoff_naive = archive_cutoff.replace(tzinfo=None)
+    closed_states = ("CLOSED",)
+    archive_base = (
+        update(_Case)
+        .where(
+            _Case.archived.is_(False),
+            _Case.status.in_(closed_states),
+            _Case.closed_at.is_not(None),
+            _Case.closed_at < archive_cutoff_naive,
+        )
+        .values(archived=True, archived_at=now)
+        .execution_options(synchronize_session=False)
+    )
+    r_arch = await session.execute(archive_base)
+    cases_archived = int(getattr(r_arch, "rowcount", 0) or 0)
+
+    purge_cutoff = (now - _td(days=90)).replace(tzinfo=None)
+    old_cases = (
+        await session.execute(
+            select(_Case.id, _Case.violation_ids_json).where(
+                _Case.archived.is_(True),
+                _Case.archived_at.is_not(None),
+                _Case.archived_at < purge_cutoff,
+            )
+        )
+    ).all()
+    cases_purged = 0
+    records_purged = 0
+    for _cid, _vids_json in old_cases:
+        # R03 主审实测：SQLite rowid 会复用已删最大 ID——若物理删除案件，
+        # 新案件 ID 可能回退到通知游标之下，导致新案件永远不发通知。
+        # 因此「清除」= 逻辑清除：案件壳与 ID 保留（游标/编号安全），
+        # 仅解除违规引用并清空内容字段；对应违规记录行物理删除
+        # （其 ID 无游标依赖，且 90 天后已无任何案件引用，30 天合并窗口早已关闭）。
+        try:
+            vid_list = [int(x) for x in json.loads(_vids_json)]
+        except (TypeError, ValueError):
+            vid_list = []
+        for vid in vid_list:
+            r_del_v = await session.execute(
+                delete(_ViolationRecord)
+                .where(_ViolationRecord.id == vid)
+                .execution_options(synchronize_session=False)
+            )
+            records_purged += int(getattr(r_del_v, "rowcount", 0) or 0)
+        r_clr = await session.execute(
+            update(_Case)
+            .where(_Case.id == _cid)
+            .values(violation_ids_json="[]", audit_json="{}")
+            .execution_options(synchronize_session=False)
+        )
+        cases_purged += int(getattr(r_clr, "rowcount", 0) or 0)
+
+    # 7) AI 用量日志（脱敏纯统计）：90 天清理（负责人 2026-09-14 决定）
+    from app.moderation.ai import AIUsageLog as _AIUsageLog
+
+    ai_log_cutoff = (now - _td(days=90)).replace(tzinfo=None)
+    r_ai = await session.execute(
+        delete(_AIUsageLog)
+        .where(_AIUsageLog.created_at < ai_log_cutoff)
+        .execution_options(synchronize_session=False)
+    )
+    ai_logs_deleted = int(getattr(r_ai, "rowcount", 0) or 0)
+
+    # 8) 候选规则过期（R-103 评审管理）：PROPOSED 超 30 天未处理 → DISMISSED
+    from app.moderation.feedback import RuleCandidate as _RuleCandidate
+
+    cand_cutoff = (now - _td(days=30)).replace(tzinfo=None)
+    r_cand = await session.execute(
+        update(_RuleCandidate)
+        .where(
+            _RuleCandidate.status == "PROPOSED",
+            _RuleCandidate.created_at < cand_cutoff,
+        )
+        .values(
+            status="DISMISSED",
+            replay_report_json='{"invalidation_reason": "expired_30d_unhandled"}',
+        )
+        .execution_options(synchronize_session=False)
+    )
+    candidates_expired = int(getattr(r_cand, "rowcount", 0) or 0)
+
     await session.commit()
     return {
         "processed_events_deleted": deleted_events,
@@ -349,6 +442,11 @@ async def purge_expired(session: AsyncSession, now: datetime | None = None) -> d
         "case_reasons_purged": purged_case_reasons,
         "action_logs_deleted": deleted_logs,
         "media_files_deleted": deleted_media,
+        "cases_archived": cases_archived,
+        "cases_purged": cases_purged,
+        "violation_records_purged": records_purged,
+        "ai_usage_logs_deleted": ai_logs_deleted,
+        "candidates_expired": candidates_expired,
         **copy_counts,
         **inbox_counts,
         **{f"notification_{key}": count for key, count in notification_counts.items()},

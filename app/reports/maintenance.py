@@ -40,6 +40,11 @@ _COUNT_KEYS = frozenset(
         "inbox_records_deleted",
         "notification_notices_deleted",
         "notification_deliveries_deleted",
+        "cases_archived",
+        "cases_purged",
+        "violation_records_purged",
+        "ai_usage_logs_deleted",
+        "candidates_expired",
     }
 )
 

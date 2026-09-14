@@ -64,3 +64,6 @@ class Case(Base):
     audit_json: Mapped[str] = mapped_column(Text, default="{}")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
     closed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    # R02/R03 整改：案件不再硬删除，改为归档——列表默认过滤，数据保留可查。
+    archived: Mapped[bool] = mapped_column(Boolean, default=False, server_default="0", index=True)
+    archived_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)

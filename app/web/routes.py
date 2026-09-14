@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import html
 import json
+import re
 import secrets
 from datetime import timedelta
 from hashlib import sha256
@@ -332,16 +333,20 @@ async def dashboard(
     group: str = "",
     date_from: str = "",
     date_to: str = "",
+    archived: str = "",
 ) -> Response:
     token = await _require_login(request)
     if not token:
         return _login_redirect()
     page = max(1, page)
     page_size = 50
+    show_archived = archived == "1"
     async with SessionLocal() as session:
         pending = await pending_manual_review(session)
         alias_map = await _alias_map(session)
-        conditions = []
+        conditions: list[Any] = []
+        # R02/R03 整改：归档语义替代硬删除——默认只看未归档；archived=1 查看已归档
+        conditions.append(Case.archived.is_(show_archived))
         if status:
             conditions.append(Case.status == status)
         if group.strip():
@@ -378,6 +383,7 @@ async def dashboard(
     def _qs(p: int) -> str:
         from urllib.parse import urlencode
 
+        extra = {"archived": "1"} if show_archived else {}
         return (
             "?"
             + urlencode(
@@ -389,6 +395,7 @@ async def dashboard(
                         "group": group,
                         "date_from": date_from,
                         "date_to": date_to,
+                        **extra,
                     }.items()
                     if v
                 }
@@ -441,9 +448,19 @@ async def dashboard(
         or "<li>无</li>"
     )
     notice_html = f"<p class=warn>{_esc(notice)}</p>" if notice else ""
+    archive_toggle = (
+        '<a class=btn href="/admin">返回未归档案件</a>'
+        if show_archived
+        else '<a class=btn href="/admin?archived=1">查看已归档案件</a>'
+    )
+    archive_note = (
+        "<p class=muted>终态案件满 15 天自动归档；归档满 3 个月且原文已脱敏后合规清除"
+        "（负责人 2026-09-14 数据政策）。未处理案件不会被归档。</p>"
+    )
     body = (
         f"{notice_html}<h2>待人工处理（{len(pending)}）</h2><ul>{pending_rows}</ul>"
-        f"<h2>案件</h2>{filter_form}{batch_form}{pager}"
+        f"<h2>{'已归档案件' if show_archived else '案件'}</h2>{archive_note}{archive_toggle}"
+        f"{filter_form}{batch_form}{pager}"
     )
     return _page("案件列表", body)
 
@@ -484,13 +501,27 @@ def _evidence_html(records: list[ViolationRecord]) -> str:
         snapshot: dict[str, Any] = json.loads(r.message_snapshot_json)
         text = _esc(snapshot.get("text", "(已按保留期清理)"))
         snapshot.get("sender") or {}
+        # R-证据回看：图片/视频类违规不再是空白——15 天保留期内可点开原图核对
+        media_links: list[str] = []
+        for att in snapshot.get("attachments") or []:
+            fname = str(att.get("filename") or "")
+            if fname and _MEDIA_FILE_RE.match(fname):
+                kind_label = "视频" if fname.endswith((".mp4", ".bin")) else "图片"
+                media_links.append(
+                    f'<a href="/admin/media/{_esc(fname)}" target=_blank>查看{kind_label}</a>'
+                )
+        media_html = "<p>附件：" + "　".join(media_links) + "</p>" if media_links else ""
         parts.append(
             f"<div class=card><b>违规 #{r.id}</b>（{_esc(r.category)}，置信度{_esc(r.confidence)}，"
             f"{_esc(f'{r.created_at:%m-%d %H:%M}')}）{_esc(' 已撤销' if r.revoked else '')}"
             f"<p>成员OpenID：<code>{_esc(r.member_openid)}</code> <span class=warn>（未验证QQ号，仅供人工核对）</span></p>"
+            f"{media_html}"
             f"<pre>{text[:500]}</pre></div>"
         )
     return "".join(parts) or "<p>无证据记录</p>"
+
+
+_MEDIA_FILE_RE = re.compile(r"^[a-f0-9]{64}(?:_\d+)?\.(?:jpg|png|gif|webp|mp4|amr|bin)$")
 
 
 @router.get("/cases/{case_id}", response_class=HTMLResponse)
@@ -680,6 +711,21 @@ async def batch_delete_cases(request: Request, csrf: str = Form("")) -> Response
         "<p>数据清理将改为「归档」语义后重新提供。</p>"
         '<p><a href="/admin">返回案件列表</a></p></div>',
     )
+
+
+@router.post("/cases/{case_id}/unarchive")
+async def unarchive_case(request: Request, case_id: int, csrf: str = Form("")) -> Response:
+    """误归档恢复：archived 复位（数据一直在，仅列表可见性）。"""
+    from sqlalchemy import update as sa_update
+
+    await _require_admin_post(request, csrf)
+    async with SessionLocal() as session:
+        await session.execute(
+            sa_update(Case).where(Case.id == case_id).values(archived=False, archived_at=None)
+        )
+        await session.commit()
+    await record_admin_audit(await _operator(request), "case_unarchive", "case", str(case_id))
+    return RedirectResponse(f"/admin?notice={quote('案件已恢复显示')}", status_code=303)
 
 
 async def _operator(request: Request) -> str:
@@ -1154,7 +1200,16 @@ async def rules_page(request: Request, notice: str = "") -> Response:
                 f"#{item.id} [{_esc(item.item_type)} / {_esc(item.category)} / {item.weight:.2f}] "
                 f"{_esc(item.pattern)}"
                 + (f" — {_esc(item.description)}" if item.description else "")
-                + (" <span class=muted>已停用</span>" if not item.enabled else "")
+                + (
+                    " <span class=muted>已停用</span>"
+                    if not item.enabled
+                    else (
+                        f'<form method=post style="display:inline" '
+                        f'action="/admin/rules/items/{item.id}/disable" '
+                        f"onsubmit=\"return confirm('停用该规则项？运行时立即不再命中（可再启用）。')\">"
+                        f'{csrf}<button class="btn" style="padding:2px 8px;font-size:12px">停用</button></form>'
+                    )
+                )
                 + "</li>"
                 for item in items_by_version.get(version.id, [])
             )
@@ -1459,8 +1514,12 @@ async def feedback_page(request: Request, notice: str = "") -> Response:
         "<div class=card><h2>反馈学习</h2>"
         "<p class=muted>这里只把管理员明确标注作为真值；未知原因撤回只保存，不参与候选规则挖掘。"
         "候选规则复制后仍是草稿，必须在规则页人工发布才会生效。</p>"
-        f'<form method=post action="/admin/feedback/mine">{csrf}'
-        "<button class=btn>从确认反馈挖掘候选规则</button></form></div>"
+        f'<form method=post action="/admin/feedback/mine" style="display:inline">{csrf}'
+        "<button class=btn>从确认反馈挖掘候选规则</button></form>"
+        f'<form method=post action="/admin/feedback/candidates/purge-dismissed" '
+        f'style="display:inline" onsubmit="return confirm(\'清理全部已驳回（DISMISSED）候选规则？\')">{csrf}'
+        "<button class=btn>清理已驳回候选</button></form>"
+        "<span class=muted>（PROPOSED 超 30 天未处理也会在每日清理中自动驳回）</span></div>"
         "<div class=card><h3>候选规则</h3>"
         "<table><tr><th>ID</th><th>状态</th><th>范围</th><th>类型</th><th>内容</th><th>类别</th><th>支持/成员</th><th>负例冲突</th><th>操作</th></tr>"
         f"{candidate_html}</table></div>"
@@ -1519,6 +1578,74 @@ async def mine_feedback_submit(request: Request, csrf: str = Form("")) -> Respon
         operator, "feedback_mine_candidates", "rule_candidate", "batch", {"count": len(candidates)}
     )
     return _feedback_notice_redirect(f"已生成{len(candidates)}条候选规则")
+
+
+@router.post("/rules/items/{item_id}/disable")
+async def disable_rule_item(request: Request, item_id: int, csrf: str = Form("")) -> Response:
+    """R-103 评审管理：停用/恢复动态规则条目（运行时按 enabled 过滤，立即生效）。"""
+    await _require_admin_post(request, csrf)
+    from app.moderation.dynamic_rules import RuleAudit, RuleItem, RuleVersion
+
+    async with SessionLocal() as session:
+        item = await session.get(RuleItem, item_id)
+        if item is None:
+            return _page("错误", "<p>规则项不存在</p>")
+        version = await session.get(RuleVersion, item.version_id)
+        rule_set_id = version.rule_set_id if version else 0
+        new_enabled = not item.enabled
+        item.enabled = new_enabled
+        session.add(
+            RuleAudit(
+                rule_set_id=rule_set_id,
+                version_id=item.version_id,
+                operator=await _operator(request),
+                action="rule_item_disable" if not new_enabled else "rule_item_enable",
+                detail_json=json.dumps(
+                    {"item_id": item_id, "pattern": item.pattern[:100]},
+                    ensure_ascii=False,
+                ),
+            )
+        )
+        await session.commit()
+    return _rules_notice_redirect(f"规则项#{item_id}已{'恢复' if new_enabled else '停用'}")
+
+
+@router.post("/feedback/candidates/purge-dismissed")
+async def purge_dismissed_candidates(request: Request, csrf: str = Form("")) -> Response:
+    """R-103 评审管理：批量清理已驳回候选（无引用的死数据）。"""
+    from sqlalchemy import delete as sa_delete
+
+    await _require_admin_post(request, csrf)
+    from app.moderation.feedback import RuleCandidate, RuleCandidateExample
+
+    async with SessionLocal() as session:
+        dismissed_ids = (
+            (
+                await session.execute(
+                    select(RuleCandidate.id).where(RuleCandidate.status == "DISMISSED")
+                )
+            )
+            .scalars()
+            .all()
+        )
+        if dismissed_ids:
+            await session.execute(
+                sa_delete(RuleCandidateExample).where(
+                    RuleCandidateExample.candidate_id.in_(dismissed_ids)
+                )
+            )
+            await session.execute(
+                sa_delete(RuleCandidate).where(RuleCandidate.id.in_(dismissed_ids))
+            )
+            await session.commit()
+    await record_admin_audit(
+        await _operator(request),
+        "feedback_purge_dismissed",
+        "rule_candidate",
+        "batch",
+        {"count": len(dismissed_ids)},
+    )
+    return _feedback_notice_redirect(f"已清理{len(dismissed_ids)}条已驳回候选")
 
 
 @router.post("/feedback/candidates/{candidate_id}/copy-to-draft")
