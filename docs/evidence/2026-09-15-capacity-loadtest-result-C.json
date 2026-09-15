@@ -1,0 +1,104 @@
+{
+  "sent": 600,
+  "processed": 600,
+  "backlog_after_drain": 0,
+  "drained_after_seconds": 5.01600000000326,
+  "ai_calls": 600,
+  "ai_ok": 600,
+  "ai_limited": 0,
+  "e2e_samples": 600,
+  "e2e_p50": 2.1,
+  "e2e_p80": 2.6,
+  "e2e_p95": 5.7,
+  "db_bytes": 2351104,
+  "timeline": [
+    {
+      "t": 0.0,
+      "sent": 1,
+      "processed": 0,
+      "backlog": 1,
+      "ai_calls": 0,
+      "limited": 0
+    },
+    {
+      "t": 15.1,
+      "sent": 61,
+      "processed": 53,
+      "backlog": 7,
+      "ai_calls": 53,
+      "limited": 0
+    },
+    {
+      "t": 30.1,
+      "sent": 121,
+      "processed": 112,
+      "backlog": 9,
+      "ai_calls": 112,
+      "limited": 0
+    },
+    {
+      "t": 45.1,
+      "sent": 181,
+      "processed": 174,
+      "backlog": 7,
+      "ai_calls": 174,
+      "limited": 0
+    },
+    {
+      "t": 60.1,
+      "sent": 241,
+      "processed": 236,
+      "backlog": 5,
+      "ai_calls": 236,
+      "limited": 0
+    },
+    {
+      "t": 75.1,
+      "sent": 301,
+      "processed": 298,
+      "backlog": 3,
+      "ai_calls": 298,
+      "limited": 0
+    },
+    {
+      "t": 90.2,
+      "sent": 361,
+      "processed": 355,
+      "backlog": 6,
+      "ai_calls": 355,
+      "limited": 0
+    },
+    {
+      "t": 105.2,
+      "sent": 421,
+      "processed": 413,
+      "backlog": 8,
+      "ai_calls": 413,
+      "limited": 0
+    },
+    {
+      "t": 120.2,
+      "sent": 481,
+      "processed": 475,
+      "backlog": 6,
+      "ai_calls": 475,
+      "limited": 0
+    },
+    {
+      "t": 135.2,
+      "sent": 541,
+      "processed": 536,
+      "backlog": 5,
+      "ai_calls": 536,
+      "limited": 0
+    },
+    {
+      "t": 150.2,
+      "sent": 600,
+      "processed": 600,
+      "backlog": 0,
+      "ai_calls": 600,
+      "limited": 0
+    }
+  ]
+}
