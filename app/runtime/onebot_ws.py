@@ -268,7 +268,9 @@ def _ensure_worker() -> asyncio.Queue[str]:
     return _queue
 
 
-_WORKER_CONCURRENCY = 3  # ⑥ 并发处理：AI 30-40s/调用时允许3条消息同时在途
+# 并发处理（2026-09-15 容量整改：3→10，负责人授权）：AI 等待为 IO-bound，
+# 单 worker 处理期大部分时间在等 AI 回复；10 路在途支撑 ≈350 条/分钟（压测复验）。
+_WORKER_CONCURRENCY = 10
 
 
 async def _worker_main(queue: asyncio.Queue[str]) -> None:

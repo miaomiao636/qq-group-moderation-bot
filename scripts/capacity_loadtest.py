@@ -57,8 +57,8 @@ PHASES = [
     ("peak", 2.0, 480),  # 极端峰值 ≈120 条/分钟
 ]
 if os.environ.get("LT_QUICK") == "1":
-    # 无缓存补测：纯峰值短负载，文本唯一化使缓存失效
-    PHASES = [("peak", 2.0, 150)]
+    # 无缓存补测：纯峰值短负载，文本唯一化使缓存失效；LT_PEAK_RATE 可调速率
+    PHASES = [("peak", float(os.environ.get("LT_PEAK_RATE", "2.0")), 150)]
 DRAIN_MAX_SECONDS = 300
 
 # ---- 环境必须在 import app 之前设置（pydantic-settings：环境变量优先 .env）----
@@ -82,8 +82,9 @@ os.environ.update(
         "AI_REVIEW_BASE_URL": "",
         "AI_REVIEW_API_KEY": "",
         "AI_TIMEOUT_SECONDS": "60",
-        "AI_PER_MINUTE_LIMIT": "90",
-        "AI_DAILY_CALL_LIMIT": "3000",
+        # 与 2026-09-15 生产调整后的值一致（负责人授权：90→600、3000→50000）
+        "AI_PER_MINUTE_LIMIT": "600",
+        "AI_DAILY_CALL_LIMIT": "50000",
         "AI_DAILY_BUDGET_CENTS": "0",
         "AI_PROMPT_VERSION": "loadtest",
         "NOTIFICATIONS_ENABLED": "false",
