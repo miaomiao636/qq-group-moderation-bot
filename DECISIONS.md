@@ -710,3 +710,15 @@ ACTION_MODE 切换为 OFFICIAL、ONEBOT_ACTIONS_ENABLED=true、ONEBOT_ACTION_STA
 - **实现要点**：登记根跟随 `pipeline.MEDIA_DIR` 的数据根（测试/演练天然隔离，不碰真实 data/）；保底排序按"条目内最新文件 mtime"（目录 mtime 不代表内容时间）；空目录自动移除；`plan_managed_copies` 提供 dry-run 清单；统计键并入 maintenance 白名单（`managed_copy_files_deleted` / `managed_copy_bytes_freed` / `managed_copy_dirs_removed`）。
 - **首次生产 dry-run（2026-09-15）：0 待删**（副本均在窗口内；预计 09-20 起 `t002_media`、≈09-25 `media_snapshot` 依次到期自动清理）。04:00 的 `QQBotAutoCleanup` 任务自动携带本能力（maintenance 进程读取工作树代码，无需服务重启）。
 - **边界**：备份"保底最新 1 份"不等于备份策略合格——备份频率/异地存放/恢复演练仍属现场事项（本次已做恢复校验一次）。
+
+---
+
+## 决策 D-030：真实动作恢复（W3+W5 合并进行）（2026-09-15 晚）
+
+日期：2026-09-15。依据：负责人明确指示"外部心跳不考虑，其他两个（W3 单群实弹 + W5 全量）全部进行"，即授权恢复 5 个已授权群的**真实撤回**。
+
+- **范围**：`ONEBOT_ACTIONS_ENABLED=false → true`（2026-09-15 19:37 本地）；`ONEBOT_ACTION_STAGE` 保持 `recall_only`（只撤回，禁言/警告在编排层跳过）；仅 5 个群级授权群（`group_action_owners`：17598122 / 470794920 / 6638171 / 869142826 / 894723164）；保护机制全部保留（急停三级 / 保护角色拦截 / `violation_high` 前置 / 人工纠正在场检查 / 群级开关）。
+- **生效证据**：服务重启（NSSM 两服务，19:38）后**首条真实撤回执行成功**——intent `#1013` `recall/SUCCEEDED`（群 `17598122`、消息 `2098062009`、`{"ok":true,"attempts":1}`、11:39:58Z）；重启前同场景为"开关未开启"SKIPPED（intent #1010）；未授权群继续被"群动作已禁用"拦截（intent #1012）——授权范围未扩大。详见 `docs/evidence/2026-09-15-actions-resume.md`。
+- **回退**：`.env` 改回 `false` + 重启两个服务；或立即拉急停（三级任一，不重启即停）。
+- **历史背景**：09-11~09-14 曾 live 运行 **254 次真实撤回成功**、11 次 NapCat 撤回接口超时失败（均记录 + 转人工，不静默）；09-14 起审计冻结期暂停至本轮恢复。NapCat 撤回超时为观察项。
+- **未包含**：外部心跳（负责人明确不考虑，风险自留）；禁言/踢人（stage 未提升）；群范围未扩大；本证据不替代主审独立复验。
