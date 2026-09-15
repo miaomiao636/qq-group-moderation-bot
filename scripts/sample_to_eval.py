@@ -37,6 +37,8 @@ if str(ROOT) not in sys.path:
 from app.reports.evaluation import EvaluationSample  # noqa: E402
 
 _LABELS = {"confirmed_violation", "confirmed_normal", "false_positive"}
+# 评测契约 kind 枚举不含的样本类型 → 最保守映射（仅影响记录口径，不影响判定指标）
+_KIND_MAP = {"forward_record": "unknown"}
 
 
 def convert_row(
@@ -59,7 +61,7 @@ def convert_row(
         "verdict": str(row.get("system_verdict") or "").strip(),
         "category": truth,
         "category_source": "manual_truth",
-        "kind": str(row.get("kind") or ""),
+        "kind": _KIND_MAP.get(str(row.get("kind") or ""), str(row.get("kind") or "")),
         "latency_ms": None,
         "latency_source": "none",
         "unavailable": str(row.get("unavailable") or ""),
