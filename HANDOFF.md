@@ -1,17 +1,19 @@
 # Agent交接记录
 
-## 当前交接：2026-09-15，R-111 / v13.1 P2 复验修复（SHA `feb821c`）
+## 当前交接：2026-09-15，R-111 / v13.1 两轮 P2 复验修复（最新 SHA `76ce10b`）
 
-**SHA 三口径（勿混用）**：功能提交（策略）`24d1202`；主审 R-111 受审 head `4c57b6c`；本轮 P2 修复 `feb821c`（已推送 `windows-deploy-2026-09-10`）。**Windows 实际运行 SHA 以部署记录为准**——最近一次重启加载的是 v13 工作树（无 P2 修复），本轮修复**未部署**；主审 R-111 未连接 Windows、本轮未取得新的运行 SHA。
+**SHA 三口径（勿混用）**：功能提交（策略）`24d1202`；受审 head `4c57b6c`（R-111 首轮）与 `bd5402c`（R-111 二轮）；修复链 `feb821c`（首轮 P2：类别优先）→ `4f7e90d`/`bd5402c`（文档）→ `76ce10b`（二轮 P2：反馈最新写入；已推送 `windows-deploy-2026-09-10`）。**Windows 实际运行 SHA 以部署记录为准**——最近一次重启加载的是 v13 工作树（无 P2 修复），本轮修复**未部署**；主审 R-111 未连接 Windows、本轮未取得新的运行 SHA。
 
 **主审 R-111（对 `4c57b6c`）结论**：B-2 主要行为**通过复验**（16 个端到端场景：本地严重硬命中处罚×3、独立视觉二审确认处罚×3、低置信疑似转人工保留类别×3、高置信仍要求人工×3、双视觉要求人工×3、普通广告不变×1，真实 `run_pipeline` + 迁移后隔离库、固定返回模型）；三平台 CI 全绿（[run 34874960471](https://github.com/miaomiao636/qq-group-moderation-bot/actions/runs/34874960471)）；**无新 P0/P1**。FAIL：1 个 P2——混合内容转人工时 ad 类别覆盖严重疑似类别（`app/moderation/ai.py` 旧逻辑 `category = local.category or usable[0].category` 先执行、severe 分支仅 None 时补救），且该类别经 pipeline 持久化 → 反馈表单隐藏字段 → 反馈存储，可能影响候选规则类别（非误罚、非静默放行）。
 
-**本轮修复（`feb821c`，7 项新回归）**：
+**主审 R-111 二轮（对 `bd5402c`）结论**：分类 P2 修复通过（严重优先 / 确定性排序 / 类别置信度同源 / 保持只记录不处罚）、P3 决策与版本口径基本完成、**无新 P0/P1**；**新增 1 个 P2**——反馈回显取「最早一条」（列表 `setdefault` 与详情 `.first()` 均无排序），与学习侧取最大写入 ID 的口径不一致：同一消息二次纠正后页面回显旧值，管理员只改原因再提交会把旧类别重新写成最新真值（主审与本机各以 3 检查点复现，真实 HTTP + 隔离库）。**已修（`76ce10b`）**：列表/详情统一按 `FeedbackRecord.id` 倒序取最新写入（与学习侧 `_latest_feedback` 的 max(ID) 同一口径；不按 created_at——同秒/时钟回拨不改变「最新」）；追加历史与审计保留（不删旧反馈、不改覆盖模型）；+9 回归（二次纠正回显×2、只改原因不回退、同秒、时钟回拨、最新 label/reason、无反馈默认值、缺 CSRF 不写库）；v13 helper 补 `source` 参数、组 B 显式 `vision`（主审 §4 非阻塞项）。
+
+**首轮 P2 修复（`feb821c`，7 项新回归）**：
 - `ai.py` 转人工分支：**严重疑似优先**选类别（多严重类别按置信降序 + 固定序 fraud<porn<violence 确定性选择）；**类别与置信度同源**（不得把本地广告高置信度充当严重疑似置信度）；verdict 恒 `record_only`、处罚建议恒空——**只改类别标记供人工核对，处罚判定行为不变**；办证 record_only 底线固化回归（负责人本轮强调"办证不判违规"）。
 - 反馈表单类别改**可核对/纠正下拉**（默认人工上次保存值、其次系统判定值；`record_feedback_submit` 白名单校验、非法值回退 other）——落实主审建议第 4 条，避免「确认违规」被误当作「确认了系统猜测的类别」。
 - 测试：`tests/test_v13_severe_policy.py` +5（两组×3类别、反序、多严重确定性、控制、办证底线）；`tests/test_admin_web.py` +2（持久化类别→表单默认选中；可纠正 + 白名单拦截）。
 
-**门禁（绑定环境，勿混用）**：本机全量收集 **1106**、**1093 passed / 13 条件跳过 / 0 失败**（125.7s）；`ruff check`/`format` 通过；`mypy app` 85 文件通过。**主审 R-111 环境实测 1098 passed / 1 私有媒体跳过（总收集 1099）**；**CI（`4c57b6c`）1096 passed / 3 skipped**（Ubuntu+Windows）——三个数字属不同环境，互不替代。**新 SHA CI 已核验全绿**（gh CLI 登录查询，非待查检查页）：`feb821c` [run 34877755494](https://github.com/miaomiao636/qq-group-moderation-bot/actions/runs/34877755494)、`4f7e90d` [run 34877850499](https://github.com/miaomiao636/qq-group-moderation-bot/actions/runs/34877850499)——三 job（Ubuntu / Windows / 干净运行时依赖）全 success。
+**门禁（绑定环境，勿混用）**：本机全量收集 **1114**、**1101 passed / 13 条件跳过 / 0 失败**（136.5s）；`ruff check`/`format` 通过；`mypy app` 85 文件通过。**主审环境**：首轮 1098 passed / 1 私有媒体跳过（收集 1099）、二轮（`bd5402c`）1105 passed / 1 跳过；**CI**：`4c57b6c` 1096+3、`bd5402c` 1103+3——各数字属不同环境，互不替代。**全部新 SHA CI 已核验全绿**（gh CLI）：`feb821c` [34877755494](https://github.com/miaomiao636/qq-group-moderation-bot/actions/runs/34877755494)、`4f7e90d` [34877850499](https://github.com/miaomiao636/qq-group-moderation-bot/actions/runs/34877850499)、`bd5402c` [34921914404](https://github.com/miaomiao636/qq-group-moderation-bot/actions/runs/34921914404)、`76ce10b` [34924497413](https://github.com/miaomiao636/qq-group-moderation-bot/actions/runs/34924497413)——三 job（Ubuntu / Windows / 干净运行时依赖）全 success。
 
 **P3 文档收尾（本轮同步）**：本块 + `PROJECT_CONTEXT.md` + `PROGRESS.md` + 核验索引 + `DECISIONS.md` D-028；SHA 统一按三口径表述、测试数字绑定 SHA/环境；**PR #7 正文已直接更新**（gh CLI）：开头追加"最新核验入口（R-111 / v13.1）"节，旧 5739b5d/S01–S10/v7 说明保留为历史记录。
 
