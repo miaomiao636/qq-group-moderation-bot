@@ -11,9 +11,9 @@
 - 反馈表单类别改**可核对/纠正下拉**（默认人工上次保存值、其次系统判定值；`record_feedback_submit` 白名单校验、非法值回退 other）——落实主审建议第 4 条，避免「确认违规」被误当作「确认了系统猜测的类别」。
 - 测试：`tests/test_v13_severe_policy.py` +5（两组×3类别、反序、多严重确定性、控制、办证底线）；`tests/test_admin_web.py` +2（持久化类别→表单默认选中；可纠正 + 白名单拦截）。
 
-**门禁（绑定环境，勿混用）**：本机全量收集 **1106**、**1093 passed / 13 条件跳过 / 0 失败**（125.7s）；`ruff check`/`format` 通过；`mypy app` 85 文件通过。**主审 R-111 环境实测 1098 passed / 1 私有媒体跳过（总收集 1099）**；**CI（`4c57b6c`）1096 passed / 3 skipped**（Ubuntu+Windows）——三个数字属不同环境，互不替代。**新 SHA `feb821c` 的 CI 以 [PR #7](https://github.com/miaomiao636/qq-group-moderation-bot/pull/7) 检查页为准**（本机无凭据查询私有仓库 Actions）。
+**门禁（绑定环境，勿混用）**：本机全量收集 **1106**、**1093 passed / 13 条件跳过 / 0 失败**（125.7s）；`ruff check`/`format` 通过；`mypy app` 85 文件通过。**主审 R-111 环境实测 1098 passed / 1 私有媒体跳过（总收集 1099）**；**CI（`4c57b6c`）1096 passed / 3 skipped**（Ubuntu+Windows）——三个数字属不同环境，互不替代。**新 SHA CI 已核验全绿**（gh CLI 登录查询，非待查检查页）：`feb821c` [run 34877755494](https://github.com/miaomiao636/qq-group-moderation-bot/actions/runs/34877755494)、`4f7e90d` [run 34877850499](https://github.com/miaomiao636/qq-group-moderation-bot/actions/runs/34877850499)——三 job（Ubuntu / Windows / 干净运行时依赖）全 success。
 
-**P3 文档收尾（本轮同步）**：本块 + `PROJECT_CONTEXT.md` + `PROGRESS.md` + 核验索引 + `DECISIONS.md` D-028；SHA 统一按三口径表述、测试数字绑定 SHA/环境；PR 正文更新文案已交负责人粘贴（本机无 GitHub 凭据）。
+**P3 文档收尾（本轮同步）**：本块 + `PROJECT_CONTEXT.md` + `PROGRESS.md` + 核验索引 + `DECISIONS.md` D-028；SHA 统一按三口径表述、测试数字绑定 SHA/环境；**PR #7 正文已直接更新**（gh CLI）：开头追加"最新核验入口（R-111 / v13.1）"节，旧 5739b5d/S01–S10/v7 说明保留为历史记录。
 
 **真实部署状态**：Windows 服务运行 v13 代码（修复前工作树），`ONEBOT_ACTIONS_ENABLED=false` 撤回保持关闭。**恢复真实动作、生产删除、Git 历史重写均未授权、未执行**。本轮修复是否部署由负责人在主审复验 `feb821c` 后决定。
 

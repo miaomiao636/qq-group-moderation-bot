@@ -7,8 +7,9 @@
 主审 R-111 对 `4c57b6c` 复验：B-2 主要行为通过（16 端到端场景）、三平台 CI 全绿、无新 P0/P1；1 个 P2（转人工时 ad 类别覆盖严重疑似类别）。已修（`feb821c`）：转人工分支严重疑似优先选类别 + 类别置信度同源（verdict 恒 record_only，只改标记不改处罚）；反馈表单类别改可核对/纠正下拉 + 白名单校验；办证 record_only 底线固化。新增 7 项回归。
 
 - 测试数字绑定环境：本机收集 1106 / 1093 passed / 13 条件跳过 / 0 失败；主审环境 1098 passed / 1 跳过；CI（`4c57b6c`）1096 passed / 3 skipped。
+- **新 SHA CI 已核验全绿**：`feb821c` run 34877755494、`4f7e90d` run 34877850499（三 job success，gh CLI 查询）。
 - **未部署、未合并**；主审复验 `feb821c` 后由负责人决定是否部署重启。
-- P3 文档已同步：HANDOFF 顶部块 / PROJECT_CONTEXT / PROGRESS / 核验索引 / DECISIONS D-028；PR 正文更新文案已交负责人。
+- P3 文档已同步：HANDOFF 顶部块 / PROJECT_CONTEXT / PROGRESS / 核验索引 / DECISIONS D-028；**PR #7 正文已直接更新**（gh CLI：追加"最新核验入口"节）。
 
 ### R-110 / v13 严重类别策略整改（2026-09-15，已推送并部署；历史）
 

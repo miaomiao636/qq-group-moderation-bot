@@ -7,7 +7,7 @@
 
 - 统一入口：`HANDOFF.md` 顶部“当前交接”块 + [R-109 完整报告](../pr7-r109-review.md)。**禁止重复应用 R-108/R-109 累计补丁**（已完整落地于 7dcee6a；重复叠加会冲突或回退修复）。
 - 主审 R-111（对 `4c57b6c`）结论：B-2 主要行为**通过复验**（16 个端到端场景：本地严重硬命中处罚×3、独立视觉二审确认处罚×3、低置信疑似转人工保留类别×3、高置信仍要求人工×3、双视觉要求人工×3、普通广告不变×1）；三平台 CI 全绿（[run 34874960471](https://github.com/miaomiao636/qq-group-moderation-bot/actions/runs/34874960471)）；**无新 P0/P1**。FAIL：1 个 P2——混合内容转人工时 ad 类别覆盖严重疑似类别（经 pipeline 持久化 → 反馈表单 → 反馈存储，影响候选规则类别；非误罚、非静默放行）。
-- **P2 已修（`feb821c`）**：转人工分支严重疑似优先选类别（确定性：置信降序 + fraud<porn<violence）+ 类别与置信度同源；verdict 恒 record_only、处罚建议恒空（只改类别标记，不改处罚判定）；反馈表单类别改可核对/纠正下拉 + 提交白名单校验；办证 record_only 底线固化回归。新增 7 项回归。**新 SHA CI 以 PR #7 检查页为准**。
+- **P2 已修（`feb821c`）**：转人工分支严重疑似优先选类别（确定性：置信降序 + fraud<porn<violence）+ 类别与置信度同源；verdict 恒 record_only、处罚建议恒空（只改类别标记，不改处罚判定）；反馈表单类别改可核对/纠正下拉 + 提交白名单校验；办证 record_only 底线固化回归。新增 7 项回归。**新 SHA CI 已核验全绿**：`feb821c` [run 34877755494](https://github.com/miaomiao636/qq-group-moderation-bot/actions/runs/34877755494)、`4f7e90d` [run 34877850499](https://github.com/miaomiao636/qq-group-moderation-bot/actions/runs/34877850499)（三 job success）。**PR #7 正文已更新"最新核验入口（R-111 / v13.1）"节**（旧说明保留为历史）。
 - 测试数字（绑定环境，互不替代）：本机全量收集 1106 / **1093 passed / 13 条件跳过 / 0 失败**；主审 R-111 环境 1098 passed / 1 私有媒体跳过（收集 1099）；CI（`4c57b6c`）1096 passed / 3 skipped。
 - 行为矩阵（负责人批准，B-2，DECISIONS D-028）：严重类别（诈骗/色情/暴力违禁品）**不因校园墙特征或办证词豁免**；本地规则高置信命中 → 直接违规+处罚建议；高置信确认 + 独立二审消疑 → 照常自动处罚；**低置信疑似 → record_only 保留类别转人工（不静默放行）**；纯办证 → record_only 不处罚。
 - 真实部署：Windows 运行 v13 代码（修复前工作树，本轮修复未部署）；`ONEBOT_ACTIONS_ENABLED=false` **撤回保持关闭**。恢复真实动作 / 生产删除 / Git 历史重写均未授权、未执行。
