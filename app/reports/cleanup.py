@@ -11,6 +11,7 @@
 from __future__ import annotations
 
 import json
+import stat
 import time
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
@@ -438,8 +439,27 @@ def _managed_copy_root() -> Path:
     return MEDIA_DIR.parent
 
 
+_REPARSE_POINT_ATTRIBUTE = getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0x400)
+
+
+def _is_link_like(p: Path) -> bool:
+    """符号链接 / Windows junction / 其他重解析点——一律拒绝（R-112 N01）。
+
+    登记名若被链接到根内未登记目录，旧实现仅校验 resolve 后仍在 data 根内，
+    会跟随链接删除未登记目录的原文件，违反 D-026"不得按未知目录批量删除"。
+    遍历与删除前均须先过此关；无法确认属性时按链接处理（fail-closed）。
+    """
+    try:
+        if p.is_symlink():
+            return True
+        st = p.lstat()
+    except OSError:
+        return True
+    return bool(getattr(st, "st_file_attributes", 0) & _REPARSE_POINT_ATTRIBUTE)
+
+
 def _resolve_managed_targets(root: Path, pattern: str) -> list[Path]:
-    """解析登记 pattern：仅 data 根内、单层 glob；任何越界结果直接丢弃。"""
+    """解析登记 pattern：仅 data 根内、单层 glob；链接与越界结果直接丢弃。"""
     if ".." in Path(pattern).parts:
         return []
     try:
@@ -451,6 +471,8 @@ def _resolve_managed_targets(root: Path, pattern: str) -> list[Path]:
     for m in matches:
         if not m.exists():
             continue
+        if _is_link_like(m):
+            continue  # R-112 N01：登记名不得是链接/重解析点（根内别名绕行）
         try:
             rp = m.resolve()
         except OSError:
@@ -461,11 +483,36 @@ def _resolve_managed_targets(root: Path, pattern: str) -> list[Path]:
 
 
 def _managed_entry_files(target: Path) -> list[Path]:
+    """登记目录内的全部普通文件；**不跟随任何链接/重解析点**（R-112 N01）。
+
+    旧实现用 rglob，在部分 Python 版本会跟随目录链接进入未登记目录。
+    改为显式栈式遍历：任何链接（文件或目录）一律跳过；返回顺序确定。
+    """
+    if _is_link_like(target):
+        return []
     if target.is_file():
         return [target]
-    if target.is_dir():
-        return [f for f in target.rglob("*") if f.is_file()]
-    return []
+    if not target.is_dir():
+        return []
+    out: list[Path] = []
+    stack: list[Path] = [target]
+    while stack:
+        directory = stack.pop()
+        try:
+            entries = list(directory.iterdir())
+        except OSError:
+            continue
+        for entry in entries:
+            if _is_link_like(entry):
+                continue
+            try:
+                if entry.is_dir():
+                    stack.append(entry)
+                elif entry.is_file():
+                    out.append(entry)
+            except OSError:
+                continue
+    return sorted(out)
 
 
 def _managed_keep_set(target: Path, entry: _ManagedCopy) -> set[Path]:
@@ -549,6 +596,8 @@ def purge_managed_copies(
     for _entry, f in _scan_managed_copies(ts, root):
         if dry_run:
             continue
+        if _is_link_like(f):
+            continue  # R-112 N01：删除前复核（纵深防护）
         try:
             size = f.stat().st_size
             f.unlink()
@@ -562,6 +611,8 @@ def purge_managed_copies(
             targets_seen.add(parent)
     if not dry_run:
         for d in sorted(targets_seen, key=lambda p: len(p.parts), reverse=True):
+            if _is_link_like(d):
+                continue  # R-112 N01：只回收真实空目录，不触碰链接
             try:
                 d.rmdir()  # 仅空目录
                 dirs_removed += 1

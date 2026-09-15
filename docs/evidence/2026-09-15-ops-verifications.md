@@ -43,9 +43,11 @@
 
 另外顺带清理 `ai_cache_deleted=602`（缓存过期），案件/候选/通知/inbox 无超期项（0）。
 
-**恢复校验（真实备份 `backups/w0-20260910-175738/moderation.db`）**：
+**R-112 N05 重新取证（2026-09-15 深夜）**：校验改为**按注入返回的精确 rowid 判定**并显式检查全部预期（`_evaluate`，任何失败非零退出）——此前 `action_logs` 用固定日期窗口 `< '2026-01-01'`，注入"200 天前"（=2026-02-27）时故意不清理仍报 0（假通过，主审复现 + 本机内存复现）。重跑结果：**`passed=true`、failures=[]`**（超期项 rowid 全部已清、未到期对照保留；`ai_cache_deleted=1096`）；报告见 `data/purge_drill/report.json`。
 
-- 可打开、23 张表、`alembic_version=e1a4b8c2d3f5`（09-10 时点版本）、`shadow_decisions=2004` 行——**备份完整、恢复流程可用** ✅
+**备份可读性检查（真实备份 `backups/w0-20260910-175738/moderation.db`）**：
+
+- 可打开、23 张表、`alembic_version=e1a4b8c2d3f5`（09-10 时点版本）、`shadow_decisions=2004` 行——**备份可读性检查通过；完整恢复演练未完成**（R-112 N06 更正：未做 integrity_check、未升级迁移到当前 head 并启动当前应用验证；排入下个维护窗口的隔离恢复演练，与整机故障演练区分）。
 - 说明：该备份为 09-10 时点（尚无违规记录，`violation_records=0` 属预期）。
 
 ## 3. 旧目录盘点（只读，不删除）

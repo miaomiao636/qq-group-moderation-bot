@@ -203,6 +203,11 @@ async def _run_purge() -> dict[str, int]:
 
 
 def _verify(ids: dict[str, list[int]], old_file: Path, new_file: Path) -> dict[str, object]:
+    """按注入时返回的精确行 ID 校验（R-112 N05：禁止日期窗口近似）。
+
+    旧版 action_logs 用固定 `< '2026-01-01'` 窗口查询，注入时间与实际执行日
+    偏移后会假通过；本版所有校验均按 `ids` 中的精确主键。
+    """
     c = sqlite3.connect(DRILL_DB)
     checks: dict[str, object] = {}
 
@@ -210,28 +215,63 @@ def _verify(ids: dict[str, list[int]], old_file: Path, new_file: Path) -> dict[s
         row = c.execute(sql, params).fetchone()
         return tuple(row) if row is not None else None
 
-    vo = one("SELECT message_snapshot_json FROM violation_records WHERE message_id='DRILL_OLD_V'")
-    checks["violation_old_snapshot"] = vo[0] if vo else None
-    vn = one("SELECT message_snapshot_json FROM violation_records WHERE message_id='DRILL_NEW_V'")
-    checks["violation_new_snapshot"] = vn[0] if vn else None
-    eo = one("SELECT COUNT(*) FROM processed_events WHERE message_id='DRILL_OLD_E'")
-    checks["event_old_remaining"] = eo[0] if eo else None
-    en = one("SELECT COUNT(*) FROM processed_events WHERE message_id='DRILL_NEW_E'")
-    checks["event_new_remaining"] = en[0] if en else None
-    ao = one(
-        "SELECT COUNT(*) FROM action_logs WHERE group_openid='G_DRILL' AND created_at < '2026-01-01'"
+    def field_by_id(table: str, column: str, ids_key: str) -> object:
+        # lastrowid = 隐含 rowid：对所有表通用（部分表无显式 id 列）
+        row = one(f"SELECT {column} FROM {table} WHERE rowid=?", (ids[ids_key][0],))
+        return row[0] if row else None
+
+    def count_by_id(table: str, ids_key: str) -> int:
+        row = one(f"SELECT COUNT(*) FROM {table} WHERE rowid=?", (ids[ids_key][0],))
+        return int(row[0]) if row else -1
+
+    checks["violation_old_snapshot"] = field_by_id(
+        "violation_records", "message_snapshot_json", "violation_old"
     )
-    checks["action_old_remaining"] = ao[0] if ao else None
-    so = one("SELECT detail_json FROM shadow_decisions WHERE message_id='DRILL_OLD_S'")
-    checks["shadow_old_detail"] = so[0] if so else None
-    sn = one("SELECT detail_json FROM shadow_decisions WHERE message_id='DRILL_NEW_S'")
-    checks["shadow_new_detail"] = sn[0] if sn else None
-    fo = one("SELECT sample_text_masked FROM feedback_records WHERE message_id='DRILL_OLD_F'")
-    checks["feedback_old_text"] = fo[0] if fo else None
+    checks["violation_new_snapshot"] = field_by_id(
+        "violation_records", "message_snapshot_json", "violation_new"
+    )
+    checks["event_old_remaining"] = count_by_id("processed_events", "event_old")
+    checks["event_new_remaining"] = count_by_id("processed_events", "event_new")
+    checks["action_old_remaining"] = count_by_id("action_logs", "action_old")
+    checks["shadow_old_detail"] = field_by_id("shadow_decisions", "detail_json", "shadow_old")
+    checks["shadow_new_detail"] = field_by_id("shadow_decisions", "detail_json", "shadow_new")
+    checks["feedback_old_text"] = field_by_id(
+        "feedback_records", "sample_text_masked", "feedback_old"
+    )
     checks["media_old_exists"] = old_file.exists()
     checks["media_new_exists"] = new_file.exists()
     c.close()
     return checks
+
+
+def _evaluate(checks: dict[str, object]) -> list[str]:
+    """按预期显式判定全部检查；返回失败说明列表（空 = 全部通过）。
+
+    R-112 N05：旧版只返回字段、never 判失败。任何残留/误删都必须产生
+    非空失败列表，由 main 返回非零退出码。
+    """
+    failures: list[str] = []
+    if '"purged"' not in str(checks.get("violation_old_snapshot") or ""):
+        failures.append("violation_old_snapshot：超期原文未被清除")
+    if "未到期原文" not in str(checks.get("violation_new_snapshot") or ""):
+        failures.append("violation_new_snapshot：未到期对照缺失（误删/误清）")
+    if checks.get("event_old_remaining") != 0:
+        failures.append(f"event_old_remaining={checks.get('event_old_remaining')}：超期事件未清理")
+    if checks.get("event_new_remaining") != 1:
+        failures.append(f"event_new_remaining={checks.get('event_new_remaining')}：未到期对照缺失")
+    if checks.get("action_old_remaining") != 0:
+        failures.append(
+            f"action_old_remaining={checks.get('action_old_remaining')}：超期动作日志未清理"
+        )
+    if "DRILL影子原文" in str(checks.get("shadow_old_detail") or ""):
+        failures.append("shadow_old_detail：超期影子原文未被清除")
+    if checks.get("feedback_old_text"):
+        failures.append("feedback_old_text：超期反馈原文未被清除")
+    if checks.get("media_old_exists"):
+        failures.append("media_old_exists：超期媒体未删除")
+    if not checks.get("media_new_exists"):
+        failures.append("media_new_exists：未到期媒体缺失（误删）")
+    return failures
 
 
 def _recover_check() -> dict[str, object]:
@@ -320,17 +360,24 @@ def main() -> int:
     os.environ["DATABASE_URL"] = f"sqlite+aiosqlite:///{DRILL_DB.as_posix()}"
     stats = asyncio.run(_run_purge())
     checks = _verify(ids, old_file, new_file)
+    failures = _evaluate(checks)
     recovery = _recover_check()
     inventory = _inventory()
 
     report: dict[str, object] = {
         "purge_stats": stats,
         "checks": checks,
+        "failures": failures,
+        "passed": not failures,
         "recovery": recovery,
         "inventory": inventory,
     }
     REPORT.write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
     print("[report]", str(REPORT))
+    if failures:
+        for item in failures:
+            print(f"[FAIL] {item}", file=sys.stderr)
+        return 1
     return 0
 
 

@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 import os
+import subprocess
 import time
 from pathlib import Path
 
+import pytest
 from app.reports.cleanup import plan_managed_copies, purge_managed_copies
 
 
@@ -81,3 +83,78 @@ def test_empty_dirs_removed_after_cleanup(tmp_path: Path) -> None:
     stats = purge_managed_copies(root=root)
     assert stats["managed_copy_dirs_removed"] >= 1
     assert not (root / "t002_media" / "sub").exists()
+
+
+# ---------- R-112 N01 回归：拒绝链接/重解析点绕行（2026-09-15 主审复现） ----------
+
+
+def _make_dir_link(link: Path, target: Path) -> bool:
+    """创建目录链接（POSIX symlink / Windows junction）；环境不支持时返回 False。"""
+    try:
+        link.symlink_to(target, target_is_directory=True)
+        return True
+    except OSError:
+        if os.name == "nt":
+            r = subprocess.run(
+                ["cmd", "/c", "mklink", "/J", str(link), str(target)],
+                capture_output=True,
+                text=True,
+            )
+            return r.returncode == 0 and link.exists()
+        return False
+
+
+def test_alias_link_to_unregistered_dir_is_never_deleted(tmp_path: Path) -> None:
+    """N01 实锤场景：登记名 → 根内未登记目录 的链接不得绕过删除边界。"""
+    root = tmp_path / "data"
+    unknown = root / "unknown_keep"
+    _mkfile(unknown / "synthetic.json", 40)
+    alias = root / "media_snapshot_alias"
+    if not _make_dir_link(alias, unknown):
+        pytest.skip("本环境不支持创建目录链接")
+    plan = plan_managed_copies(root=root)
+    assert plan["file_count"] == 0
+    stats = purge_managed_copies(root=root)
+    assert stats["managed_copy_files_deleted"] == 0
+    assert (unknown / "synthetic.json").exists()
+
+
+def test_nested_link_inside_registered_dir_is_not_followed(tmp_path: Path) -> None:
+    """登记目录内部的链接：不进入、不删其目标；正常超期文件仍照删（对照）。"""
+    root = tmp_path / "data"
+    reg = root / "t002_media"
+    _mkfile(reg / "own.jpg", 40)
+    outside = root / "unknown_keep"
+    _mkfile(outside / "keep.jpg", 40)
+    if not _make_dir_link(reg / "nested_link", outside):
+        pytest.skip("本环境不支持创建目录链接")
+    stats = purge_managed_copies(root=root)
+    assert stats["managed_copy_files_deleted"] == 1
+    assert not (reg / "own.jpg").exists()
+    assert (outside / "keep.jpg").exists()
+
+
+def test_file_link_inside_registered_dir_not_deleted(tmp_path: Path) -> None:
+    """登记目录内的文件链接：跳过该条目，不删其目标文件。"""
+    root = tmp_path / "data"
+    reg = root / "t002_media"
+    reg.mkdir(parents=True)
+    outside = root / "keep_target.jpg"
+    _mkfile(outside, 40)
+    link = reg / "linked.jpg"
+    try:
+        link.symlink_to(outside)
+    except OSError:
+        pytest.skip("本环境不支持创建文件符号链接")
+    stats = purge_managed_copies(root=root)
+    assert stats["managed_copy_files_deleted"] == 0
+    assert outside.exists()
+
+
+def test_normal_registered_dir_still_cleaned_control(tmp_path: Path) -> None:
+    """对照：无链接的正常登记目录，超期文件仍被清理（防护不误杀）。"""
+    root = tmp_path / "data"
+    _mkfile(root / "t002_media" / "old.jpg", 40)
+    stats = purge_managed_copies(root=root)
+    assert stats["managed_copy_files_deleted"] == 1
+    assert not (root / "t002_media" / "old.jpg").exists()
