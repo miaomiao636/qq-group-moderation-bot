@@ -98,3 +98,15 @@ def test_illegal_label_is_rejected() -> None:
 def test_unlabeled_row_returns_none_not_error() -> None:
     mod = _load()
     assert mod.convert_row(_row("onebot:g:9"), model_revision="m", rule_revision="r") is None
+
+
+def test_forward_record_kind_maps_to_unknown() -> None:
+    """评测契约无 forward_record；转换器按最保守映射 unknown（R-112 后实测发现）。"""
+    mod = _load()
+    out = mod.convert_row(
+        _row("onebot:g:9", "confirmed_violation", "ad", kind="forward_record"),
+        model_revision="m",
+        rule_revision="r",
+    )
+    assert out is not None
+    assert out["kind"] == "unknown"
