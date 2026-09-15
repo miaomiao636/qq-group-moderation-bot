@@ -52,6 +52,20 @@ TEXTS = [
     "谁的外卖放错柜子了",
     "学校附近哪里能修自行车",
 ]
+
+
+def _payload_text(n: int, unique: bool) -> str:
+    """本次要发送的文本；unique=True 附加序号使 AI 缓存键失效（R-112 N04）。
+
+    修复点：旧实现生成后未用于 payload（下方 payload 又取了 random.choice），
+    导致"唯一文本/缓存失效"的 B/C 结论不成立。payload 必须使用本函数结果。
+    """
+    text = random.choice(TEXTS)
+    if unique:
+        text = f"{text} #{n}"
+    return text
+
+
 PHASES = [
     ("daily", 0.25, 180),  # 百群日常均值近似（条/秒, 持续秒）
     ("peak", 2.0, 480),  # 极端峰值 ≈120 条/分钟
@@ -190,9 +204,7 @@ async def _run() -> dict[str, object]:
         counter["sent"] = n + 1
         gid = random.choice(GROUPS)
         uid = random.choice(USERS)
-        text = random.choice(TEXTS)
-        if UNIQUE_TEXT:
-            text = f"{text} #{n}"  # 使 AI 缓存键失效（无缓存条件下的真实吞吐）
+        text = _payload_text(n, UNIQUE_TEXT)
         event = {
             "post_type": "message",
             "message_type": "group",
@@ -201,7 +213,7 @@ async def _run() -> dict[str, object]:
             "group_id": int(gid),
             "user_id": int(uid),
             "time": int(time.time()),
-            "message": [{"type": "text", "data": {"text": random.choice(TEXTS)}}],
+            "message": [{"type": "text", "data": {"text": text}}],
             "sender": {"user_id": int(uid), "role": "member", "nickname": f"LT{n % 50}"},
         }
         async with SessionLocal() as session:
