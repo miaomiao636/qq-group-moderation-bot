@@ -11,7 +11,10 @@
 from __future__ import annotations
 
 import json
+import time
+from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 from typing import Any
 
 from sqlalchemy import delete, func, or_, select, update
@@ -394,6 +397,183 @@ async def _purge_content_copies(
     }
 
 
+@dataclass(frozen=True)
+class _ManagedCopy:
+    """登记在册的副本路径（相对 ``data/``；末层可用 ``*`` 匹配）。
+
+    只清理登记项命中的路径——**不扫未知目录**（D-026：不得按未知目录批量删除）。
+    ``keep_min_entries`` 按"顶层条目"（文件或子目录）**保底保留最新的 N 个**，
+    用于备份类副本的恢复生命线；其余条目内文件按 mtime 超期删除。
+    """
+
+    pattern: str
+    retention_days: int
+    keep_min_entries: int = 0
+    note: str = ""
+
+
+# 副本登记表（"15 天全副本工程"）：所有原内容副本按原消息时间最多 15 天
+# （D-024/D-026）。新增副本目录必须在此登记（走代码审查）。工作目录
+# （如待标注的 sample_pool）不登记即不触碰。
+_MANAGED_COPIES: tuple[_ManagedCopy, ...] = (
+    _ManagedCopy("media_snapshot_*", 15, note="手工媒体快照（含 _frames）"),
+    _ManagedCopy("t002_media", 15, note="T-002 时代归档"),
+    _ManagedCopy("backup_shadow_*.json", 15, note="影子数据手工导出"),
+    _ManagedCopy("_dbg_tmp", 3, note="调试残留（短期限）"),
+    _ManagedCopy("media/_frames", 15, note="视频帧残留（正常流程应即时清理）"),
+    _ManagedCopy("backups", 15, keep_min_entries=1, note="备份集（保底最新 1 份）"),
+    _ManagedCopy("purge_drill", 7, note="清理演练目录（可复现）"),
+    _ManagedCopy("loadtest", 7, note="容量压测隔离库（可复现）"),
+)
+
+
+def _managed_copy_root() -> Path:
+    """登记根 = 媒体目录所在的数据根。
+
+    跟随 `pipeline.MEDIA_DIR`（含测试/演练对它的 monkeypatch）——清理只作用
+    于与当前运行环境一致的 data 根；测试环境因此天然隔离，不会触碰真实 data/。
+    """
+    from app.runtime.pipeline import MEDIA_DIR
+
+    return MEDIA_DIR.parent
+
+
+def _resolve_managed_targets(root: Path, pattern: str) -> list[Path]:
+    """解析登记 pattern：仅 data 根内、单层 glob；任何越界结果直接丢弃。"""
+    if ".." in Path(pattern).parts:
+        return []
+    try:
+        root_resolved = root.resolve()
+    except OSError:
+        return []
+    matches = sorted(root.glob(pattern)) if "*" in pattern else [root / pattern]
+    out: list[Path] = []
+    for m in matches:
+        if not m.exists():
+            continue
+        try:
+            rp = m.resolve()
+        except OSError:
+            continue
+        if rp.parent == root_resolved or root_resolved in rp.parents:
+            out.append(m)
+    return out
+
+
+def _managed_entry_files(target: Path) -> list[Path]:
+    if target.is_file():
+        return [target]
+    if target.is_dir():
+        return [f for f in target.rglob("*") if f.is_file()]
+    return []
+
+
+def _managed_keep_set(target: Path, entry: _ManagedCopy) -> set[Path]:
+    """保底条目（最新 N 个顶层条目）内的全部文件。
+
+    条目新鲜度按**条目内最新文件的 mtime** 排序——目录自身的 mtime 只反映
+    创建/改名时间，不能代表备份内容时间。
+    """
+    if entry.keep_min_entries <= 0 or not target.is_dir():
+        return set()
+    try:
+        pairs = [(item, _managed_entry_files(item)) for item in target.iterdir()]
+    except OSError:
+        return set()
+
+    def _freshness(pair: tuple[Path, list[Path]]) -> float:
+        item, files = pair
+        try:
+            return max((f.stat().st_mtime for f in files), default=item.stat().st_mtime)
+        except OSError:
+            return 0.0
+
+    kept: set[Path] = set()
+    for _item, files in sorted(pairs, key=_freshness, reverse=True)[: entry.keep_min_entries]:
+        kept.update(files)
+    return kept
+
+
+def _scan_managed_copies(ts: float, root: Path) -> list[tuple[_ManagedCopy, Path]]:
+    """扫描登记副本，返回（登记项, 到期文件）列表；不修改任何文件。"""
+    expired: list[tuple[_ManagedCopy, Path]] = []
+    for entry in _MANAGED_COPIES:
+        cutoff = ts - entry.retention_days * 86400
+        for target in _resolve_managed_targets(root, entry.pattern):
+            keep = _managed_keep_set(target, entry)
+            for f in _managed_entry_files(target):
+                if f in keep:
+                    continue
+                try:
+                    st = f.stat()
+                except OSError:
+                    continue
+                if st.st_mtime < cutoff:
+                    expired.append((entry, f))
+    return expired
+
+
+def plan_managed_copies(now: float | None = None, *, root: Path | None = None) -> dict[str, Any]:
+    """dry-run：只读报告登记副本中"将到期删除"的文件清单。"""
+    ts = time.time() if now is None else now
+    root = root or _managed_copy_root()
+    items: list[dict[str, Any]] = []
+    total = 0
+    for entry, f in _scan_managed_copies(ts, root):
+        try:
+            st = f.stat()
+        except OSError:
+            continue
+        total += st.st_size
+        items.append(
+            {
+                "path": str(f),
+                "size": st.st_size,
+                "mtime": datetime.fromtimestamp(st.st_mtime, UTC).strftime("%m-%d %H:%M"),
+                "note": entry.note,
+            }
+        )
+    return {"files": items, "file_count": len(items), "total_bytes": total}
+
+
+def purge_managed_copies(
+    now: float | None = None, *, root: Path | None = None, dry_run: bool = False
+) -> dict[str, int]:
+    """执行登记副本清理；返回删除计数。I/O 真实失败向上传播（不伪报成功）。"""
+    ts = time.time() if now is None else now
+    root = root or _managed_copy_root()
+    deleted = 0
+    freed = 0
+    dirs_removed = 0
+    targets_seen: set[Path] = set()
+    for _entry, f in _scan_managed_copies(ts, root):
+        if dry_run:
+            continue
+        try:
+            size = f.stat().st_size
+            f.unlink()
+        except FileNotFoundError:
+            continue
+        deleted += 1
+        freed += size
+        for parent in f.parents:
+            if parent == root:
+                break
+            targets_seen.add(parent)
+    if not dry_run:
+        for d in sorted(targets_seen, key=lambda p: len(p.parts), reverse=True):
+            try:
+                d.rmdir()  # 仅空目录
+                dirs_removed += 1
+            except OSError:
+                pass
+    return {
+        "managed_copy_files_deleted": deleted,
+        "managed_copy_bytes_freed": freed,
+        "managed_copy_dirs_removed": dirs_removed,
+    }
+
+
 async def purge_expired(session: AsyncSession, now: datetime | None = None) -> dict[str, int]:
     """执行保留期清理，返回各类清理行数。
 
@@ -459,6 +639,10 @@ async def purge_expired(session: AsyncSession, now: datetime | None = None) -> d
 
     deleted_media = purge_media(MEDIA_DIR, settings.raw_retention_days)
 
+    # 4b) 登记式副本清理（"15 天全副本工程"）：只删登记路径中的到期文件；
+    # 未知目录永不触碰（D-026）。
+    managed_copy_counts = purge_managed_copies(now.replace(tzinfo=UTC).timestamp())
+
     # 5) OneBot durable inbox also contains original message content.
     from app.runtime.inbox import purge_inbox
 
@@ -512,6 +696,7 @@ async def purge_expired(session: AsyncSession, now: datetime | None = None) -> d
         "case_reasons_purged": purged_case_reasons,
         "action_logs_deleted": deleted_logs,
         "media_files_deleted": deleted_media,
+        **managed_copy_counts,
         **case_counts,
         "ai_usage_logs_deleted": ai_logs_deleted,
         "candidates_expired": candidates_expired,
