@@ -13,7 +13,7 @@ from collections.abc import Awaitable, Callable
 from pathlib import Path
 from typing import Any
 
-from sqlalchemy import select
+from sqlalchemy import case, func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.actions.orchestrator import (
@@ -110,6 +110,45 @@ async def run_pipeline(
     dedup_key: str | None = None,
     prepare_payload: PayloadPreprocessor | None = None,
 ) -> ShadowDecision | None:
+    """Run one event; active ordering metadata is removed on return/cancellation.
+
+    Durable recovery remains the inbox/lease contract. Shadow rows are still first
+    inserted only for completed judgments, so notification cursors remain valid.
+    """
+    from app.runtime.pairing_context import discard_active_pairing_message
+
+    progress_token = object()
+    try:
+        return await _run_pipeline(
+            payload,
+            session,
+            text_engine=text_engine,
+            image_engine=image_engine,
+            ai_service=ai_service,
+            official_action_client=official_action_client,
+            message_source=message_source,
+            dedup_key=dedup_key,
+            prepare_payload=prepare_payload,
+            progress_token=progress_token,
+        )
+    finally:
+        # A rejected duplicate must not unregister another worker's active event.
+        discard_active_pairing_message(progress_token)
+
+
+async def _run_pipeline(
+    payload: dict[str, Any],
+    session: AsyncSession,
+    *,
+    text_engine: TextRuleEngine | None,
+    image_engine: ImageModerationEngine | None,
+    ai_service: AIReviewService | None,
+    official_action_client: OfficialActionClient | None,
+    message_source: MessageSource | None,
+    dedup_key: str | None,
+    prepare_payload: PayloadPreprocessor | None,
+    progress_token: object,
+) -> ShadowDecision | None:
     """处理一条群消息事件载荷。
 
     T-305：``message_source`` 为传输中立入站 seam；缺省使用QQ官方解析器
@@ -138,11 +177,21 @@ async def run_pipeline(
     provider = str(message_source.provider)
 
     try:
+        # 先做不含 I/O 的解析：媒体下载/AI 可能慢于后续文字。活跃 worker 只登记
+        # 最小排序元数据，不提前插入影子判定；未启动 worker 的前驱从 Inbox 查询。
+        msg: StandardMessage = message_source.parse_group_message(payload)
+        from app.core.group_settings import is_moderation_enabled
+        from app.runtime.pairing_context import register_active_pairing_message
+
+        if not await is_moderation_enabled(session, msg.external_group_id, provider=msg.provider):
+            await mark_processed(session, claim_key, claim.token)
+            return None
+        register_active_pairing_message(progress_token, msg, claim_key)
         # 下载等有副作用的准备工作必须在持久化去重认领之后执行，避免重放
         # 事件重复下载同一媒体。
         if prepare_payload is not None:
             await prepare_payload(payload)
-        msg: StandardMessage = message_source.parse_group_message(payload)
+            msg = message_source.parse_group_message(payload)
     except MessageParseError as exc:
         # 永久契约解析失败只落一条 record_only，重复投递不再自动重试。
         fallback_group, fallback_user, fallback_name = _best_effort_identity(payload)
@@ -175,27 +224,7 @@ async def run_pipeline(
         await mark_failed(session, claim_key, claim.token, f"{type(exc).__name__}: {exc}")
         return None
 
-    # 按群审核开关：禁用群的消息仅记录为allow，不进入规则/AI/媒体审核
-    from app.core.group_settings import ambiguous_legacy_rule_scope, is_moderation_enabled
-
-    if not await is_moderation_enabled(session, msg.external_group_id, provider=msg.provider):
-        record = await upsert_shadow_decision(
-            session,
-            message_id=claim_key,
-            external_message_id=msg.external_message_id,
-            group_openid=msg.external_group_id,
-            member_openid=msg.external_user_id,
-            provider=msg.provider,
-            external_group_id=msg.external_group_id,
-            external_user_id=msg.external_user_id,
-            sender_name=(msg.sender.username or "")[:64],
-            kind=msg.kind,
-            verdict="allow",
-            reason="群审核已禁用（管理员设置），仅记录",
-            detail_json=json.dumps({"moderation_disabled": True}, ensure_ascii=False),
-        )
-        await mark_processed(session, claim_key, claim.token)
-        return record
+    from app.core.group_settings import ambiguous_legacy_rule_scope
 
     try:
         rule_version_ids: tuple[int, ...] = ()
@@ -341,8 +370,28 @@ async def run_pipeline(
                     "reason": "；".join(dict.fromkeys(evidence_vetoes)) + "，转人工",
                 }
             )
+        # 校园墙紧邻文字配对豁免（负责人 2026-09-14 口径）：2 分钟内同成员
+        # 校园墙图后的相似文字（>=60%）不撤回，降为 record_only 转记录。
+        from app.moderation.wall_pair import maybe_wall_text_pairing
+        from app.runtime.pairing_context import load_pending_pairing_messages
+
+        pending_messages: tuple[StandardMessage, ...] = ()
+        if (
+            msg.kind == "text"
+            and decision.verdict == "violation_high"
+            and decision.category == "ad"
+        ):
+            pending_messages = await load_pending_pairing_messages(
+                session, msg, event_key=claim_key
+            )
+        decision = await maybe_wall_text_pairing(
+            session, msg, decision, pending_messages=pending_messages, event_key=claim_key
+        )
         detail = {
             "external_message_id": msg.external_message_id,
+            # R06（ad323b6 主审）：记录消息发送时间，供紧邻配对按真实发送顺序校验，
+            # 不再依赖处理完成时间（并发 worker 下会颠倒先图后文）。
+            "sent_at": (msg.sent_at.isoformat() if msg.sent_at else ""),
             "rule_hits": [h.model_dump() for h in decision.rule_hits],
             "recommended_actions": list(decision.recommended_actions),
             "is_protected_sender": decision.is_protected_sender,
@@ -382,8 +431,9 @@ async def run_pipeline(
         )
         if action_intents:
             detail["action_intents"] = summarize_intents(action_intents)
-            record.detail_json = json.dumps(detail, ensure_ascii=False)
-            await session.commit()
+            record = await upsert_shadow_decision(
+                session, message_id=claim_key, detail_json=json.dumps(detail, ensure_ascii=False)
+            )
         await mark_processed(session, claim_key, claim.token)
         return record
     except Exception as exc:  # noqa: BLE001 - 任何处理异常必须可重试
@@ -437,7 +487,11 @@ def _media_decision_from(
 
 
 async def upsert_shadow_decision(session: AsyncSession, **values: Any) -> ShadowDecision:
-    """按内部事件键 ``message_id`` 幂等写入影子判定记录。"""
+    """按内部事件键幂等落库，原子保留源图已消费的配对绑定。
+
+    绑定可能在本会话读取 ORM 对象之后被另一个 worker 写入，因此不能在 Python
+    合并旧 detail；必须在 UPDATE 内读取数据库当前值，避免图片重试恢复豁免名额。
+    """
     record = await session.scalar(
         select(ShadowDecision).where(ShadowDecision.message_id == values["message_id"])
     )
@@ -445,7 +499,31 @@ async def upsert_shadow_decision(session: AsyncSession, **values: Any) -> Shadow
         record = ShadowDecision(**values)
         session.add(record)
     else:
-        for key, value in values.items():
-            setattr(record, key, value)
+        updates = dict(values)
+        if "detail_json" in updates:
+            old_detail = case(
+                (func.json_valid(ShadowDecision.detail_json), ShadowDecision.detail_json),
+                else_="{}",
+            )
+            updates["detail_json"] = case(
+                (
+                    func.json_extract(old_detail, "$.wall_paired") == 1,
+                    func.json_set(
+                        updates["detail_json"],
+                        "$.wall_paired",
+                        func.json("true"),
+                        "$.wall_paired_message_id",
+                        func.json_extract(old_detail, "$.wall_paired_message_id"),
+                    ),
+                ),
+                else_=updates["detail_json"],
+            )
+        await session.execute(
+            update(ShadowDecision)
+            .where(ShadowDecision.id == record.id)
+            .values(**updates)
+            .execution_options(synchronize_session=False)
+        )
     await session.commit()
+    await session.refresh(record)
     return record

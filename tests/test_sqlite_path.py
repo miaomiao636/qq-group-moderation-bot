@@ -54,15 +54,76 @@ def _snapshot_data_dir() -> str:
     files: dict[str, str] = {}
     for p in sorted(PROJECT_DATA_DIR.iterdir()):
         if p.is_file():
-            files[p.name] = hashlib.sha256(p.read_bytes()).hexdigest()
+            try:
+                files[p.name] = hashlib.sha256(p.read_bytes()).hexdigest()
+            except PermissionError:
+                # 运行时单实例锁（如 moderation.db.onebot-runtime.lock）拒绝共享读：
+                # 记录存在性即可，守卫仍能检测新增/删除，不因锁文件整体失败。
+                files[p.name] = "locked"
         else:
             files[p.name + "/"] = "dir"
     return json.dumps({"exists": True, "files": files}, sort_keys=True)
 
 
+def _runtime_lock_held_by_service() -> bool:
+    """生产服务是否正持有运行时锁（持有则 data/ 会被持续写入，快照守卫不适用）。
+
+    注意：测试用临时数据库，不能用 settings.database_url 判断——
+    守卫守的是仓库 data/ 目录，因此直接探测该目录下的生产数据库锁。
+    Windows 的 msvcrt 字节锁不阻止普通 open/read，必须实际尝试获取
+    （与 inbox.acquire_runtime_lock 相同的非阻塞语义）才能判断是否被持有。
+    """
+    import sys as _sys
+
+    lock_path = PROJECT_DATA_DIR / "moderation.db.onebot-runtime.lock"
+    try:
+        handle = lock_path.open("a+b")
+    except OSError:
+        return False  # 无法打开：无法判断，按未持有处理（守卫照常运行）
+    try:
+        try:
+            handle.seek(0)
+            if not handle.read(1):
+                handle.write(b"0")
+                handle.flush()
+        except OSError:
+            # 第 1 字节落在生产服务的独占锁范围内：读也被拒 = 持有中
+            return True
+        handle.seek(0)
+        if _sys.platform == "win32":
+            import msvcrt
+
+            try:
+                msvcrt.locking(handle.fileno(), msvcrt.LK_NBLCK, 1)
+            except OSError:
+                return True
+            handle.seek(0)
+            msvcrt.locking(handle.fileno(), msvcrt.LK_UNLCK, 1)
+        else:
+            import fcntl
+
+            try:
+                fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except OSError:
+                return True
+            fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+        return False
+    finally:
+        handle.close()
+
+
 @pytest.fixture(autouse=True)
 def _guard_real_data_dir():
-    """每个测试前后对比项目真实数据目录快照，被触碰即失败。"""
+    """每个测试前后对比项目真实数据目录快照，被触碰即失败。
+
+    生产服务运行时会持续写 data/（WAL/媒体/锁），前后快照天然不一致——
+    此时守卫无法区分"测试写入"与"服务写入"，明确跳过而不是误报失败。
+    停止服务后再运行本文件即可恢复完整守卫。
+    """
+    if _runtime_lock_held_by_service():
+        pytest.skip(
+            "生产服务运行中（持有运行时锁）：data/ 快照守卫不可靠，已跳过。停止服务后重跑可恢复。"
+        )
     before = _snapshot_data_dir()
     yield
     after = _snapshot_data_dir()

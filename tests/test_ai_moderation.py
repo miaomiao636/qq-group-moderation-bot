@@ -26,7 +26,7 @@ from app.moderation.ai import (
     provider_payload_to_result,
     sanitize_text,
 )
-from app.moderation.decision import ModerationDecision
+from app.moderation.decision import ModerationDecision, RuleHit
 from app.runtime.pipeline import run_pipeline
 from sqlalchemy import func, select
 
@@ -331,3 +331,200 @@ async def test_pipeline_records_ai_soft_evidence_without_auto_punish() -> None:
     assert detail["recommended_actions"] == []
     assert detail["ai_results"][0]["model_id"] == "fake-text"
     assert "test-secret-key" not in record.detail_json
+
+
+def _r01_conflict_local() -> ModerationDecision:
+    """本地已因规则冲突判转人工。"""
+    return ModerationDecision(
+        message_id="AI_LOCAL_R01",
+        group_openid="G_AI",
+        sender_member_openid="M_AI",
+        verdict="record_only",
+        confidence=0.40,
+        reason="与校园墙白名单规则冲突，转人工",
+    )
+
+
+def _r01_allowlist_local() -> ModerationDecision:
+    """本地命中 DR_ALLOW_ 白名单规则（AI 给出类别即构成冲突）。"""
+    return ModerationDecision(
+        message_id="AI_LOCAL_R01B",
+        group_openid="G_AI",
+        sender_member_openid="M_AI",
+        verdict="record_only",
+        confidence=0.40,
+        reason="白名单来源",
+        rule_hits=[
+            RuleHit(
+                rule_id="DR_ALLOW_CAMPUS_WALL",
+                rule_name="campus-wall-allow",
+                category="ad",
+                confidence_delta=0.0,
+                evidence_masked="",
+            )
+        ],
+    )
+
+
+def _r01_text_ad() -> AIModerationResult:
+    return AIModerationResult(
+        category="ad",
+        confidence=0.99,
+        evidence="广告",
+        model_id="fake-text",
+        prompt_version="t204-v6",
+        source="text",
+        needs_review=False,
+    )
+
+
+@pytest.mark.parametrize("local", [_r01_conflict_local(), _r01_allowlist_local()])
+def test_text_ai_never_overrides_local_rule_conflict(local: ModerationDecision) -> None:
+    """R01：本地规则冲突/白名单冲突转人工时，文字AI不得升级为处罚建议。"""
+    decision = merge_ai_evidence(local, [_r01_text_ad()])
+    assert decision.verdict == "record_only"
+    assert decision.recommended_actions == []
+
+
+def test_text_ai_high_confidence_still_promotes_without_conflict() -> None:
+    """正向对照：无冲突时高置信文字广告仍升级（召回能力不回退）。"""
+    local = ModerationDecision(
+        message_id="AI_LOCAL_R01C",
+        group_openid="G_AI",
+        sender_member_openid="M_AI",
+        verdict="allow",
+        confidence=0.0,
+        reason="本地未命中任何规则",
+    )
+    decision = merge_ai_evidence(local, [_r01_text_ad()])
+    assert decision.verdict == "violation_high"
+    assert decision.recommended_actions == ["recall", "mute", "warn"]
+
+
+def test_text_ai_local_category_conflict_stays_human_review() -> None:
+    """本地已有类别结论且与文字AI不同 → 冲突，不得升级。"""
+    local = ModerationDecision(
+        message_id="AI_LOCAL_R01D",
+        group_openid="G_AI",
+        sender_member_openid="M_AI",
+        verdict="record_only",
+        confidence=0.70,
+        category="other",
+        reason="本地判定待人工确认",
+    )
+    decision = merge_ai_evidence(
+        local,
+        [
+            AIModerationResult(
+                category="ad",
+                confidence=0.85,
+                evidence="广告",
+                model_id="fake-text",
+                prompt_version="t204-v6",
+                source="text",
+            )
+        ],
+    )
+    assert decision.verdict == "record_only"
+    assert decision.recommended_actions == []
+
+
+def _text_ad(confidence: float = 0.99, needs_review: bool = False) -> AIModerationResult:
+    return AIModerationResult(
+        category="ad",
+        confidence=confidence,
+        evidence="文字广告",
+        model_id="fake-text",
+        prompt_version="t204-v6",
+        source="text",
+        needs_review=needs_review,
+    )
+
+
+def _vision_ad(confidence: float = 0.97, needs_review: bool = False) -> AIModerationResult:
+    return AIModerationResult(
+        category="ad",
+        confidence=confidence,
+        evidence="图文广告",
+        model_id="fake-vision",
+        prompt_version="t204-v6",
+        source="vision",
+        needs_review=needs_review,
+    )
+
+
+def _vision_normal(confidence: float = 0.99) -> AIModerationResult:
+    return AIModerationResult(
+        category=None,
+        confidence=confidence,
+        evidence="图文正常",
+        model_id="fake-vision",
+        prompt_version="t204-v6",
+        source="vision",
+        needs_review=False,
+    )
+
+
+def _text_uncertain() -> AIModerationResult:
+    return AIModerationResult(
+        category=None,
+        confidence=0.80,
+        evidence="文字不确定，需人工",
+        model_id="fake-text",
+        prompt_version="t204-v6",
+        source="text",
+        needs_review=True,
+    )
+
+
+def test_cross_modal_text_ad_vision_normal_stays_human() -> None:
+    """S01: 文字判广告（0.99）+ 图文判正常（0.99）不得直接升罚，保留人工。"""
+    decision = merge_ai_evidence(_allow_decision(), [_text_ad(), _vision_normal()])
+    assert decision.verdict != "violation_high"
+    assert decision.recommended_actions == []
+
+
+def test_cross_modal_vision_ad_text_normal_stays_human() -> None:
+    """S01 对称方向: 图文判广告 + 文字判正常同样不得升罚。"""
+    text_normal = AIModerationResult(
+        category=None,
+        confidence=0.95,
+        evidence="文字正常",
+        model_id="fake-text",
+        prompt_version="t204-v6",
+        source="text",
+        needs_review=False,
+    )
+    decision = merge_ai_evidence(_allow_decision(), [_vision_ad(), text_normal])
+    assert decision.verdict != "violation_high"
+    assert decision.recommended_actions == []
+
+
+def test_cross_modal_text_needs_review_vetoes_vision_ad() -> None:
+    """S01: 文字通道要求人工时，视觉广告不得单通道升罚。"""
+    decision = merge_ai_evidence(_allow_decision(), [_vision_ad(), _text_uncertain()])
+    assert decision.verdict != "violation_high"
+    assert decision.recommended_actions == []
+
+
+def test_cross_modal_vision_needs_review_vetoes_text_ad() -> None:
+    """S01: 视觉通道要求人工时，文字广告不得单通道升罚。"""
+    vision_uncertain = AIModerationResult(
+        category=None,
+        confidence=0.80,
+        evidence="图文不确定，需人工",
+        model_id="fake-vision",
+        prompt_version="t204-v6",
+        source="vision",
+        needs_review=True,
+    )
+    decision = merge_ai_evidence(_allow_decision(), [_text_ad(), vision_uncertain])
+    assert decision.verdict != "violation_high"
+    assert decision.recommended_actions == []
+
+
+def test_single_modal_text_ad_without_vision_still_upgrades() -> None:
+    """不误伤: 无图片的纯文字广告（无视觉结果）仍可升罚。"""
+    decision = merge_ai_evidence(_allow_decision(), [_text_ad()])
+    assert decision.verdict == "violation_high"
+    assert decision.recommended_actions == ["recall", "mute", "warn"]

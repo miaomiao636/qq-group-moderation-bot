@@ -19,6 +19,7 @@ import urllib.parse
 from contextlib import suppress
 from datetime import datetime
 from pathlib import Path
+from typing import Any
 
 import httpx
 
@@ -124,20 +125,25 @@ async def _stream_download(
     current_url = url
     try:
         for _hop in range(_MAX_REDIRECT_HOPS + 1):
+            # Classify and pin the same DNS answer. Never resolve again after
+            # rejection or give the transport an unchecked hostname.
             pinned = await _pin_media_url(current_url)
-            if pinned is None:
-                return False, "URL被SSRF防护拦截", 0
-            target, host_header, server_hostname = pinned
-            async with client.stream(
-                "GET",
-                target,
-                timeout=30,
-                follow_redirects=False,
+            stream_kwargs: dict[str, Any] = {
+                "timeout": 30,
+                "follow_redirects": False,
+                "headers": {"Connection": "close"},
+            }
+            stream_url: str
+            if pinned is not None:
+                target, host_header, server_hostname = pinned
+                stream_url = str(target)
                 # Do not pool one IP's TLS connection across different logical
                 # hosts: each request must verify its own original hostname.
-                headers={"Host": host_header, "Connection": "close"},
-                extensions={"sni_hostname": server_hostname},
-            ) as resp:
+                stream_kwargs["headers"]["Host"] = host_header
+                stream_kwargs["extensions"] = {"sni_hostname": server_hostname}
+            else:
+                return False, "URL被SSRF防护拦截", 0
+            async with client.stream("GET", stream_url, **stream_kwargs) as resp:
                 if resp.status_code in (301, 302, 303, 307, 308):
                     location = resp.headers.get("location", "")
                     if not location:
@@ -207,6 +213,32 @@ _BLOCKED_NETWORKS = [
 
 _ALLOWED_PORTS = {80, 443}  # P1-6: 仅允许标准HTTP/HTTPS端口
 
+# R-107 追加：QQ 官方媒体 CDN 域名。代理（Clash 等）的 Fake-IP DNS 会把这些域名
+# 解析为 198.18.0.0/15 假地址，触发 SSRF 拦截导致图片下载间歇失败。
+# 仅下列明确媒体主机可连接已验证的 Fake-IP，仍固定 IP 并保留 Host/SNI。
+# 不授权整个 qq.com/qq.com.cn 或任意子域；新增 CDN 必须核验后明确加入。
+# 透明代理/TUN 对固定 Fake-IP 的兼容性需要 Windows 实测，失败不得放松安全检查。
+_TRUSTED_MEDIA_HOSTS = (
+    "multimedia.nt.qq.com.cn",
+    "gchat.qpic.cn",
+    "qpic.cn",
+    "group.e.qq.com",
+)
+
+
+def _is_trusted_media_host(host: str) -> bool:
+    """Explicit QQ media hosts only; normalize case and the DNS root dot."""
+    host = host.lower().rstrip(".")
+    return host in _TRUSTED_MEDIA_HOSTS
+
+
+def _is_fake_ip(ip_str: str) -> bool:
+    """代理 Fake-IP DNS 产生的 198.18.0.0/15 基准段地址。"""
+    try:
+        return ipaddress.ip_address(ip_str) in ipaddress.ip_network("198.18.0.0/15")
+    except ValueError:
+        return False
+
 
 def _is_safe_ip(ip: ipaddress.IPv4Address | ipaddress.IPv6Address) -> bool:
     """检查IP是否安全（不在被封锁的网络段内）。"""
@@ -256,23 +288,46 @@ async def _check_dns_resolution(host: str) -> bool:
 
 async def _resolve_public_addresses(host: str) -> list[str]:
     """Resolve all addresses once, reject the whole answer if any address is unsafe."""
+    addresses, reason = await _resolve_addresses_reasoned(host)
+    return addresses if not reason else []
+
+
+async def _resolve_addresses_reasoned(host: str) -> tuple[list[str], str]:
+    """R01: 解析域名并分类失败原因，供 Fake-IP 兼容出口精确豁免。
+
+    返回 (addresses, reason)：
+    - (addresses, "") -> 全部为公网地址；
+    - (addresses, "fake_ip") -> 全部为 198.18.0.0/15 代理假地址；
+    - ([], "unsafe") -> 任一被拒地址或 Fake-IP 与真实地址混杂；
+    - ([], "dns") -> 解析失败/无结果。
+    """
     loop = asyncio.get_event_loop()
     try:
         infos = await asyncio.wait_for(loop.getaddrinfo(host, None, type=socket.SOCK_STREAM), 5)
     except (socket.gaierror, OSError, TimeoutError):
-        return []
+        return [], "dns"
     addresses: list[str] = []
+    saw_fake = False
+    saw_public = False
     for info in infos:
         ip_str = info[4][0]
         try:
             ip = ipaddress.ip_address(ip_str)
         except ValueError:
-            return []
-        if not _is_safe_ip(ip):
-            return []
+            return [], "unsafe"
+        if _is_fake_ip(str(ip)):
+            saw_fake = True
+        elif _is_safe_ip(ip):
+            saw_public = True
+        else:
+            return [], "unsafe"
+        if saw_fake and saw_public:
+            return [], "unsafe"
         if str(ip) not in addresses:
             addresses.append(str(ip))
-    return addresses
+    if addresses:
+        return addresses, "fake_ip" if saw_fake else ""
+    return [], "dns"
 
 
 async def _is_safe_media_url(url: str) -> bool:
@@ -285,19 +340,32 @@ async def _pin_media_url(url: str) -> tuple[httpx.URL, str, str] | None:
 
     HTTPX forwards ``sni_hostname`` to httpcore's TLS ``server_hostname``; both SNI
     and certificate checking use the original hostname. DNS is never repeated by
-    the transport. Callers construct the dedicated media client with trust_env=False.
+    the transport. Only explicit CDN hosts whose entire DNS answer is Fake-IP may
+    use that checked synthetic destination. Callers use trust_env=False.
     """
     if not _is_safe_media_url_sync(url):
         return None
     try:
         original = httpx.URL(url)
         host = original.host
+        reason = ""
         try:
             addresses = [str(ipaddress.ip_address(host))]
         except ValueError:
-            addresses = await _resolve_public_addresses(host)
+            addresses, reason = await _resolve_addresses_reasoned(host)
         if not addresses:
             return None
+        allow_fake = reason == "fake_ip" and _is_trusted_media_host(host)
+        if reason and not allow_fake:
+            return None
+        # Recheck every destination using that same answer. A compatibility decision
+        # must never authorize mixtures or an address from a different lookup.
+        for a in addresses:
+            ip = ipaddress.ip_address(a)
+            if not (_is_fake_ip(a) if allow_fake else _is_safe_ip(ip)):
+                return None
+        if allow_fake:
+            logger.info("官方CDN固定已验证Fake-IP（需透明代理/TUN）: %s", host)
         host_header = original.netloc.decode("ascii")
         return original.copy_with(host=addresses[0]), host_header, host
     except (ValueError, httpx.InvalidURL):
@@ -359,7 +427,11 @@ async def download_attachment(
 
 
 def purge_media(media_dir: Path, retention_days: int = 30, now: float | None = None) -> int:
-    """删除超过保留期的媒体文件，返回删除文件数。"""
+    """删除过期媒体并返回计数；真实 I/O 失败向上传播，不伪报清理成功。
+
+    文件可能已被并发清理，FileNotFoundError 可忽略。其他错误必须交给
+    maintenance 记录固定失败码；此前已删除的文件不会随数据库回滚而恢复。
+    """
     if not media_dir.exists():
         return 0
     cutoff = (now or time.time()) - retention_days * 86400
@@ -369,9 +441,9 @@ def purge_media(media_dir: Path, retention_days: int = 30, now: float | None = N
             continue
         try:
             if f.stat().st_mtime < cutoff:
-                f.unlink(missing_ok=True)
+                f.unlink()
                 deleted += 1
-        except OSError:
+        except FileNotFoundError:
             continue
     return deleted
 

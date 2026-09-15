@@ -134,6 +134,19 @@ def test_stats_dashboard_renders(logged_in: TestClient) -> None:
     assert "AI 调用（按模型）" in resp.text
 
 
+def test_case_dashboard_renders(logged_in: TestClient) -> None:
+    """回归：案件主页必须可渲染（批量删除表单含 CSRF，曾是 NameError 事故点）。"""
+    resp = logged_in.get("/admin/")
+    assert resp.status_code == 200
+    assert "待人工处理" in resp.text
+    # R02/R03：批量删除已停用，页面不得再出现删除表单
+    assert "删除勾选案件" not in resp.text
+    assert "/admin/cases/batch-delete" not in resp.text
+    # 筛选参数渲染
+    resp2 = logged_in.get("/admin/", params={"status": "CLOSED", "page": "1"})
+    assert resp2.status_code == 200
+
+
 def test_state_changing_post_requires_csrf(logged_in: TestClient) -> None:
     resp = logged_in.post(
         "/admin/groups/alias",
@@ -273,33 +286,13 @@ def test_full_manual_kick_flow(logged_in: TestClient) -> None:
     group, member = unique_ids()
     case_id = make_case(group, member, f"WEB_MSG_{uuid.uuid4().hex[:6]}")
 
-    # ① 预览并生成确认码（页面仅显示一次，从第一次响应提取）
+    # 2026-09-12 简化（负责人决定）：人工处理一键确认踢出，无确认码
     page = logged_in.get(f"/admin/cases/{case_id}")
     csrf = extract_csrf(page.text)
-    resp = logged_in.post(f"/admin/cases/{case_id}/approve-manual", data={"csrf": csrf})
-    assert resp.status_code == 200
-    assert "一次性确认码" in resp.text
-    assert "未验证QQ号" in resp.text  # 证据页标注
-    import re
-
-    match = re.search(r"<b style=\"font-size:22px\">(\d{6})</b>", resp.text)
-    assert match, "预览页应显示确认码"
-    code = match.group(1)
-
-    # 错误确认码被拒
-    resp = logged_in.post(
-        f"/admin/cases/{case_id}/confirm-kick", data={"code": "000000", "csrf": csrf}
-    )
-    assert "错误或已过期" in resp.text
-
-    # ② 凭码确认已人工踢出 → 结案（TestClient 默认跟随重定向，最终应回到详情页并带结案通知）
-    resp = logged_in.post(f"/admin/cases/{case_id}/confirm-kick", data={"code": code, "csrf": csrf})
+    assert "人工处理（确认踢出并结案）" in page.text
+    resp = logged_in.post(f"/admin/cases/{case_id}/manual-kick", data={"csrf": csrf})
     assert resp.status_code == 200
     assert "已记录为人工踢出并结案" in resp.text
-
-    # 确认码一次性：重放被拒
-    resp = logged_in.post(f"/admin/cases/{case_id}/confirm-kick", data={"code": code, "csrf": csrf})
-    assert "错误或已过期" in resp.text
 
     from app.cases.models import Case
     from app.db import SessionLocal
@@ -313,6 +306,21 @@ def test_full_manual_kick_flow(logged_in: TestClient) -> None:
     import asyncio
 
     assert asyncio.run(_get()) == "CLOSED"
+
+
+def test_manual_kick_rejected_after_closed(logged_in: TestClient) -> None:
+    """终态案件再提交一键踢出：友好报错而非 500。"""
+    group, member = unique_ids()
+    case_id = make_case(group, member, f"WEB_MSG_{uuid.uuid4().hex[:6]}")
+    page = logged_in.get(f"/admin/cases/{case_id}")
+    csrf = extract_csrf(page.text)
+    resp = logged_in.post(f"/admin/cases/{case_id}/manual-kick", data={"csrf": csrf})
+    assert resp.status_code == 200
+    # 已 CLOSED，再次提交应得到友好错误页
+    resp = logged_in.post(f"/admin/cases/{case_id}/manual-kick", data={"csrf": csrf})
+    assert resp.status_code == 200
+    assert "操作未执行" in resp.text
+    assert "返回案件页" in resp.text
 
 
 def test_keep_flow(logged_in: TestClient) -> None:
@@ -493,3 +501,92 @@ async def test_cleanup_replaces_old_snapshot_but_keeps_metadata() -> None:
         assert '"purged": true' in record.message_snapshot_json
         assert "敏感原文" not in record.message_snapshot_json
         assert record.category == "ad"  # 元数据保留供统计
+
+
+def make_shadow(mid: str, category: str, group: str, member: str) -> None:
+    """造一条影子判定记录（record_only + 指定类别），用于反馈表单一致性回归。"""
+    import asyncio
+
+    from app.db import SessionLocal
+    from app.runtime.models import ShadowDecision
+
+    async def _run() -> None:
+        async with SessionLocal() as session:
+            session.add(
+                ShadowDecision(
+                    message_id=mid,
+                    provider="onebot",
+                    external_group_id=group,
+                    group_openid=group,
+                    member_openid=member,
+                    kind="text",
+                    verdict="record_only",
+                    category=category,
+                    confidence=0.40,
+                    reason="AI疑似严重类别（低置信），保留类别转人工核对",
+                )
+            )
+            await session.commit()
+
+    asyncio.run(_run())
+
+
+def _feedback_block(html: str, mid: str) -> str:
+    anchor = html.find(f'name=message_id value="{mid}"')
+    assert anchor != -1, f"影子页应包含 {mid} 的反馈表单"
+    return html[anchor : anchor + 1500]
+
+
+def test_feedback_form_category_matches_persisted(logged_in: TestClient) -> None:
+    """主审 P2 回归：持久化的严重类别 → 反馈表单默认选中（不被 ad 掩盖）。"""
+    group, member = unique_ids()
+    mid = f"MSG_SHADOW_{uuid.uuid4().hex[:8]}"
+    make_shadow(mid, "fraud", group, member)
+
+    resp = logged_in.get("/admin/shadow")
+    assert resp.status_code == 200
+    block = _feedback_block(resp.text, mid)
+    assert "name=category" in block
+    assert "<option value=fraud selected>诈骗</option>" in block
+
+
+def test_feedback_form_category_editable_and_validated(logged_in: TestClient) -> None:
+    """人工可核对/纠正类别；非法值被白名单拦截为 other（防注入）。"""
+    group, member = unique_ids()
+    mid_fix = f"MSG_SHADOW_{uuid.uuid4().hex[:8]}"
+    mid_bad = f"MSG_SHADOW_{uuid.uuid4().hex[:8]}"
+    make_shadow(mid_fix, "fraud", group, member)
+    make_shadow(mid_bad, "violence", group, member)
+
+    resp = logged_in.get("/admin/shadow")
+    csrf = extract_csrf(resp.text)
+
+    # 人工核对后纠正类别：fraud → porn，保存后回显纠正值
+    resp2 = logged_in.post(
+        "/admin/feedback",
+        data={
+            "message_id": mid_fix,
+            "label": "confirmed_violation",
+            "category": "porn",
+            "reason": "人工核对：色情而非诈骗",
+            "csrf": csrf,
+        },
+    )
+    assert resp2.status_code == 200
+    block = _feedback_block(logged_in.get("/admin/shadow").text, mid_fix)
+    assert "<option value=porn selected>色情低俗</option>" in block
+
+    # 非法类别注入被拦截为 other
+    resp3 = logged_in.post(
+        "/admin/feedback",
+        data={
+            "message_id": mid_bad,
+            "label": "confirmed_violation",
+            "category": "evil;drop",
+            "reason": "",
+            "csrf": csrf,
+        },
+    )
+    assert resp3.status_code == 200
+    block = _feedback_block(logged_in.get("/admin/shadow").text, mid_bad)
+    assert "<option value=other selected>其他</option>" in block

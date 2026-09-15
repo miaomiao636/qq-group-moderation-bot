@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import json
+import logging
 import re
 import time
 from dataclasses import dataclass, field
@@ -20,7 +21,12 @@ from sqlalchemy.orm import Mapped, mapped_column
 from app.config import Settings
 from app.core.contracts import StandardMessage
 from app.db import Base
-from app.moderation.decision import Category, ModerationDecision, RuleHit
+from app.moderation.decision import (
+    CERTIFICATE_AD_ALLOW_RULE_ID,
+    Category,
+    ModerationDecision,
+    RuleHit,
+)
 
 AIContentKind = Literal[
     "text",
@@ -35,7 +41,7 @@ AIContentKind = Literal[
 AIResultSource = Literal["text", "vision", "degraded", "cache"]
 AIReviewRole = Literal["auxiliary", "primary", "secondary"]
 
-PROMPT_VERSION = "t204-v4"
+PROMPT_VERSION = "t204-v6"
 AI_POLICY_VERSION = "conditional-review-v1"
 MAX_AI_TEXT_CHARS = 4_000
 MAX_AI_MEDIA_BYTES = 5 * 1024 * 1024
@@ -675,7 +681,13 @@ class AIReviewService:
         cache_request = request.model_copy(
             update={
                 "policy_context": (
-                    request.policy_context + "|" + str(getattr(moderator, "base_url", ""))
+                    request.policy_context
+                    + "|"
+                    + str(getattr(moderator, "base_url", ""))
+                    + "|"
+                    # R05：实际生效提示词摘要（含外置业务规则）必须进入缓存指纹，
+                    # 否则改规则后旧缓存仍命中。
+                    + str(getattr(moderator, "prompt_digest", ""))
                 )
             }
         )
@@ -693,6 +705,17 @@ class AIReviewService:
             self.quota._spent_cents = max(self.quota._spent_cents, usage["reported_cost_cents"])
             self.quota._restored_day = self.quota._day
         if not self.quota.allow():
+            # 限流被触发意味着该消息会静默降级（AI 证据缺失）→ 必须告警留痕，
+            # 不得让运营方误以为审核仍在正常工作。
+            logger.warning(
+                "AI 调用被限流/预算拦截（ai_rate_or_budget_limited）：minute_calls=%d "
+                "daily_calls=%d spent_cents=%d model=%s —— 消息将降级转人工，"
+                "请检查 AI_PER_MINUTE_LIMIT / AI_DAILY_CALL_LIMIT / AI_DAILY_BUDGET_CENTS",
+                len(self.quota._minute_calls),
+                self.quota._daily_calls,
+                self.quota._spent_cents,
+                moderator.model_id,
+            )
             result = degraded_ai_result(
                 "ai_rate_or_budget_limited",
                 model_id=moderator.model_id,
@@ -756,6 +779,10 @@ def secondary_review_reason(
     """Only trusted local policy chooses whether a second opinion is required."""
     if primary.degraded_reason:
         return "primary_degraded"
+    if primary.category == "ad" and any(
+        hit.rule_id == CERTIFICATE_AD_ALLOW_RULE_ID for hit in local.rule_hits
+    ):
+        return "rule_or_allowlist_conflict"
     allow_hit = any(hit.rule_id.startswith("DR_ALLOW_") for hit in local.rule_hits)
     if "冲突" in local.reason or (allow_hit and primary.category is not None):
         return "rule_or_allowlist_conflict"
@@ -775,6 +802,39 @@ def secondary_review_reason(
     if primary.confidence < direct_threshold:
         return "confidence_gray_zone"
     return ""
+
+
+_FRAUD_DIRECT_MIN = 0.85  # 诈骗误报代价最高，单独要求更高置信度
+
+logger = logging.getLogger(__name__)
+
+
+def _direct_threshold(category: str | None, base: float) -> float:
+    """诈骗类误报代价最高（实测 0.78/0.82 的 fraud 为假阳性），单独抬高门槛。"""
+    return max(base, _FRAUD_DIRECT_MIN) if category == "fraud" else base
+
+
+def _confident_normal(result: AIModerationResult, low_threshold: float) -> bool:
+    """确定性正常结论：无违规类别、未降级、不需人工且置信度达门槛（S01）。"""
+    return (
+        not result.degraded_reason
+        and result.category is None
+        and not result.needs_review
+        and result.confidence >= low_threshold
+    )
+
+
+def _cross_modal_veto(opposite: list[AIModerationResult], low_threshold: float) -> bool:
+    """跨模态矛盾检测（S01/R01 未闭环项）。
+
+    对面模态对同一内容给出确定性正常、或明确要求人工时，本模态不得单独升罚。
+    只对确实产生过结论的模态生效：文字通道仅在文本非空时调用、
+    视觉通道仅在存在媒体时调用，因此"另一模态未参与"不构成矛盾。
+    """
+    return any(
+        not r.degraded_reason and (_confident_normal(r, low_threshold) or r.needs_review)
+        for r in opposite
+    )
 
 
 def merge_ai_evidence(
@@ -807,6 +867,14 @@ def merge_ai_evidence(
         return local.model_copy(update={"rule_hits": local.rule_hits + hits})
     candidates: list[AIModerationResult] = []
     unresolved = any(result.degraded_reason for result in ai_results)
+    # S01：跨模态矛盾（文字判广告/图文判正常、或任一模态要求人工）不得直接升罚。
+    _text_signals = [r for r in ai_results if r.source == "text"]
+    _vision_signals = [r for r in ai_results if r.source == "vision"]
+    _text_veto = _cross_modal_veto(_text_signals, secondary_review_low)
+    # A04：视觉侧的 veto 必须基于"复核对之后仍未消解的疑问"——
+    # 延后到视觉循环结束后计算（见下方 `_vision_veto`），
+    # 已获有效二审确认的 primary 不再被其原始 needs_review 标记否决。
+    _vision_resolved_ids: set[int] = set()
     primaries = [r for r in ai_results if r.source == "vision" and r.review_role == "primary"]
     for primary in primaries:
         secondaries = [
@@ -840,14 +908,59 @@ def merge_ai_evidence(
                 or secondary.confidence < secondary_review_high
             ):
                 unresolved = True
+            elif _text_veto:
+                # S01：文字通道对同一内容给出确定性正常或要求人工——跨模态矛盾，
+                # 视觉单通道不得升罚，保留人工。
+                unresolved = True
             else:
                 candidates.append(primary)
+                _vision_resolved_ids.add(id(primary))
         elif (
-            primary.category in ("ad", "fraud")
-            and primary.confidence >= primary_direct_threshold
+            primary.category in ("ad", "fraud", "porn")
+            and primary.confidence >= _direct_threshold(primary.category, primary_direct_threshold)
             and not primary.needs_review
         ):
-            candidates.append(primary)
+            if _text_veto:
+                unresolved = True
+            else:
+                candidates.append(primary)
+                _vision_resolved_ids.add(id(primary))
+    # A04：有效二审已确认的视觉结论，其原始 needs_review 疑问视为已消解；
+    # 只有"确定性正常"或"未被消解的 gray/needs_review"才阻止文字单通道升罚。
+    _vision_hard_normal = any(_confident_normal(v, secondary_review_low) for v in _vision_signals)
+    _vision_gray_unresolved = any(
+        v.source == "vision" and v.needs_review and id(v) not in _vision_resolved_ids
+        for v in _vision_signals
+    )
+    _vision_veto = _vision_hard_normal or _vision_gray_unresolved
+    # 文字通道（R01）：与视觉完全同一套本地保护。实测广告文本不被确定性规则命中，
+    # AI 是唯一判据，允许高置信直接升级；但规则/白名单冲突、本地类别冲突、
+    # needs_review、unknown_category 一律不升级（转人工或条件复核）。
+    # 此前仅检查类别/置信度，复现了"本地已判转人工却被升级为撤回+禁言建议"。
+    for text_result in ai_results:
+        if text_result.source != "text" or text_result.degraded_reason:
+            continue
+        reason = secondary_review_reason(
+            text_result,
+            local,
+            direct_threshold=primary_direct_threshold,
+            low_threshold=secondary_review_low,
+        )
+        if reason in ("rule_or_allowlist_conflict", "local_category_conflict"):
+            unresolved = True
+        elif (
+            reason == ""
+            and text_result.category in ("ad", "fraud", "porn")
+            and text_result.confidence
+            >= _direct_threshold(text_result.category, primary_direct_threshold)
+            and not text_result.needs_review
+        ):
+            if _vision_veto:
+                # S01：视觉通道对同一内容给出确定性正常或要求人工——跨模态矛盾，
+                # 文字单通道不得升罚，保留人工。
+                unresolved = True
+            else:
+                candidates.append(text_result)
     # An orphaned secondary can never become a new primary by filtering.
     primary_groups = {r.review_group for r in primaries}
     if any(
@@ -869,18 +982,51 @@ def merge_ai_evidence(
             }
         )
     meaningful = [r for r in usable if r.confidence >= secondary_review_low]
-    if unresolved or meaningful or local.verdict == "record_only" or local.is_protected_sender:
+    # v13（负责人 2026-09-15 方案 B-2 + 场景③小修）：低置信的严重类别疑似
+    # （诈骗/色情/暴力违禁品）不得静默放行——保留类别转人工记录（不处罚不
+    # 撤回），交人工核对。此处到达的严重结果均未通过候选条件（低置信/需人工/
+    # 有冲突），静默丢弃类别会让疑似高危内容完全失去护栏。
+    severe_suspects = [r for r in usable if r.category in ("fraud", "porn", "violence")]
+    if (
+        unresolved
+        or meaningful
+        or severe_suspects
+        or local.verdict == "record_only"
+        or local.is_protected_sender
+    ):
+        # v13.1（主审 P2 修复）：转人工分支的类别选择——严重疑似优先于普通广告
+        # 类别（本地办证 record_only/ad 或先出现的广告结果不得掩盖严重疑似）；
+        # 多个严重类别用确定性规则（置信度降序，同置信按固定顺序）；
+        # 类别与置信度必须同源——不得把本地广告的高置信度充当严重疑似置信度。
+        # verdict 恒为 record_only、recommended_actions 恒为空：本分支只做
+        # 类别标记供人工核对，绝不改变处罚判定（办证内容底线不变）。
+        severe_rank = {"fraud": 0, "porn": 1, "violence": 2}
+        if severe_suspects:
+            best_severe = sorted(
+                severe_suspects,
+                key=lambda r: (-r.confidence, severe_rank.get(r.category or "", 9)),
+            )[0]
+            category = best_severe.category
+            confidence = best_severe.confidence
+        else:
+            category = local.category or (usable[0].category if usable else None)
+            confidence = max(
+                local.confidence, min(max((r.confidence for r in usable), default=0), 0.85)
+            )
+        if unresolved:
+            reason = "AI复核未形成一致有效证据，转人工"
+        elif severe_suspects and not meaningful:
+            reason = "AI疑似严重类别（低置信），保留类别转人工核对"
+        else:
+            reason = "AI软证据，转人工复核"
         return local.model_copy(
             update={
                 "verdict": "record_only",
-                "category": local.category or (usable[0].category if usable else None),
-                "confidence": max(
-                    local.confidence, min(max((r.confidence for r in usable), default=0), 0.85)
-                ),
+                "category": category,
+                "confidence": confidence,
                 "rule_hits": local.rule_hits + hits,
                 "recommended_actions": [],
-                "reason": (local.reason + "；" if local.reason else "")
-                + ("AI复核未形成一致有效证据，转人工" if unresolved else "AI软证据，转人工复核"),
+                "reason": (local.reason + "；" if local.reason else "") + reason,
             }
         )
     return local.model_copy(update={"rule_hits": local.rule_hits + hits})

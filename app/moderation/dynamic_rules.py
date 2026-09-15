@@ -12,7 +12,18 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Literal, cast
 
-from sqlalchemy import Boolean, DateTime, Float, ForeignKey, Integer, String, Text, func, select
+from sqlalchemy import (
+    Boolean,
+    DateTime,
+    Float,
+    ForeignKey,
+    Integer,
+    String,
+    Text,
+    func,
+    select,
+    update,
+)
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -150,6 +161,15 @@ class RuleSnapshot:
     version_ids: tuple[int, ...] = ()
 
 
+@dataclass(frozen=True)
+class RuleItemChange:
+    version_id: int
+    item_id: int
+    created_draft: bool
+    changed: bool
+    requires_publication: bool
+
+
 _CACHE: dict[str, tuple[float, RuleSnapshot]] = {}
 
 
@@ -223,6 +243,141 @@ async def add_rule_item(
     await session.commit()
     _CACHE.clear()
     return item
+
+
+async def set_rule_item_enabled(
+    session: AsyncSession,
+    item_id: int,
+    *,
+    enabled: bool,
+    operator: str,
+) -> RuleItemChange:
+    """Set explicit draft intent without ever mutating a published snapshot.
+
+    A no-op write acquires SQLite's writer lock before looking up/reusing the
+    change draft. Concurrent double-clicks therefore cannot create two copies.
+    This transaction only prepares data; the existing human publication plan
+    must still be previewed and confirmed before runtime behavior changes.
+    """
+    await session.execute(
+        update(RuleSet)
+        .where(
+            RuleSet.id.in_(
+                select(RuleVersion.rule_set_id)
+                .join(RuleItem, RuleItem.version_id == RuleVersion.id)
+                .where(RuleItem.id == item_id)
+            )
+        )
+        .values(name=RuleSet.name)
+        .execution_options(synchronize_session=False)
+    )
+    item = await session.get(RuleItem, item_id, populate_existing=True)
+    if item is None:
+        raise ValueError("规则项不存在")
+    version = await session.get(RuleVersion, item.version_id, populate_existing=True)
+    if version is None:
+        raise ValueError("规则版本不存在")
+    if version.status not in {"DRAFT", "ACTIVE"}:
+        raise ValueError("历史版本不可编辑；如需恢复历史规则，请使用回滚预览并人工确认")
+    if item.enabled == enabled:
+        await session.commit()
+        return RuleItemChange(version.id, item.id, False, False, version.status == "DRAFT")
+    if version.status == "DRAFT":
+        item.enabled = enabled
+        _add_rule_audit(
+            session,
+            version.rule_set_id,
+            version.id,
+            operator,
+            "set_draft_item_enabled",
+            {"item_id": item.id, "enabled": enabled},
+        )
+        await session.commit()
+        return RuleItemChange(version.id, item.id, False, True, True)
+
+    # An existing unpublished copy is the durable idempotency record. Do not
+    # resurrect it after publication or if its requested item was edited again.
+    audits = (
+        await session.scalars(
+            select(RuleAudit)
+            .join(RuleVersion, RuleVersion.id == RuleAudit.version_id)
+            .where(
+                RuleAudit.rule_set_id == version.rule_set_id,
+                RuleAudit.action == "prepare_item_enabled_draft",
+                RuleVersion.status == "DRAFT",
+            )
+            .order_by(RuleAudit.id.desc())
+        )
+    ).all()
+    for audit in audits:
+        try:
+            details = json.loads(audit.detail_json)
+        except (TypeError, ValueError):
+            continue
+        if not isinstance(details, dict) or (
+            details.get("source_item_id") != item_id or details.get("enabled") is not enabled
+        ):
+            continue
+        copied_id = details.get("item_id")
+        if not isinstance(copied_id, int):
+            continue
+        copied = await session.get(RuleItem, copied_id, populate_existing=True)
+        if copied and copied.version_id == audit.version_id and copied.enabled == enabled:
+            await session.commit()
+            return RuleItemChange(copied.version_id, copied.id, False, False, True)
+
+    next_version = (
+        await session.scalar(
+            select(func.max(RuleVersion.version)).where(
+                RuleVersion.rule_set_id == version.rule_set_id
+            )
+        )
+        or 0
+    ) + 1
+    draft = RuleVersion(
+        rule_set_id=version.rule_set_id,
+        version=next_version,
+        status="DRAFT",
+        description=f"从版本#{version.id}创建规则项#{item_id}的{'恢复' if enabled else '停用'}草稿",
+    )
+    session.add(draft)
+    await session.flush()
+    source_items = (
+        await session.scalars(
+            select(RuleItem).where(RuleItem.version_id == version.id).order_by(RuleItem.id)
+        )
+    ).all()
+    changed_item: RuleItem | None = None
+    for source_item in source_items:
+        copied_item = RuleItem(
+            version_id=draft.id,
+            item_type=source_item.item_type,
+            pattern=source_item.pattern,
+            category=source_item.category,
+            weight=source_item.weight,
+            enabled=enabled if source_item.id == item_id else source_item.enabled,
+            description=source_item.description,
+        )
+        session.add(copied_item)
+        if source_item.id == item_id:
+            changed_item = copied_item
+    await session.flush()
+    assert changed_item is not None
+    _add_rule_audit(
+        session,
+        version.rule_set_id,
+        draft.id,
+        operator,
+        "prepare_item_enabled_draft",
+        {
+            "source_version_id": version.id,
+            "source_item_id": item_id,
+            "item_id": changed_item.id,
+            "enabled": enabled,
+        },
+    )
+    await session.commit()
+    return RuleItemChange(draft.id, changed_item.id, True, True, True)
 
 
 async def publish_rule_version(

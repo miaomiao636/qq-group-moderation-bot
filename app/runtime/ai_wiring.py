@@ -1,12 +1,13 @@
 """远程AI Adapter的运行时组合根。"""
 
 from functools import lru_cache
+from pathlib import Path
 
 from app.adapters.ai.openai_compatible import (
     OpenAICompatibleTextModerator,
     OpenAICompatibleVisionModerator,
 )
-from app.config import get_settings
+from app.config import Settings, get_settings
 from app.moderation.ai import (
     AIQuota,
     AIReviewService,
@@ -16,13 +17,43 @@ from app.moderation.ai import (
 )
 
 
+def _resolve_rules_path(settings: Settings) -> Path:
+    """R04：相对路径锚定项目根，不随进程启动目录漂移。
+
+    本文件位于 ``<root>/app/runtime/``，``parents[2]`` 即项目根。
+    """
+    raw = Path(settings.ai_prompt_rules_file)
+    if raw.is_absolute():
+        return raw
+    return Path(__file__).resolve().parents[2] / raw
+
+
+def _load_extra_rules(settings: Settings) -> str:
+    """加载外置业务规则；缺失/为空时 fail-closed，不得静默按另一套规则审核。"""
+    if not settings.ai_prompt_rules_file:
+        return ""
+    rules_path = _resolve_rules_path(settings)
+    if not rules_path.is_file():
+        raise ValueError(
+            f"AI_PROMPT_RULES_FILE 规则文件不存在: {rules_path} —— "
+            "外置业务规则静默丢失会导致审核口径漂移（R04），拒绝启动"
+        )
+    content = rules_path.read_text(encoding="utf-8").strip()
+    if not content:
+        raise ValueError(f"AI_PROMPT_RULES_FILE 规则文件为空: {rules_path} —— 拒绝启动（R04）")
+    return content
+
+
 @lru_cache
 def build_default_ai_review_service() -> AIReviewService:
     """根据环境配置组合AI适配器；默认返回安全禁用服务。"""
     settings = get_settings()
     enabled_groups = parse_enabled_groups(settings.ai_enabled_groups)
     if not settings.ai_enabled:
+        # S09：禁用分支必须先返回——否则残留的失效规则路径会抛异常，
+        # 让"关闭 AI 回退纯本地规则"的降级操作反而不可用。
         return AIReviewService(enabled=False, enabled_groups=enabled_groups)
+    extra_rules = _load_extra_rules(settings)
     missing = []
     if not settings.ai_api_key:
         missing.append("AI_API_KEY")
@@ -43,6 +74,7 @@ def build_default_ai_review_service() -> AIReviewService:
             model_id=settings.ai_text_model,
             timeout_seconds=settings.ai_timeout_seconds,
             prompt_version=settings.ai_prompt_version,
+            extra_system_rules=extra_rules,
         )
     if settings.ai_vision_model:
         vision_moderator = OpenAICompatibleVisionModerator(
@@ -51,6 +83,7 @@ def build_default_ai_review_service() -> AIReviewService:
             model_id=settings.ai_vision_model,
             timeout_seconds=settings.ai_timeout_seconds,
             prompt_version=settings.ai_prompt_version,
+            extra_system_rules=extra_rules,
         )
     # P0-3: 第二复核模型（仅在灰区/冲突/疑难时调用）
     review_vision_moderator: VisionModerator | None = None
@@ -61,6 +94,7 @@ def build_default_ai_review_service() -> AIReviewService:
             model_id=settings.ai_review_model,
             timeout_seconds=settings.ai_timeout_seconds,
             prompt_version=settings.ai_prompt_version,
+            extra_system_rules=extra_rules,
         )
     if text_moderator is None and vision_moderator is None:
         return AIReviewService(

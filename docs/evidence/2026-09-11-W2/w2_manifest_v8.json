@@ -1,0 +1,19 @@
+{
+  "code_sha": "2fbf5613d904",
+  "worktree_dirty": true,
+  "primary_model": "deepseek-flash",
+  "review_model": "qwen3.8-flash",
+  "prompt_version": "t204-v8",
+  "rules_digest": "b4ed9bd160a8b392",
+  "direct_threshold": 0.75,
+  "gray_zone_low": 0.6,
+  "model_revision": "deepseek-flash@t204-v8",
+  "samples": 160,
+  "failed": 0,
+  "degraded": 0,
+  "cache_hit_samples": 70,
+  "real_call_samples": 90,
+  "unusable": 0,
+  "fail_rate": 0.0,
+  "note": "S07：samples.latency_ms 显式 null（latency_source=none）——回放无端到端证据；AI 子链耗时见 debug.latency_ai_ms，仅用于诊断。端到端延迟须由 onebot_inbox（updated_at-created_at）另行测量。"
+}

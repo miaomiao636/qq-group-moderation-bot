@@ -223,6 +223,117 @@ def test_unrecognized_category_cannot_become_a_confident_normal_result():
     assert result.needs_review is True
 
 
+class FakeText:
+    prompt_version = "test-conditional"
+
+    def __init__(
+        self,
+        model_id: str,
+        category: str | None,
+        confidence: float,
+        *,
+        needs_review: bool = False,
+    ) -> None:
+        self.model_id = model_id
+        self.category = category
+        self.confidence = confidence
+        self.needs_review = needs_review
+        self.calls = 0
+
+    async def moderate_text(self, request: AIModerationRequest) -> AIModerationResult:
+        self.calls += 1
+        return AIModerationResult(
+            category=self.category,
+            confidence=self.confidence,
+            needs_review=self.needs_review,
+            model_id=self.model_id,
+            prompt_version=self.prompt_version,
+            source="text",
+        )
+
+
+async def review_mixed(
+    tmp_path: Path,
+    text: FakeText,
+    primary: FakeVision,
+    secondary: FakeVision | None = None,
+    *,
+    with_media: bool = True,
+):
+    """S01 编排回归：同一条消息同时经文字通道与视觉通道。"""
+    group = f"review-{uuid.uuid4().hex}"
+    msg = StandardMessage(
+        message_id=f"message-{uuid.uuid4().hex}",
+        provider="onebot",
+        external_group_id=group,
+        sender=Sender(member_openid="member"),
+        text="招兼职，加微信详聊",
+    )
+    local = ModerationDecision(
+        message_id=msg.message_id,
+        external_group_id=group,
+        verdict="allow",
+        reason="本地未命中",
+    )
+    media: list[Path] = []
+    if with_media:
+        path = tmp_path / f"{uuid.uuid4().hex}.png"
+        path.write_bytes(uuid.uuid4().bytes)
+        media.append(path)
+    service = AIReviewService(
+        enabled=True,
+        enabled_groups={group},
+        text_moderator=text,
+        vision_moderator=primary,
+        review_vision_moderator=secondary,
+        quota=AIQuota(),
+    )
+    async with SessionLocal() as session:
+        decision, results = await service.review_message(session, msg, local, media_paths=media)
+    return decision, results
+
+
+@pytest.mark.asyncio
+async def test_cross_modal_text_ad_vision_normal_writes_no_action(tmp_path):
+    """S01 复现场景: 文字判广告 0.99 + 图文判正常 0.99 → 不升罚、无动作建议。"""
+    text = FakeText("text-model", "ad", 0.99)
+    primary = FakeVision("primary", None, 0.99)
+    decision, _ = await review_mixed(tmp_path, text, primary)
+    assert decision.verdict == "record_only"
+    assert decision.recommended_actions == []
+
+
+@pytest.mark.asyncio
+async def test_cross_modal_text_needs_review_vision_ad_writes_no_action(tmp_path):
+    """S01: 文字要求人工 + 视觉判广告高置信 → 不升罚、无动作建议。"""
+    text = FakeText("text-model", None, 0.80, needs_review=True)
+    primary = FakeVision("primary", "ad", 0.97)
+    decision, _ = await review_mixed(tmp_path, text, primary)
+    assert decision.verdict == "record_only"
+    assert decision.recommended_actions == []
+
+
+@pytest.mark.asyncio
+async def test_cross_modal_vision_ad_text_normal_writes_no_action(tmp_path):
+    """S01 对称方向: 图文判广告 + 文字判正常 → 不升罚、无动作建议。"""
+    text = FakeText("text-model", None, 0.95)
+    primary = FakeVision("primary", "ad", 0.97)
+    decision, _ = await review_mixed(tmp_path, text, primary)
+    assert decision.verdict == "record_only"
+    assert decision.recommended_actions == []
+
+
+@pytest.mark.asyncio
+async def test_single_modal_text_ad_without_media_still_upgrades(tmp_path):
+    """不误伤: 纯文字广告（无媒体、视觉未参与）仍可升罚。"""
+    text = FakeText("text-model", "ad", 0.99)
+    primary = FakeVision("primary", None, 0.99)
+    decision, _ = await review_mixed(tmp_path, text, primary, with_media=False)
+    assert primary.calls == 0
+    assert decision.verdict == "violation_high"
+    assert decision.recommended_actions == ["recall", "mute", "warn"]
+
+
 def test_supplied_secondary_disagreement_is_a_veto_even_without_a_reason_marker():
     from app.moderation.ai import merge_ai_evidence
 
@@ -342,3 +453,42 @@ async def test_adapter_excludes_feedback_and_records_provider_token_usage():
     assert result.input_tokens == 123
     assert result.output_tokens == 45
     assert result.cost_known is False
+
+
+@pytest.mark.asyncio
+async def test_a04_successful_secondary_review_clears_original_needs_review(tmp_path):
+    """A04 正向回归: 主模型疑难(needs_review)+独立二审确认+同类别文字支持 → 应升级。
+
+    复现主审场景：视觉主模型判广告/0.99/needs_review=true，独立第二模型判广告/0.99/false，
+    文字结果同样判广告/0.99/false。三份结果一致、无类别或本地规则冲突——
+    已获有效二审消解的原始 needs_review 不得再否决最终结果。
+    """
+    primary = FakeVision("primary", "ad", 0.99, needs_review=True)
+    secondary = FakeVision("review", "ad", 0.99)
+    text = FakeText("text-model", "ad", 0.99)
+    decision, _ = await review_mixed(tmp_path, text, primary, secondary)
+    assert secondary.calls == 1
+    assert decision.verdict == "violation_high"
+    assert decision.category == "ad"
+    assert decision.recommended_actions == ["recall", "mute", "warn"]
+
+
+@pytest.mark.asyncio
+async def test_a04_unresolved_vision_gray_still_vetoes_text_ad(tmp_path):
+    """不削弱安全保护: 视觉疑难未获二审确认时，文字广告仍不得单独升罚。"""
+    primary = FakeVision("primary", "ad", 0.99, needs_review=True)
+    text = FakeText("text-model", "ad", 0.99)
+    decision, _ = await review_mixed(tmp_path, text, primary, None)
+    assert decision.verdict == "record_only"
+    assert decision.recommended_actions == []
+
+
+@pytest.mark.asyncio
+async def test_a04_failed_secondary_keeps_vision_gray_veto(tmp_path):
+    """不削弱安全保护: 二审调用失败（降级）时，文字广告同样不得单独升罚。"""
+    primary = FakeVision("primary", "ad", 0.99, needs_review=True)
+    secondary = FakeVision("review", "ad", 0.99, fails=True)
+    text = FakeText("text-model", "ad", 0.99)
+    decision, _ = await review_mixed(tmp_path, text, primary, secondary)
+    assert decision.verdict == "record_only"
+    assert decision.recommended_actions == []

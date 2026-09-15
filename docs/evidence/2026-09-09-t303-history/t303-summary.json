@@ -1,0 +1,46 @@
+{
+ "note": "脱敏副本 of data/t303_summary.json; real group ids replaced with anonymized codes (see README.md). Numbers unchanged.",
+ "decisions_by_kind_verdict": [
+  {"kind": "image", "verdict": "record_only", "n": 289},
+  {"kind": "text", "verdict": "record_only", "n": 264},
+  {"kind": "text", "verdict": "allow", "n": 187},
+  {"kind": "mixed", "verdict": "record_only", "n": 96},
+  {"kind": "unknown", "verdict": "record_only", "n": 51},
+  {"kind": "text", "verdict": "violation_high", "n": 22},
+  {"kind": "share_card", "verdict": "record_only", "n": 20},
+  {"kind": "image", "verdict": "allow", "n": 4},
+  {"kind": "unknown", "verdict": "allow", "n": 2},
+  {"kind": "video", "verdict": "record_only", "n": 2}
+ ],
+ "decisions_total": 937,
+ "verdicts": {
+  "record_only": 722,
+  "allow": 193,
+  "violation_high": 22
+ },
+ "groups": [
+  {"external_group_id": "", "provider": "qq_official", "n": 3},
+  {"external_group_id": "G-006", "provider": "onebot", "n": 76},
+  {"external_group_id": "OPENID-A", "provider": "qq_official", "n": 1},
+  {"external_group_id": "G-003", "provider": "onebot", "n": 163},
+  {"external_group_id": "G-002", "provider": "onebot", "n": 204},
+  {"external_group_id": "G-001", "provider": "onebot", "n": 314},
+  {"external_group_id": "G-004", "provider": "onebot", "n": 93},
+  {"external_group_id": "G-005", "provider": "onebot", "n": 83}
+ ],
+ "events_by_status": [
+  {"status": "FAILED", "error_kind": "lease_expired", "n": 4},
+  {"status": "PROCESSED", "error_kind": "", "n": 937}
+ ],
+ "events_total": 941,
+ "ai_usage": [
+  {"source": "cache", "model_id": "mimo-v2.5", "n": 439, "ok_n": 439, "avg_ms": 31046.85, "cost_cents": 0},
+  {"source": "degraded", "model_id": "mimo-v2.5", "n": 10, "ok_n": 0, "avg_ms": 0.0, "cost_cents": 0},
+  {"source": "text", "model_id": "mimo-v2.5", "n": 330, "ok_n": 330, "avg_ms": 25702.38, "cost_cents": 0},
+  {"source": "vision", "model_id": "mimo-v2.5", "n": 157, "ok_n": 157, "avg_ms": 32326.68, "cost_cents": 0}
+ ],
+ "ai_total": 936,
+ "action_intents_total": 0,
+ "ai_latency": {"p50": 29547, "p95": 41483, "max": 213875},
+ "decisions_before_window": 0
+}

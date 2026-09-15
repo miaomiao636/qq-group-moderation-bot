@@ -33,3 +33,5 @@ logs/
 
 # IDE 本地配置
 .codebuddy/
+# R08(ad323b6): 标签原文备份只允许留本地 data/，禁止入库（含聊天原文与联系方式）
+docs/evidence/**/w2_labels_all.pre-*.jsonl

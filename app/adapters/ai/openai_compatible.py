@@ -7,6 +7,7 @@ selected image bytes to `/chat/completions` and accepts only strict JSON.
 from __future__ import annotations
 
 import base64
+import hashlib
 import json
 import time
 from typing import Any
@@ -46,12 +47,18 @@ class OpenAICompatibleTextModerator:
         timeout_seconds: float = 5.0,
         client: httpx.AsyncClient | None = None,
         provider: str = "openai-compatible",
+        extra_system_rules: str = "",
     ) -> None:
         self.base_url = base_url.rstrip("/")
         self.api_key = api_key
         self.model_id = model_id
         self.prompt_version = prompt_version
         self.provider = provider
+        rules = extra_system_rules.strip()
+        self.system_prompt = f"{SYSTEM_PROMPT}\n{rules}" if rules else SYSTEM_PROMPT
+        # R05：实际生效提示词（含外置业务规则）的摘要，必须参与缓存指纹——
+        # 否则改规则后旧缓存仍命中，审核口径漂移。
+        self.prompt_digest = hashlib.sha256(self.system_prompt.encode("utf-8")).hexdigest()[:16]
         self._client = client or httpx.AsyncClient(timeout=timeout_seconds)
         self._owns_client = client is None
 
@@ -62,7 +69,7 @@ class OpenAICompatibleTextModerator:
             "temperature": 0,
             "response_format": {"type": "json_object"},
             "messages": [
-                {"role": "system", "content": SYSTEM_PROMPT},
+                {"role": "system", "content": self.system_prompt},
                 {
                     "role": "user",
                     "content": json.dumps(
@@ -131,7 +138,7 @@ class OpenAICompatibleVisionModerator(OpenAICompatibleTextModerator):
             "temperature": 0,
             "response_format": {"type": "json_object"},
             "messages": [
-                {"role": "system", "content": SYSTEM_PROMPT},
+                {"role": "system", "content": self.system_prompt},
                 {
                     "role": "user",
                     "content": [
@@ -192,8 +199,19 @@ def _extract_json_payload(data: dict[str, Any]) -> dict[str, Any]:
         raise AIProviderError("provider_invalid_choice_content")
     try:
         parsed = json.loads(content)
-    except json.JSONDecodeError as exc:
-        raise AIProviderError("provider_invalid_model_json") from exc
+    except json.JSONDecodeError:
+        # 部分兼容端点会返回 ```json ... ``` 代码围栏（实测 qwen3.8-flash 偶发），
+        # 剥掉围栏后重试一次；仍失败才判无效。
+        stripped = content.strip()
+        if stripped.startswith("```"):
+            stripped = stripped.split("\n", 1)[-1] if "\n" in stripped else stripped
+            stripped = stripped.rstrip()
+            if stripped.endswith("```"):
+                stripped = stripped[:-3].rstrip()
+        try:
+            parsed = json.loads(stripped)
+        except json.JSONDecodeError as exc:
+            raise AIProviderError("provider_invalid_model_json") from exc
     if not isinstance(parsed, dict):
         raise AIProviderError("provider_invalid_model_json")
     return parsed

@@ -13,7 +13,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any, Literal, cast
 
-from sqlalchemy import DateTime, Integer, String, Text, delete, func, select
+from sqlalchemy import DateTime, Integer, String, Text, delete, func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -29,7 +29,7 @@ FeedbackLabel = Literal[
     "unknown_recall",
     "other_recall",
 ]
-CandidateStatus = Literal["PROPOSED", "COPIED_TO_DRAFT", "DISMISSED"]
+CandidateStatus = Literal["PROPOSED", "COPIED_TO_DRAFT", "DISMISSED", "PURGED"]
 CandidateItemType = Literal["keyword", "phrase_combo", "domain", "share_source", "contact_combo"]
 
 POSITIVE_LABELS: set[str] = {"confirmed_violation"}
@@ -421,6 +421,60 @@ async def _refresh_proposed_candidate(
     return supported
 
 
+async def purge_dismissed_rule_candidates(
+    session: AsyncSession, *, operator: str
+) -> dict[str, int]:
+    """Remove discarded proposal content, not IDs or published provenance.
+
+    Keeping a minimal tombstone prevents a stale page/audit reference from
+    pointing at an unrelated new candidate after SQLite reuses a deleted ID.
+    Linked candidates are never cleared by this administrative list operation.
+    """
+    from app.models import AdminAudit
+
+    # Acquire the SQLite writer lock before selecting candidates. The status
+    # predicates and content updates then belong to one serialized transaction.
+    await session.execute(
+        update(RuleCandidate)
+        .where(RuleCandidate.status == "DISMISSED")
+        .values(status=RuleCandidate.status)
+        .execution_options(synchronize_session=False)
+    )
+    candidates = (
+        await session.scalars(
+            select(RuleCandidate)
+            .where(RuleCandidate.status == "DISMISSED")
+            .execution_options(populate_existing=True)
+        )
+    ).all()
+    purged_ids: list[int] = []
+    kept_linked = 0
+    for candidate in candidates:
+        if candidate.copied_version_id is not None:
+            kept_linked += 1
+            continue
+        candidate.status = "PURGED"
+        candidate.pattern = ""
+        candidate.replay_report_json = "{}"
+        purged_ids.append(candidate.id)
+    if purged_ids:
+        await session.execute(
+            delete(RuleCandidateExample).where(RuleCandidateExample.candidate_id.in_(purged_ids))
+        )
+    result = {"purged": len(purged_ids), "kept_linked": kept_linked}
+    session.add(
+        AdminAudit(
+            operator=operator[:64],
+            action="feedback_purge_dismissed",
+            target_type="rule_candidate",
+            target_id="batch",
+            detail_json=json.dumps(result),
+        )
+    )
+    await session.commit()
+    return result
+
+
 async def copy_candidate_to_draft(
     session: AsyncSession,
     candidate_id: int,
@@ -432,8 +486,8 @@ async def copy_candidate_to_draft(
     candidate = await session.get(RuleCandidate, candidate_id)
     if candidate is None:
         raise ValueError("候选规则不存在")
-    if candidate.status == "DISMISSED":
-        raise ValueError("已忽略的候选规则不能复制")
+    if candidate.status not in {"PROPOSED", "COPIED_TO_DRAFT"}:
+        raise ValueError("已忽略或已清理的候选规则不能复制")
     providers = (await _feedback_group_providers(session)).get(candidate.scope_key, set())
     candidate_provider = _safe_json(candidate.replay_report_json).get("provider")
     if candidate.scope != "group" or not candidate_provider or providers != {candidate_provider}:

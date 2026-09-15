@@ -28,12 +28,24 @@ _COUNT_KEYS = frozenset(
     {
         "processed_events_deleted",
         "violation_snapshots_purged",
+        "violation_evidence_purged",
+        "case_reasons_purged",
+        "shadow_content_purged",
+        "feedback_content_purged",
+        "candidate_patterns_purged",
+        "ai_cache_deleted",
         "action_logs_deleted",
         "media_files_deleted",
         "inbox_payloads_purged",
         "inbox_records_deleted",
         "notification_notices_deleted",
         "notification_deliveries_deleted",
+        "cases_archived",
+        "cases_purged",
+        "cases_cleanup_deferred",
+        "violation_records_purged",
+        "ai_usage_logs_deleted",
+        "candidates_expired",
     }
 )
 

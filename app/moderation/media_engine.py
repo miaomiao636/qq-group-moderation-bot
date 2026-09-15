@@ -11,6 +11,7 @@
 from __future__ import annotations
 
 import subprocess
+import tempfile
 from pathlib import Path
 
 from app.core.contracts import Attachment
@@ -113,7 +114,7 @@ def _extract_video_frames(
     out_dir.mkdir(parents=True, exist_ok=True)
     output_pattern = out_dir / "frame_%02d.png"
     try:
-        subprocess.run(
+        result = subprocess.run(
             [
                 "ffmpeg",
                 "-y",
@@ -130,6 +131,8 @@ def _extract_video_frames(
             check=False,
         )
     except (OSError, subprocess.TimeoutExpired):
+        return []
+    if result.returncode != 0:
         return []
     return sorted(out_dir.glob("frame_*.png"))
 
@@ -164,37 +167,41 @@ def evaluate_video(
             f"视频时长{duration:.0f}秒超过10分钟上限，只告警不审核",
         )
 
-    frames = _extract_video_frames(path, tmp_dir)
-    if not frames:
-        return _decision(
-            msg_message_id,
-            group_openid,
-            member_openid,
-            "record_only",
-            0.10,
-            "视频抽帧失败（ffmpeg不可用或无输出），只记录不判定",
-        )
+    # Each video owns only its fresh child directory. Never reuse or delete the
+    # caller's legacy shared frames; cleanup also runs after analysis exceptions.
+    tmp_dir.mkdir(parents=True, exist_ok=True)
+    with tempfile.TemporaryDirectory(prefix="video-", dir=tmp_dir) as frames_dir:
+        frames = _extract_video_frames(path, Path(frames_dir))
+        if not frames:
+            return _decision(
+                msg_message_id,
+                group_openid,
+                member_openid,
+                "record_only",
+                0.10,
+                "视频抽帧失败（ffmpeg不可用或无输出），只记录不判定",
+            )
 
-    verdicts = [image_engine.analyze(frame).verdict for frame in frames]
-    if any(v == "violation_high" for v in verdicts):
+        verdicts = [image_engine.analyze(frame).verdict for frame in frames]
+        if any(v == "violation_high" for v in verdicts):
+            return _decision(
+                msg_message_id,
+                group_openid,
+                member_openid,
+                "violation_high",
+                0.95,
+                f"视频{len(frames)}帧中存在违规帧",
+                "ad",
+            )
+        # 抽帧未命中任何黑名单即放行（正常视频的帧大多无先验标签，不能因"未知"而阻塞）
         return _decision(
             msg_message_id,
             group_openid,
             member_openid,
-            "violation_high",
-            0.95,
-            f"视频{len(frames)}帧中存在违规帧",
-            "ad",
+            "allow",
+            0.80,
+            f"视频{len(frames)}帧未命中违规黑名单",
         )
-    # 抽帧未命中任何黑名单即放行（正常视频的帧大多无先验标签，不能因"未知"而阻塞）
-    return _decision(
-        msg_message_id,
-        group_openid,
-        member_openid,
-        "allow",
-        0.80,
-        f"视频{len(frames)}帧未命中违规黑名单",
-    )
 
 
 def evaluate_file(
