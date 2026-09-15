@@ -46,6 +46,10 @@ _COUNT_KEYS = frozenset(
         "violation_records_purged",
         "ai_usage_logs_deleted",
         "candidates_expired",
+        # "15 天全副本工程"：登记式副本清理计数（2026-09-15）
+        "managed_copy_files_deleted",
+        "managed_copy_bytes_freed",
+        "managed_copy_dirs_removed",
     }
 )
 
