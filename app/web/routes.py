@@ -903,10 +903,13 @@ async def shadow_page(request: Request, verdict: str = "") -> Response:
         if records:
             from app.moderation.feedback import FeedbackRecord
 
+            # R-111-P2：按追加行 ID 倒序取「最新写入」——与学习侧
+            # _latest_feedback（max(ID)）同一口径；不得按 created_at（同秒/
+            # 时钟回拨时旧值会被误当最新，人工纠正可被编辑流程反转）。
             fb_rows = await session.execute(
-                select(FeedbackRecord).where(
-                    FeedbackRecord.message_id.in_([r.message_id for r in records])
-                )
+                select(FeedbackRecord)
+                .where(FeedbackRecord.message_id.in_([r.message_id for r in records]))
+                .order_by(FeedbackRecord.id.desc())
             )
             for f in fb_rows.scalars():
                 saved_map.setdefault(f.message_id, (f.label, f.reason or "", f.category or ""))
@@ -1036,7 +1039,11 @@ async def shadow_detail(request: Request, message_id: str = "") -> Response:
         fb = (
             (
                 await session.execute(
-                    select(FeedbackRecord).where(FeedbackRecord.message_id == message_id)
+                    select(FeedbackRecord)
+                    .where(FeedbackRecord.message_id == message_id)
+                    # R-111-P2：详情与列表、学习侧统一按最大写入 ID 取最新
+                    .order_by(FeedbackRecord.id.desc())
+                    .limit(1)
                 )
             )
             .scalars()

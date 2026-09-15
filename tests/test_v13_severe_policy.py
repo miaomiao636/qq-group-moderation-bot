@@ -258,13 +258,18 @@ def _cert_record_local() -> ModerationDecision:
     )
 
 
-def _severe_suspect(category: str, confidence: float = 0.40) -> AIModerationResult:
+def _severe_suspect(
+    category: str,
+    confidence: float = 0.40,
+    source: str = "text",
+    model_id: str = "text-model",
+) -> AIModerationResult:
     return AIModerationResult(
         category=category,  # type: ignore[arg-type]
         confidence=confidence,
         evidence="low-confidence severe suspect",
-        model_id="text-model",
-        source="text",
+        model_id=model_id,
+        source=source,  # type: ignore[arg-type]
         needs_review=True,
     )
 
@@ -292,7 +297,7 @@ def test_p2_text_ad_not_masking_vision_severe() -> None:
                 source="text",
                 needs_review=False,
             ),
-            _severe_suspect(category),
+            _severe_suspect(category, source="vision", model_id="vision-model"),
         ]
         decision = merge_ai_evidence(_local("无明显本地信号"), results)
         assert decision.verdict == "record_only", category
@@ -305,7 +310,7 @@ def test_p2_reverse_order_keeps_severe() -> None:
     """相反顺序（严重在前、ad 在后）：结果与正序一致。"""
     for category in ("fraud", "porn", "violence"):
         results = [
-            _severe_suspect(category),
+            _severe_suspect(category, source="vision", model_id="vision-model"),
             AIModerationResult(
                 category="ad",
                 confidence=0.75,
