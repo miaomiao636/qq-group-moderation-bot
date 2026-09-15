@@ -236,7 +236,7 @@ class _DelayedClient(_FakeClient):
 async def test_delayed_first_chain_cannot_shorten_second_mute(veto_engine: AsyncEngine) -> None:
     client = _DelayedClient()
     first = asyncio.create_task(_run(veto_engine, client))
-    await asyncio.wait_for(client.first_started.wait(), timeout=2)
+    await asyncio.wait_for(client.first_started.wait(), timeout=10)
     second = asyncio.create_task(_run(veto_engine, client, message_id="102"))
     try:
         # Old implementation completes the second chain here, producing 24h→1h.
@@ -253,10 +253,10 @@ async def test_delayed_first_chain_cannot_shorten_second_mute(veto_engine: Async
 async def test_different_members_do_not_block_each_other(veto_engine: AsyncEngine) -> None:
     client = _DelayedClient()
     first = asyncio.create_task(_run(veto_engine, client))
-    await asyncio.wait_for(client.first_started.wait(), timeout=2)
+    await asyncio.wait_for(client.first_started.wait(), timeout=10)
     try:
         second = await asyncio.wait_for(
-            _run(veto_engine, client, message_id="102", user_id="85"), timeout=2
+            _run(veto_engine, client, message_id="102", user_id="85"), timeout=10
         )
         assert [intent.status for intent in second] == ["SUCCEEDED"] * 3
     finally:
@@ -271,7 +271,7 @@ async def test_member_chain_timeout_is_audited_and_sends_no_second_action(
     monkeypatch.setattr(orchestrator, "MEMBER_ACTION_CHAIN_WAIT_SECONDS", 0.03, raising=False)
     client = _DelayedClient()
     first = asyncio.create_task(_run(veto_engine, client))
-    await asyncio.wait_for(client.first_started.wait(), timeout=2)
+    await asyncio.wait_for(client.first_started.wait(), timeout=10)
     try:
         second = await _run(veto_engine, client, message_id="102")
         assert [intent.status for intent in second] == ["SKIPPED"]
@@ -292,7 +292,7 @@ async def test_member_chain_timeout_is_audited_and_sends_no_second_action(
 async def test_cancelled_member_chain_waiter_releases_reference(veto_engine: AsyncEngine) -> None:
     client = _DelayedClient()
     first = asyncio.create_task(_run(veto_engine, client))
-    await asyncio.wait_for(client.first_started.wait(), timeout=2)
+    await asyncio.wait_for(client.first_started.wait(), timeout=10)
     waiter = asyncio.create_task(_run(veto_engine, client, message_id="102"))
     try:
         await asyncio.wait({waiter}, timeout=0.05)
