@@ -1,0 +1,376 @@
+{
+  "sent": 1005,
+  "processed": 1005,
+  "backlog_after_drain": 0,
+  "drained_after_seconds": 5.0,
+  "ai_calls": 1005,
+  "ai_ok": 977,
+  "ai_limited": 28,
+  "e2e_samples": 1005,
+  "e2e_p50": 2.7,
+  "e2e_p80": 7.1,
+  "e2e_p95": 21.2,
+  "db_bytes": 3420160,
+  "timeline": [
+    {
+      "t": 0.0,
+      "sent": 1,
+      "processed": 0,
+      "backlog": 1,
+      "ai_calls": 0,
+      "limited": 0
+    },
+    {
+      "t": 15.0,
+      "sent": 4,
+      "processed": 4,
+      "backlog": 0,
+      "ai_calls": 4,
+      "limited": 0
+    },
+    {
+      "t": 30.0,
+      "sent": 8,
+      "processed": 7,
+      "backlog": 1,
+      "ai_calls": 7,
+      "limited": 0
+    },
+    {
+      "t": 45.0,
+      "sent": 12,
+      "processed": 10,
+      "backlog": 2,
+      "ai_calls": 10,
+      "limited": 0
+    },
+    {
+      "t": 60.1,
+      "sent": 16,
+      "processed": 15,
+      "backlog": 1,
+      "ai_calls": 15,
+      "limited": 0
+    },
+    {
+      "t": 75.1,
+      "sent": 19,
+      "processed": 19,
+      "backlog": 0,
+      "ai_calls": 19,
+      "limited": 0
+    },
+    {
+      "t": 90.1,
+      "sent": 23,
+      "processed": 22,
+      "backlog": 1,
+      "ai_calls": 22,
+      "limited": 0
+    },
+    {
+      "t": 105.1,
+      "sent": 27,
+      "processed": 26,
+      "backlog": 1,
+      "ai_calls": 26,
+      "limited": 0
+    },
+    {
+      "t": 120.1,
+      "sent": 31,
+      "processed": 30,
+      "backlog": 1,
+      "ai_calls": 30,
+      "limited": 0
+    },
+    {
+      "t": 135.2,
+      "sent": 34,
+      "processed": 33,
+      "backlog": 1,
+      "ai_calls": 33,
+      "limited": 0
+    },
+    {
+      "t": 150.2,
+      "sent": 38,
+      "processed": 37,
+      "backlog": 1,
+      "ai_calls": 37,
+      "limited": 0
+    },
+    {
+      "t": 165.2,
+      "sent": 42,
+      "processed": 41,
+      "backlog": 1,
+      "ai_calls": 41,
+      "limited": 0
+    },
+    {
+      "t": 180.2,
+      "sent": 46,
+      "processed": 45,
+      "backlog": 1,
+      "ai_calls": 45,
+      "limited": 0
+    },
+    {
+      "t": 195.2,
+      "sent": 76,
+      "processed": 61,
+      "backlog": 15,
+      "ai_calls": 61,
+      "limited": 0
+    },
+    {
+      "t": 210.2,
+      "sent": 106,
+      "processed": 84,
+      "backlog": 22,
+      "ai_calls": 84,
+      "limited": 0
+    },
+    {
+      "t": 225.2,
+      "sent": 136,
+      "processed": 109,
+      "backlog": 27,
+      "ai_calls": 109,
+      "limited": 0
+    },
+    {
+      "t": 240.3,
+      "sent": 166,
+      "processed": 135,
+      "backlog": 31,
+      "ai_calls": 135,
+      "limited": 0
+    },
+    {
+      "t": 255.3,
+      "sent": 196,
+      "processed": 157,
+      "backlog": 39,
+      "ai_calls": 157,
+      "limited": 0
+    },
+    {
+      "t": 270.3,
+      "sent": 226,
+      "processed": 177,
+      "backlog": 49,
+      "ai_calls": 177,
+      "limited": 0
+    },
+    {
+      "t": 285.3,
+      "sent": 256,
+      "processed": 215,
+      "backlog": 41,
+      "ai_calls": 215,
+      "limited": 0
+    },
+    {
+      "t": 300.3,
+      "sent": 286,
+      "processed": 284,
+      "backlog": 3,
+      "ai_calls": 284,
+      "limited": 28
+    },
+    {
+      "t": 315.3,
+      "sent": 316,
+      "processed": 310,
+      "backlog": 6,
+      "ai_calls": 310,
+      "limited": 28
+    },
+    {
+      "t": 330.3,
+      "sent": 346,
+      "processed": 337,
+      "backlog": 9,
+      "ai_calls": 337,
+      "limited": 28
+    },
+    {
+      "t": 345.3,
+      "sent": 376,
+      "processed": 371,
+      "backlog": 5,
+      "ai_calls": 371,
+      "limited": 28
+    },
+    {
+      "t": 360.3,
+      "sent": 406,
+      "processed": 404,
+      "backlog": 2,
+      "ai_calls": 404,
+      "limited": 28
+    },
+    {
+      "t": 375.3,
+      "sent": 436,
+      "processed": 430,
+      "backlog": 6,
+      "ai_calls": 430,
+      "limited": 28
+    },
+    {
+      "t": 390.3,
+      "sent": 466,
+      "processed": 458,
+      "backlog": 8,
+      "ai_calls": 458,
+      "limited": 28
+    },
+    {
+      "t": 405.3,
+      "sent": 496,
+      "processed": 491,
+      "backlog": 5,
+      "ai_calls": 491,
+      "limited": 28
+    },
+    {
+      "t": 420.3,
+      "sent": 526,
+      "processed": 518,
+      "backlog": 8,
+      "ai_calls": 518,
+      "limited": 28
+    },
+    {
+      "t": 435.3,
+      "sent": 556,
+      "processed": 553,
+      "backlog": 3,
+      "ai_calls": 553,
+      "limited": 28
+    },
+    {
+      "t": 450.4,
+      "sent": 586,
+      "processed": 583,
+      "backlog": 3,
+      "ai_calls": 583,
+      "limited": 28
+    },
+    {
+      "t": 465.4,
+      "sent": 616,
+      "processed": 613,
+      "backlog": 3,
+      "ai_calls": 613,
+      "limited": 28
+    },
+    {
+      "t": 480.4,
+      "sent": 646,
+      "processed": 640,
+      "backlog": 6,
+      "ai_calls": 640,
+      "limited": 28
+    },
+    {
+      "t": 495.4,
+      "sent": 676,
+      "processed": 674,
+      "backlog": 2,
+      "ai_calls": 674,
+      "limited": 28
+    },
+    {
+      "t": 510.4,
+      "sent": 706,
+      "processed": 702,
+      "backlog": 4,
+      "ai_calls": 702,
+      "limited": 28
+    },
+    {
+      "t": 525.4,
+      "sent": 736,
+      "processed": 733,
+      "backlog": 3,
+      "ai_calls": 733,
+      "limited": 28
+    },
+    {
+      "t": 540.4,
+      "sent": 766,
+      "processed": 765,
+      "backlog": 1,
+      "ai_calls": 765,
+      "limited": 28
+    },
+    {
+      "t": 555.4,
+      "sent": 796,
+      "processed": 795,
+      "backlog": 1,
+      "ai_calls": 795,
+      "limited": 28
+    },
+    {
+      "t": 570.4,
+      "sent": 826,
+      "processed": 825,
+      "backlog": 1,
+      "ai_calls": 825,
+      "limited": 28
+    },
+    {
+      "t": 585.4,
+      "sent": 856,
+      "processed": 855,
+      "backlog": 1,
+      "ai_calls": 855,
+      "limited": 28
+    },
+    {
+      "t": 600.5,
+      "sent": 886,
+      "processed": 883,
+      "backlog": 3,
+      "ai_calls": 883,
+      "limited": 28
+    },
+    {
+      "t": 615.5,
+      "sent": 916,
+      "processed": 914,
+      "backlog": 2,
+      "ai_calls": 914,
+      "limited": 28
+    },
+    {
+      "t": 630.5,
+      "sent": 946,
+      "processed": 945,
+      "backlog": 1,
+      "ai_calls": 945,
+      "limited": 28
+    },
+    {
+      "t": 645.5,
+      "sent": 976,
+      "processed": 975,
+      "backlog": 1,
+      "ai_calls": 975,
+      "limited": 28
+    },
+    {
+      "t": 660.5,
+      "sent": 1005,
+      "processed": 1003,
+      "backlog": 2,
+      "ai_calls": 1003,
+      "limited": 28
+    }
+  ]
+}

@@ -9,7 +9,7 @@
 - 测试数字绑定环境：本机收集 1114 / 1101 passed / 13 条件跳过 / 0 失败；主审一/二轮 1098+1 / 1105+1；CI `4c57b6c` 1096+3、`bd5402c` 1103+3。
 - **CI 全绿已核验**（gh CLI）：feb821c 34877755494、4f7e90d 34877850499、bd5402c 34921914404、76ce10b 34924497413（三 job success）。
 - **已部署、已合并（2026-09-15）**：`d388ab5` 部署生效证据 + 生产后台反馈闭环实测通过（`docs/evidence/2026-09-15-deploy-d388ab5.md`）；PR #7 合并 main（`77ecaf3`）；真实动作保持关闭。
-- **2026-09-15 后续**：百群容量基线完成（`docs/evidence/2026-09-15-capacity-baseline.md`，压测第②③步待做）；独立新 W2 改为"线上抽样复测"（负责人采纳）；TUN 下载已获 Fake-IP 真实证据（待主审核验关闭）；~~未部署~~已部署。
+- **2026-09-15 后续**：百群容量基线+压测完成（`docs/evidence/2026-09-15-capacity-baseline.md`、`2026-09-15-capacity-loadtest.md`，优化建议：必改 `AI_DAILY_CALL_LIMIT`→25000+、建议限流 150–200 与 worker→6；工具 `scripts/capacity_loadtest.py`）；独立新 W2 改为"线上抽样复测"（负责人采纳）；TUN 下载已获 Fake-IP 真实证据（待主审核验关闭）。
 - P3 文档已同步（HANDOFF 顶部块 / PROJECT_CONTEXT / PROGRESS / 核验索引 / DECISIONS D-028 + PR #7 正文"最新核验入口"节）。
 
 ### R-110 / v13 严重类别策略整改（2026-09-15，已推送并部署；历史）
