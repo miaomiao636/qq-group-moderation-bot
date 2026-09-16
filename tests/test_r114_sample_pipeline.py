@@ -45,6 +45,13 @@ def _load(path: Path, name: str) -> Any:
         '{"ai_results": 3}',  # 非列表
         '{"ai_results": [{}]}',  # 空对象元素
         '{"ai_results": ["x"]}',  # 非对象元素
+        # R-114 F02 残余：degraded_reason 必须为字符串（缺失/非字符串均不可默认可用）
+        '{"ai_results": [{"model_id": "m"}]}',  # 缺 degraded_reason
+        '{"ai_results": [{"model_id": "m", "degraded_reason": null}]}',
+        '{"ai_results": [{"model_id": "m", "degraded_reason": false}]}',
+        '{"ai_results": [{"model_id": "m", "degraded_reason": 0}]}',
+        '{"ai_results": [{"model_id": "m", "degraded_reason": []}]}',
+        '{"ai_results": [{"model_id": "m", "degraded_reason": {}}]}',
     ],
 )
 def test_unavailable_from_detail_rejects_unknown_or_broken(raw: object) -> None:
