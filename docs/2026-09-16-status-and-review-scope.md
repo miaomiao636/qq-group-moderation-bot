@@ -12,9 +12,9 @@
 | 审核（判定/记录） | 全量运行——收到消息的群全部判定入库（无记录群**默认审核启用**，历史行为） |
 | 真实动作（撤回） | 仅 13 个显式授权群（action_enabled=1）；其他群**默认关** |
 | 急停 | 已解除（负责人 09-16 确认"恢复动作"；审计 emergency_resume） |
-| 白名单 | 1 词（负责人维护，**启用中**）——W01 修复后为"**仅免广告**"语义 |
+| 白名单 | 1 词（负责人维护，**启用中**；C01–C03 修复部署后已于 22:10 恢复启用、审计留痕）——W01 修复后为"**仅免广告**"语义 |
 | 通知 | 邮件通道正常；QQ 通知通道待负责人将新号拉入通知群（1043951076）后自动恢复 |
-| 服务 | QQBotRuntime + QQBotWeb 运行中（已加载全部修复；healthz ok） |
+| 服务 | QQBotRuntime + QQBotWeb 运行中——22:07 提权重启加载全部修复（QQBotRuntime PID 29388 / QQBotWeb PID 44672）；healthz ok、NapCat ready/online |
 | 数据库 | alembic head = **b8d4f2a05e31**（`alembic check` 零漂移） |
 
 ## 二、今日变更汇总（按主题）
@@ -48,8 +48,9 @@
    - C02 广告证据不参与处罚——AI/DR 广告证据不进处罚候选；非广告证据独立达原门槛
      （DR 高门槛 0.90 / AI 确认）才升级，弱严重信号转人工（record_only、空建议）；
    - C03 故障/未知不放行——AI 失败/配置错误/needs_review/未知类别一律转人工；
-   - 回归：主审交付包 4 探针正式入库（共 52 项），修复前 10 failed → **52/52**；
-     止损：白名单词再次停用（修复上线后由负责人恢复）。
+- 回归：主审交付包 4 探针正式入库（共 52 项），修复前 10 failed → **52/52**；
+  止损与恢复：白名单词先停用（风险窗口）；修复部署（22:07 重启）后已于 22:10
+  恢复启用（审计 `ops:owner-allowlist-resume-c01c03-2026-09-16`）。
 
 ## 三、待主审复核清单（本轮提交）
 
@@ -77,13 +78,23 @@ $env:PYTHONPATH = "$repo;$repo\tests"
   等价词无重复生效**（接口已按最小修复调整：显式 `target_enabled` 字段；
   旧对象操作返回"不存在"/幂等——对应主审报告允许的等价调整）。
 
+**本轮 R-115 回归（6 个文件，主审可整体复跑）**：
+
+```powershell
+.\.venv\Scripts\python.exe -m pytest -c pyproject.toml -p conftest tests/test_r115_w01_policy_probe.py tests/test_r115_policy_overlap.py tests/test_r115_w01_residual.py tests/test_r115_allowlist.py tests/test_r115_admin_reaccept.py tests/test_r115_admin_migration.py -q -o addopts=""
+```
+
 ## 四、本地验证数据（本次交付）
 
-- 全量回归：**1249 collected / 0 failed / 1234 passed / 15 skipped**；
+- 全量回归（C01–C03 修复后最终版）：**1301 collected / 0 failed / 1286 passed / 15 skipped**
+  （15 项跳过为环境依赖：符号链接权限、生产服务运行时锁快照守卫等，非代码缺陷）；
 - ruff check / format、mypy（87 源文件）通过；CI（ubuntu + windows + 干净依赖）全绿；
 - 本地 SQLite 迁移 `upgrade → downgrade → upgrade` 通过，迁移前备份
   `data/moderation.db.bak-before-r115w`；
-- 运行时：healthz `ok`、NapCat `ready/online`、connect_count=1。
+- 运行时：healthz `ok`、NapCat `ready/online`、connect_count=1；
+- 部署与恢复（09-16 晚）：22:07 提权重启（QQBotRuntime PID 29388 / QQBotWeb PID 44672）
+  加载全部修复；22:10 白名单词恢复启用（审计 `ops:owner-allowlist-resume-c01c03-2026-09-16`）；
+  换号后真实动作正常（当日 190 成功 / 10 次 QQ 侧偶发 recall 超时，非权限问题，已留痕）。
 
 ## 五、已知边界与未包含（透明说明）
 
