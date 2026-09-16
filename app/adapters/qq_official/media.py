@@ -23,6 +23,8 @@ from typing import Any
 
 import httpx
 
+from app.core.fs_guard import chain_has_link, is_link_like
+
 logger = logging.getLogger(__name__)
 
 # 单文件大小上限（字节）。图片/语音/文件 50MB，视频 200MB。
@@ -429,10 +431,19 @@ async def download_attachment(
 def purge_media(media_dir: Path, retention_days: int = 30, now: float | None = None) -> int:
     """删除过期媒体并返回计数；真实 I/O 失败向上传播，不伪报清理成功。
 
+    R-114 F01：与登记副本清理共用同一边界保护（app.core.fs_guard）——媒体根或
+    任一祖先为符号链接/junction/重解析点时**整体拒绝**（fail-closed，返回 0
+    不删任何文件）；每个候选文件在扫描后与 unlink 前均按完整祖先链复核
+    （防扫描后替换的 TOCTOU）。
     文件可能已被并发清理，FileNotFoundError 可忽略。其他错误必须交给
     maintenance 记录固定失败码；此前已删除的文件不会随数据库回滚而恢复。
     """
     if not media_dir.exists():
+        return 0
+    root = media_dir.parent
+    if chain_has_link(root, media_dir):
+        # 根被链接到未登记目录（如 media → unknown_keep）时，iterdir 会跟随
+        # 进入并删除未登记原件；必须整体拒绝而不是逐文件放行。
         return 0
     cutoff = (now or time.time()) - retention_days * 86400
     deleted = 0
@@ -440,7 +451,11 @@ def purge_media(media_dir: Path, retention_days: int = 30, now: float | None = N
         if not f.is_file() or f.suffix == ".part":
             continue
         try:
+            if is_link_like(f) or chain_has_link(root, f):
+                continue
             if f.stat().st_mtime < cutoff:
+                if is_link_like(f) or chain_has_link(root, f):
+                    continue  # 扫描后替换为链接：删除前完整链复核（TOCTOU）
                 f.unlink()
                 deleted += 1
         except FileNotFoundError:

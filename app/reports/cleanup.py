@@ -11,7 +11,6 @@
 from __future__ import annotations
 
 import json
-import stat
 import time
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
@@ -439,45 +438,22 @@ def _managed_copy_root() -> Path:
     return MEDIA_DIR.parent
 
 
-_REPARSE_POINT_ATTRIBUTE = getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0x400)
+# R-114 F01：链接/重解析点守卫已抽到 app.core.fs_guard（普通媒体与登记副本
+# 删除共用同一套边界保护）。保留私有包装兼容本模块既有引用与回归测试。
 
 
 def _is_link_like(p: Path) -> bool:
-    """符号链接 / Windows junction / 其他重解析点——一律拒绝（R-112 N01）。
+    """符号链接 / junction / 重解析点判定（委托 app.core.fs_guard，R-114 F01）。"""
+    from app.core.fs_guard import is_link_like
 
-    登记名若被链接到根内未登记目录，旧实现仅校验 resolve 后仍在 data 根内，
-    会跟随链接删除未登记目录的原文件，违反 D-026"不得按未知目录批量删除"。
-    遍历与删除前均须先过此关；无法确认属性时按链接处理（fail-closed）。
-    """
-    try:
-        if p.is_symlink():
-            return True
-        st = p.lstat()
-    except OSError:
-        return True
-    return bool(getattr(st, "st_file_attributes", 0) & _REPARSE_POINT_ATTRIBUTE)
+    return is_link_like(p)
 
 
 def _chain_has_link(root: Path, target: Path) -> bool:
-    """从数据根到目标的**每一级**（含目标）检查链接/重解析点（R-113 F01）。
+    """从数据根到目标每一级检查链接（委托 app.core.fs_guard，R-114 F01）。"""
+    from app.core.fs_guard import chain_has_link
 
-    旧实现只查叶节点：`data/media`（祖先）是链接时无法发现，遍历会沿链接
-    删除未登记目录的原文件（主审合成复现：media → unknown_keep 后
-    media/_frames 被错删）。这里逐级核对，任一级为链接即整体拒绝
-    （fail-closed）；目标不在根内同样拒绝。
-    """
-    try:
-        rel = target.relative_to(root)
-    except ValueError:
-        return True
-    current = root
-    if _is_link_like(current):
-        return True
-    for part in rel.parts:
-        current = current / part
-        if _is_link_like(current):
-            return True
-    return False
+    return chain_has_link(root, target)
 
 
 def _resolve_managed_targets(root: Path, pattern: str) -> list[Path]:
