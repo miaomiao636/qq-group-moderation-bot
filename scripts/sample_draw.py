@@ -28,6 +28,38 @@ OUT_DIR = ROOT / "data" / "sample_pool"
 PROD_DB = ROOT / "data" / "moderation.db"
 
 
+def unavailable_from_detail(raw_detail: object) -> str:
+    """从存储详情恢复 unavailable 状态（R-114 F02：未知/损坏不得默认可用）。
+
+    契约值域（app.reports.evaluation）："" 正常 / "degraded" 已知降级 / "error" 已知错误。
+    - 空/NULL 详情、损坏 JSON、非对象、pipeline 的 parse_error 记录 → "error"；
+    - ai_results 键缺失 / null / 非列表（正常写入必为列表，见详情构造）→ "error"；
+    - 元素非对象或空对象 → "error"；元素 degraded_reason 非空 → "degraded"；
+    - 显式空列表 []（未调用 AI）与全部元素正常 → ""。
+    """
+    if not isinstance(raw_detail, str) or not raw_detail.strip():
+        return "error"
+    try:
+        detail = json.loads(raw_detail)
+    except json.JSONDecodeError:
+        return "error"
+    if not isinstance(detail, dict):
+        return "error"
+    if str(detail.get("parse_error") or "").strip():
+        return "error"
+    if "ai_results" not in detail or detail.get("ai_results") is None:
+        return "error"
+    results = detail.get("ai_results")
+    if not isinstance(results, list):
+        return "error"
+    for ai in results:
+        if not isinstance(ai, dict) or not ai:
+            return "error"
+        if str(ai.get("degraded_reason") or "").strip():
+            return "degraded"
+    return ""
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--since", default="2026-09-15", help="起始日期（含），默认今天")
@@ -70,12 +102,8 @@ def main() -> int:
                 detail = json.loads(r[9] or "{}")
             except json.JSONDecodeError:
                 detail = {}
-            # R-113 F02：降级状态从存储详情恢复为 unavailable（未知不得默认可用）
-            degraded = ""
-            for ai in detail.get("ai_results") or []:
-                if isinstance(ai, dict) and str(ai.get("degraded_reason") or "").strip():
-                    degraded = "degraded"
-                    break
+            # R-114 F02：状态恢复抽为纯函数——损坏/未知不得默认可用（含 parse_error）
+            unavailable = unavailable_from_detail(r[9])
             item = {
                 "sample_id": str(r[0]).split(":")[-1],
                 "message_id": str(r[0]),
@@ -88,7 +116,7 @@ def main() -> int:
                 "reason": str(r[8])[:200],
                 "text_preview": str(detail.get("text_preview") or "")[:200],
                 "media_kinds": detail.get("media_kinds") or [],
-                "unavailable": degraded,
+                "unavailable": unavailable,
                 "created_at": str(r[10]),
                 "label": "",
                 "truth_category": "",

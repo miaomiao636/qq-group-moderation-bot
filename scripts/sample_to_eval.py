@@ -13,13 +13,14 @@ media_kinds 等），与 `app.reports.evaluation.EvaluationSample` 的 11 字段
       --output data/sample_pool/eval_20260915.jsonl \\
       --model-revision qwen3.8-flash --rule-revision t204-v13
 
-契约与限制（R-112 N07 主审要求）：
+契约与限制（R-112 N07 / R-114 F02-F03 主审要求）：
 - label 只来自人工；truth_category 只来自人工——写了 label 却没类别时直接报错；
 - 未标注行（label 为空）跳过并计数报告，不静默、不凭空补历史真值；
 - verdict = 系统判定（system_verdict）；延迟未测：latency_ms=null 且
   latency_source="none"（不得用 0 或 AI 子链耗时冒充端到端延迟）；
 - unavailable **必须由上游（sample_draw）从存储详情恢复后给出**（R-113 F02：
-  缺字段直接拒绝——未知不得默认可用）；已知降级为 "degraded"，正常为 ""；
+  缺字段直接拒绝——未知不得默认可用）；合法值域 ""/"degraded"/"error"，
+  R-114 F02 起对 null/布尔/数字/容器类型一律拒绝（不得再用 or "" 洗值）；
 - model_revision / rule_revision 由参数给定（判定窗口内的实际版本）。
   期间换过模型/提示词时须按消息时间分段转换，**不得把当前版本回填给历史样本**；
 - 输出**独占创建**（R-113 F03）：拒绝与输入同源、拒绝覆盖已存在文件；
@@ -32,6 +33,8 @@ import argparse
 import json
 import os
 import sys
+import tempfile
+from contextlib import suppress
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -67,6 +70,12 @@ def convert_row(
             f"缺少 unavailable 字段——须先由 sample_draw 从存储详情恢复降级状态，"
             f"未知不得默认可用（sample_id={row.get('sample_id')}）"
         )
+    raw_unavailable = row.get("unavailable")
+    if not isinstance(raw_unavailable, str) or raw_unavailable not in ("", "degraded", "error"):
+        raise ValueError(
+            f'unavailable 必须为 ""/"degraded"/"error" 字符串枚举——拒绝 null/布尔/'
+            f"数字/容器类型（sample_id={row.get('sample_id')}）"
+        )
     fields: dict[str, object] = {
         "sample_id": str(row.get("message_id") or row.get("sample_id") or ""),
         "label": label,
@@ -76,7 +85,7 @@ def convert_row(
         "kind": _KIND_MAP.get(str(row.get("kind") or ""), str(row.get("kind") or "")),
         "latency_ms": None,
         "latency_source": "none",
-        "unavailable": str(row.get("unavailable") or ""),
+        "unavailable": raw_unavailable,
         "model_revision": model_revision,
         "rule_revision": rule_revision,
     }
@@ -114,11 +123,29 @@ def convert_file(
             else:
                 out_rows.append(item)
     dst.parent.mkdir(parents=True, exist_ok=True)
-    tmp = dst.with_name(dst.name + ".tmp")
-    with tmp.open("w", encoding="utf-8", newline="\n") as f:
-        for item in out_rows:
-            f.write(json.dumps(item, ensure_ascii=False) + "\n")
-    os.replace(tmp, dst)  # 原子替换：中途失败不破坏已有字节（R-113 F03）
+    # R-114 F03：独占创建随机临时文件（不再固定 .tmp 名——既不覆盖输入，
+    # 也不覆盖他人临时文件）；失败时只清理本次创建的文件。
+    fd, tmp_name = tempfile.mkstemp(prefix=dst.name + ".", suffix=".tmp", dir=str(dst.parent))
+    tmp = Path(tmp_name)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8", newline="\n") as f:
+            for item in out_rows:
+                f.write(json.dumps(item, ensure_ascii=False) + "\n")
+        if force:
+            os.replace(tmp, dst)  # 显式 force：允许替换指定输出（不动输入）
+        else:
+            try:
+                # 原子独占发布：目标已存在（含竞争创建）→ FileExistsError，
+                # 不覆盖任何文件（R-114 F03 关闭标准）。
+                os.link(tmp, dst)
+            except FileExistsError:
+                raise ValueError(
+                    f"输出已存在：{dst}（默认拒绝覆盖；确需重跑请显式 --force）"
+                ) from None
+            tmp.unlink()
+    finally:
+        with suppress(OSError):
+            tmp.unlink(missing_ok=True)
     positives = sum(1 for r in out_rows if r["label"] == "confirmed_violation")
     stats = {
         "total": total,
