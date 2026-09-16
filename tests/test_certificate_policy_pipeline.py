@@ -90,7 +90,7 @@ async def test_certificate_ad_exception_survives_real_ai_pipeline(tmp_path, monk
             ai_service=ai,
         )
     assert record is not None
-    assert record.verdict == "record_only"
+    assert record.verdict == "allow"  # 2026-09-16 口径 A：完全放行（AI ad 0.99 不撤销豁免）
     detail = json.loads(record.detail_json)
     assert detail["recommended_actions"] == []
     assert detail["ai_results"]
@@ -163,6 +163,8 @@ def test_severe_category_scan_preserves_existing_porn_precedence(extra_severe):
 
 @pytest.mark.parametrize("category", ["ad", "fraud", "porn"])
 def test_independent_ai_pair_respects_only_the_certificate_ad_exception(category):
+    """2026-09-16 口径 A：办证完全放行——独立 AI 二审（含严重类别确认）
+    不得升级或转人工（仅记录证据）。"""
     local = TextRuleEngine().evaluate(_message("办证，加我微信 synthetic_contact"))
     results = [
         AIModerationResult(
@@ -178,9 +180,8 @@ def test_independent_ai_pair_respects_only_the_certificate_ad_exception(category
         for model_id, role in (("synthetic-primary", "primary"), ("synthetic-review", "secondary"))
     ]
     decision = merge_ai_evidence(local, results)
-    assert decision.verdict == ("record_only" if category == "ad" else "violation_high")
-    if category == "ad":
-        assert decision.recommended_actions == []
+    assert decision.verdict == "allow"
+    assert decision.recommended_actions == []
 
 
 def test_certificate_marker_text_is_not_a_policy_permission():

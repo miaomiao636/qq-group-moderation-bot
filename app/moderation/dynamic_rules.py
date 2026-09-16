@@ -552,7 +552,7 @@ class DynamicRuleEngine:
                     rule_name=item.item_type,
                     category=_category_or_other(item.category),
                     confidence_delta=item.weight,
-                    evidence_masked=f"动态规则命中:{item.item_type}",
+                    evidence_masked=f"动态规则命中:{item.item_type}:{str(item.pattern)[:60]}",
                 )
             )
 

@@ -24,7 +24,7 @@ from app.actions.orchestrator import (
 from app.core.contracts import MessageParseError, MessageSource, StandardMessage
 from app.core.dedup import begin_processing, mark_failed, mark_processed
 from app.moderation.ai import AIReviewService
-from app.moderation.decision import ModerationDecision
+from app.moderation.decision import CERTIFICATE_AD_ALLOW_RULE_ID, ModerationDecision
 from app.moderation.dynamic_rules import load_cached_active_snapshot
 from app.moderation.image_engine import ImageModerationEngine, MediaAnalysis, merge_decisions
 from app.moderation.media_engine import evaluate_file, evaluate_video, evaluate_voice
@@ -344,6 +344,7 @@ async def _run_pipeline(
             elif (
                 any(d.verdict == "record_only" for d in media_decisions)
                 and decision.verdict == "allow"
+                and not any(h.rule_id == CERTIFICATE_AD_ALLOW_RULE_ID for h in decision.rule_hits)
             ):
                 decision = decision.model_copy(
                     update={"verdict": "record_only", "reason": "媒体部分转人工"}

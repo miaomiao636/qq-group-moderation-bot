@@ -68,11 +68,11 @@ AD_INTENT_MARKERS: tuple[str, ...] = (
 ALLOWED_SHARE_SOURCES: tuple[str, ...] = ("万能校园墙",)
 SEVERE_CATEGORIES: set[str] = {"porn", "violence", "fraud"}
 
-# R07（ad323b6 主审）：办证/学历类内容的本地规则例外。
-# 负责人 2026-09-12 口径「办证类一律正常处理」此前只写入 AI 提示词（t204-v9），
-# 本地硬规则（R001 黑名单/联系方式组合）在 AI 之前就判 violation_high，口径未生效。
-# 此处与提示词同源实现：命中办证类词且仅命中 ad 类内置规则时，不撤回、转记录；
-# 动态规则（DR_,管理员显式发布）与严重类别（fraud/porn/violence）不享受例外。
+# R07（ad323b6）+ 负责人 2026-09-16 口径 A：办证/学历类内容**完全放行**。
+# 演进：2026-09-12「不撤回、转记录」→ 2026-09-16「不处罚、不转人工」（allow）。
+# 保留的例外：本地含严重类别词（category≠ad，B-2）与硬黑名单（R001）。
+# AI 结果与办证类动态规则不得升级或转人工（见 _merge_dynamic_decision 与
+# ai.merge_ai_evidence 的本口径保护；R-113 事故：反馈挖掘"办证=fraud"DR 曾致真实撤回）。
 _CERTIFICATE_SERVICE_TERMS: tuple[str, ...] = (
     "办证",
     "代做学历",
@@ -93,6 +93,18 @@ def _is_certificate_service_content(text: str) -> bool:
         return False
     variant = apply_variants(text)
     return any(term in variant for term in _CERTIFICATE_SERVICE_TERMS)
+
+
+def _is_certificate_dr_hit(hit: RuleHit) -> bool:
+    """动态规则命中且其 pattern 属于办证类词（2026-09-16 口径 A 的防再犯识别）。
+
+    R-113 事故：反馈挖掘发布"办证→fraud"DR 后，办证广告被升级为诈骗并真实撤回。
+    DR 的 evidence_masked 现携带 pattern（dynamic_rules.py），据此识别"办证自身"；
+    非办证类的显式 DR（如运营发布的其他阻断词）继续照常生效。
+    """
+    return hit.rule_id.startswith("DR_") and any(
+        term in str(hit.evidence_masked) for term in _CERTIFICATE_SERVICE_TERMS
+    )
 
 
 # 明确黑名单词（命中即贡献0.70，覆盖实测样本与常见违法词）。
@@ -481,23 +493,21 @@ class TextRuleEngine:
             confidence = max(confidence, 0.95)
             actions = list(_HIGH_ACTIONS)
             reason = "未知来源分享卡片含明确引流或违规证据"
-        elif (
-            _is_certificate_service_content(msg.text)
-            and category == "ad"
-            and not any(h.rule_id.startswith("DR_") for h in hits)
-        ):
-            # R07：办证/学历类口径（负责人 2026-09-12）与 AI 提示词一致实现——
-            # 仅豁免内置 ad 类本地规则；fraud/porn 等严重类别与动态规则不豁免。
-            # 不撤回不立案，转 record_only 留痕供人工复核。
-            verdict = "record_only"
+        elif _is_certificate_service_content(msg.text) and category not in SEVERE_CATEGORIES:
+            # 负责人 2026-09-16 口径 A：办证/学历类**完全放行**（不处罚、不转人工）。
+            # category 为 None（纯办证文案零内置命中）或 ad 均放行——**关键**：即使
+            # 无其他命中也要打上豁免标记，AI/动态规则/媒体层据此不得升级。
+            # 保留的唯一例外：本地含严重类别词（category∈porn/violence/fraud，B-2）。
+            verdict = "allow"
+            confidence = 0.0
             actions = []
-            reason = "办证/学历类内容按负责人口径放行（不撤回），转记录"
+            reason = "办证/学历类内容按负责人口径放行"
             hits.append(
                 RuleHit(
                     rule_id=CERTIFICATE_AD_ALLOW_RULE_ID,
                     rule_name="certificate_ad_scope",
                     category="ad",
-                    evidence_masked="本地办证广告例外；AI 不得覆盖，严重类别和显式动态规则另判",
+                    evidence_masked="本地办证例外（负责人 2026-09-16 完全放行）；AI 与动态规则不得升级",
                 )
             )
         elif has_hard_blacklist:
@@ -546,6 +556,19 @@ class TextRuleEngine:
         dynamic = DynamicRuleEngine(self._rule_snapshot).evaluate(msg)
         if not dynamic.rule_hits:
             return base
+        # 2026-09-16 口径 A：办证豁免（allow）时，办证类动态规则只记录——
+        # 不得升级为违规或转人工（R-113 事故防再犯；非办证类显式 DR 照常生效）。
+        if (
+            base.verdict == "allow"
+            and any(h.rule_id == CERTIFICATE_AD_ALLOW_RULE_ID for h in base.rule_hits)
+            and all(_is_certificate_dr_hit(h) for h in dynamic.rule_hits)
+        ):
+            return base.model_copy(
+                update={
+                    "rule_hits": base.rule_hits + dynamic.rule_hits,
+                    "reason": base.reason + "；办证豁免：办证类动态规则仅记录",
+                }
+            )
         if dynamic.verdict == "allow" and base.verdict == "violation_high":
             return base.model_copy(
                 update={

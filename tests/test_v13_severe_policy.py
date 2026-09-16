@@ -62,10 +62,10 @@ def test_scenario1_local_severe_with_certificate_words_punished() -> None:
 
 
 def test_scenario1_control_plain_certificate_recorded_only() -> None:
-    """纯办证（无严重词）：转人工记录，不处罚（负责人口径）。"""
+    """纯办证（无严重词）：**完全放行**（2026-09-16 口径 A：不处罚不转人工）。"""
     engine = TextRuleEngine()
     decision = engine.evaluate(_msg("专业办证 代做学历证书 学信网可查 加我微信"))
-    assert decision.verdict == "record_only"
+    assert decision.verdict == "allow"
     assert decision.recommended_actions == []
 
 
@@ -252,10 +252,8 @@ def test_boundary_protected_sender_never_punished() -> None:
 
 
 def _cert_record_local() -> ModerationDecision:
-    """本地办证路径：record_only + 类别 ad + 高置信（0.95）。"""
-    return _local("办证内容").model_copy(
-        update={"verdict": "record_only", "category": "ad", "confidence": 0.95}
-    )
+    """本地办证路径（2026-09-16 口径 A）：直接取 engine 真实产出（allow + 办证豁免）。"""
+    return TextRuleEngine().evaluate(_msg("专业办证 代做学历证书 学信网可查 加我微信"))
 
 
 def _severe_suspect(
@@ -275,13 +273,12 @@ def _severe_suspect(
 
 
 def test_p2_local_ad_not_masking_severe_suspect() -> None:
-    """组A（本地办证 ad + AI 低置信严重）：严重类别与置信度同源保留；
-    仍 record_only 且无处罚建议——负责人底线：办证不判违规。"""
+    """组A（本地办证 + AI 低置信严重）：2026-09-16 口径 A——办证**完全放行**，
+    AI 疑似不改变判定、不转人工（严重疑似的保留逻辑仍由组 B/场景③
+    覆盖非办证路径）。"""
     for category in ("fraud", "porn", "violence"):
         decision = merge_ai_evidence(_cert_record_local(), [_severe_suspect(category)])
-        assert decision.verdict == "record_only", category
-        assert decision.category == category, category
-        assert decision.confidence == 0.40, category  # 不得冒充本地广告 0.95
+        assert decision.verdict == "allow", category
         assert decision.recommended_actions == [], category
 
 
@@ -340,7 +337,7 @@ def test_p2_multiple_severe_deterministic_selection() -> None:
 
 
 def test_p2_control_no_severe_keeps_previous_behavior() -> None:
-    """控制：无严重疑似时不改变既有类别选择（本地办证 ad + AI ad → 保持 ad/0.95）。"""
+    """控制：无严重疑似时办证仍为放行（2026-09-16 口径 A：allow、无动作）。"""
     results = [
         AIModerationResult(
             category="ad",
@@ -352,6 +349,5 @@ def test_p2_control_no_severe_keeps_previous_behavior() -> None:
         )
     ]
     decision = merge_ai_evidence(_cert_record_local(), results)
-    assert decision.verdict == "record_only"
-    assert decision.category == "ad"
-    assert decision.confidence == 0.95
+    assert decision.verdict == "allow"
+    assert decision.recommended_actions == []
