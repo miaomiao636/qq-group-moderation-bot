@@ -13,6 +13,7 @@ from __future__ import annotations
 import json
 
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models import AdminAudit, AllowlistTerm
@@ -38,15 +39,23 @@ def match_allowlist(text: str, normalized_terms: frozenset[str]) -> str | None:
 
 
 async def load_allowlist_terms(session: AsyncSession) -> frozenset[str]:
-    """每消息 fresh 读取启用中的白名单（跨进程立即生效；fail-closed）。"""
+    """每消息 fresh 读取启用中的白名单（跨进程立即生效；fail-closed）。
+
+    R-115 W04：同一归一化词若存在多行（唯一约束上线前的历史残留），
+    **全部启用才生效**——不静默取更宽松值；迁移已核查现库无重复。
+    """
     try:
         async with AsyncSession(bind=session.bind) as reader:
             rows = (
-                await reader.scalars(
-                    select(AllowlistTerm.normalized).where(AllowlistTerm.enabled.is_(True))
-                )
+                await reader.execute(select(AllowlistTerm.normalized, AllowlistTerm.enabled))
             ).all()
-        return frozenset(str(row).strip() for row in rows if str(row).strip())
+        effective: dict[str, bool] = {}
+        for normalized, enabled in rows:
+            key = str(normalized).strip()
+            if not key:
+                continue
+            effective[key] = effective.get(key, True) and bool(enabled)
+        return frozenset(key for key, ok in effective.items() if ok)
     except Exception:  # noqa: BLE001 — 读不到就不放行任何内容（fail-closed）
         return frozenset()
 
@@ -77,7 +86,18 @@ async def add_term(session: AsyncSession, raw: str, *, operator: str) -> tuple[A
             detail_json=json.dumps({"term": term}),
         )
     )
-    await session.commit()
+    try:
+        await session.commit()
+    except IntegrityError:
+        # R-115 W04：并发等价词同时通过"先查"——由 normalized 唯一约束兜底。
+        # 回滚后安全复用已有项（启停状态原样保留，不静默取更宽松值）。
+        await session.rollback()
+        existing = await session.scalar(
+            select(AllowlistTerm).where(AllowlistTerm.normalized == normalized)
+        )
+        if existing is None:
+            raise
+        return existing, False
     await session.refresh(row)
     return row, True
 
@@ -85,10 +105,11 @@ async def add_term(session: AsyncSession, raw: str, *, operator: str) -> tuple[A
 async def set_term_enabled(
     session: AsyncSession, term_id: int, enabled: bool, *, operator: str
 ) -> AllowlistTerm:
-    """启用/停用单条（立即生效；审计）。"""
+    """启用/停用单条（幂等 set —— 重复同目标不改变状态；立即生效；审计含实际变更）。"""
     row = await session.get(AllowlistTerm, term_id)
     if row is None:
         raise ValueError("白名单词不存在")
+    before = bool(row.enabled)
     row.enabled = enabled
     session.add(
         AdminAudit(
@@ -96,7 +117,14 @@ async def set_term_enabled(
             action="allowlist_enable" if enabled else "allowlist_disable",
             target_type="allowlist_term",
             target_id=row.normalized,
-            detail_json=json.dumps({"term": row.term, "enabled": enabled}),
+            detail_json=json.dumps(
+                {
+                    "term": row.term,
+                    "enabled": enabled,
+                    "before": before,
+                    "changed": before != enabled,
+                }
+            ),
         )
     )
     await session.commit()

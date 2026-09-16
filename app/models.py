@@ -128,17 +128,21 @@ class HiddenGroup(Base):
 
 
 class AllowlistTerm(Base):
-    """全局白名单词（负责人 2026-09-16）：命中且非严重类别 → 完全放行。
+    """全局白名单词（负责人 2026-09-16）：命中且非严重类别 → 放行。
 
     normalized 为变体归一化后的匹配形式（apply_variants：谐音/大小写）；
     运行时每条消息直读本表（跨进程立即生效）；变更经 AdminAudit 审计。
+
+    R-115 W03/W04：``sqlite_autoincrement`` 保证删除后 ID 不复用（旧表单不能
+    操作替代对象）；``normalized`` 唯一约束防止并发等价词绕过去重。
     """
 
     __tablename__ = "allowlist_terms"
+    __table_args__ = {"sqlite_autoincrement": True}
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     term: Mapped[str] = mapped_column(String(64), unique=True)
-    normalized: Mapped[str] = mapped_column(String(64), index=True)
+    normalized: Mapped[str] = mapped_column(String(64), unique=True)
     enabled: Mapped[bool] = mapped_column(Boolean, default=True)
     created_by: Mapped[str] = mapped_column(String(64), default="")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
