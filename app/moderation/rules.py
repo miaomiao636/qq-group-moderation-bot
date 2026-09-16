@@ -17,7 +17,12 @@ from collections import defaultdict, deque
 from typing import TYPE_CHECKING, Any
 
 from app.core.contracts import StandardMessage
-from app.moderation.decision import CERTIFICATE_AD_ALLOW_RULE_ID, ModerationDecision, RuleHit
+from app.moderation.decision import (
+    CERTIFICATE_AD_ALLOW_RULE_ID,
+    PROTECTED_CARD_ALLOW_RULE_ID,
+    ModerationDecision,
+    RuleHit,
+)
 from app.moderation.extract import extract_signals
 from app.moderation.normalization import apply_variants, has_variant_trick
 
@@ -472,7 +477,23 @@ class TextRuleEngine:
 
         has_hard_blacklist = any(h.rule_id == "R001" for h in hits)
 
-        if protected:
+        if protected and share_card:
+            # 负责人 2026-09-16 口径：群主/管理员分享的卡片**完全放行**
+            # （不处罚、不转人工）。AI/动态规则/媒体层据此标记不得升级。
+            verdict = "allow"
+            confidence = 0.0
+            actions = []
+            reason = "群主/管理员分享的卡片，放行"
+            hits.append(
+                RuleHit(
+                    rule_id=PROTECTED_CARD_ALLOW_RULE_ID,
+                    rule_name="protected_share_card",
+                    category="ad",
+                    confidence_delta=0.0,
+                    evidence_masked="群主/管理员分享卡片例外（负责人 2026-09-16）；AI 与动态规则不得升级",
+                )
+            )
+        elif protected:
             verdict = "record_only"
             reason = "保护角色（群主/管理员）：命中信号仅记录，不处罚"
         elif share_card and share_source_allowed:
@@ -558,6 +579,16 @@ class TextRuleEngine:
             return base
         # 2026-09-16 口径 A：办证豁免（allow）时，办证类动态规则只记录——
         # 不得升级为违规或转人工（R-113 事故防再犯；非办证类显式 DR 照常生效）。
+        # 2026-09-16 口径：群主/管理员卡片放行（allow）时，动态规则一律不升级。
+        if base.verdict == "allow" and any(
+            h.rule_id == PROTECTED_CARD_ALLOW_RULE_ID for h in base.rule_hits
+        ):
+            return base.model_copy(
+                update={
+                    "rule_hits": base.rule_hits + dynamic.rule_hits,
+                    "reason": base.reason + "；保护卡片豁免：动态规则仅记录",
+                }
+            )
         if (
             base.verdict == "allow"
             and any(h.rule_id == CERTIFICATE_AD_ALLOW_RULE_ID for h in base.rule_hits)

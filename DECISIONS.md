@@ -736,3 +736,14 @@ ACTION_MODE 切换为 OFFICIAL、ONEBOT_ACTIONS_ENABLED=true、ONEBOT_ACTION_STA
 - **防再犯**：`tests/test_r113_certificate_dr_protection.py`（办证自身 DR 不升级 / 非办证 DR 仍拦 / AI 严重确认不升级）；DR evidence 携带 pattern 提升可诊断性。
 - **历史关系**：D-027（"不撤回、转记录"）与 B-2 的"纯办证转人工"子项被本决策更新；B-2 的严重类别部分保留。
 - **已撤回的 2 条不可恢复**（QQ 撤回不可逆，负责人已知悉）；不改变 11 群授权范围与 stage。
+
+---
+
+## 决策 D-032：群主/管理员卡片完全放行（2026-09-16）
+
+日期：2026-09-16。负责人选定口径："**所有管理员/群主发的卡片都放行**"（此前为 record_only 转人工）。
+
+- **范围**：本地规则层——受保护角色（群主/管理员）分享卡片（`share_card`）→ `allow` + 政策标记 `POLICY_PROTECTED_CARD_ALLOW`；**非卡片**的受保护消息行为不变（仍 record_only 不处罚，"保护角色"主体规则不变）。
+- **全链路保护**（与 D-031 办证豁免同机制）：动态规则合并不升级（仅记录）；AI 合并（含独立二审确认）不升级不转人工；媒体层"媒体部分转人工"不降级。
+- **对照保留**：普通成员的未知来源卡片仍转人工；允许来源（万能校园墙）卡片逻辑不变。
+- **回归**：`tests/test_protected_card_allow.py`（owner/admin 卡片 allow / 普通成员对照 / 非卡片范围不变 / DR 不升级 / AI 不升级）。
