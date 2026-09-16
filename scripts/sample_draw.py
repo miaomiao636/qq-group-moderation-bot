@@ -34,8 +34,9 @@ def unavailable_from_detail(raw_detail: object) -> str:
     契约值域（app.reports.evaluation）："" 正常 / "degraded" 已知降级 / "error" 已知错误。
     - 空/NULL 详情、损坏 JSON、非对象、pipeline 的 parse_error 记录 → "error"；
     - ai_results 键缺失 / null / 非列表（正常写入必为列表，见详情构造）→ "error"；
-    - 元素非对象或空对象 → "error"；元素 degraded_reason 非空 → "degraded"；
-    - 显式空列表 []（未调用 AI）与全部元素正常 → ""。
+    - 元素非对象或空对象 → "error"；degraded_reason 缺失/非字符串 → "error"；
+      非空字符串 → "degraded"（契约要求该字段为字符串，默认 ""，model_dump 必写该键）；
+    - 显式空列表 []（未调用 AI）与全部元素正常（degraded_reason 为 ""）→ ""。
     """
     if not isinstance(raw_detail, str) or not raw_detail.strip():
         return "error"
@@ -55,7 +56,12 @@ def unavailable_from_detail(raw_detail: object) -> str:
     for ai in results:
         if not isinstance(ai, dict) or not ai:
             return "error"
-        if str(ai.get("degraded_reason") or "").strip():
+        reason = ai.get("degraded_reason")
+        if not isinstance(reason, str):
+            # R-114 F02 残余修复：缺失/None/布尔/数字/容器 → 无法证明状态 → error
+            # （不得真值洗值；正常形态为 ""，见 AIModerationResult.model_dump）。
+            return "error"
+        if reason.strip():
             return "degraded"
     return ""
 
@@ -98,12 +104,18 @@ def main() -> int:
     verdicts: Counter[str] = Counter()
     with out.open("w", encoding="utf-8", newline="\n") as f:
         for r in sorted(picked, key=lambda x: x[10]):
-            try:
-                detail = json.loads(r[9] or "{}")
-            except json.JSONDecodeError:
-                detail = {}
-            # R-114 F02：状态恢复抽为纯函数——损坏/未知不得默认可用（含 parse_error）
-            unavailable = unavailable_from_detail(r[9])
+            # R-114 F02 残余修复：入口统一解析归一化——非对象/损坏详情不得崩溃
+            # （非法详情样本仍保留在分母：展示字段用安全空值，unavailable="error"）。
+            raw_detail = r[9]
+            detail: dict = {}
+            if isinstance(raw_detail, str) and raw_detail.strip():
+                try:
+                    parsed = json.loads(raw_detail)
+                except json.JSONDecodeError:
+                    parsed = None
+                if isinstance(parsed, dict):
+                    detail = parsed
+            unavailable = unavailable_from_detail(raw_detail)
             item = {
                 "sample_id": str(r[0]).split(":")[-1],
                 "message_id": str(r[0]),
