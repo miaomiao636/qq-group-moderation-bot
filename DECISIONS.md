@@ -802,6 +802,25 @@ ACTION_MODE 切换为 OFFICIAL、ONEBOT_ACTIONS_ENABLED=true、ONEBOT_ACTION_STA
   入库（`tests/test_r115_policy_overlap.py` 等 4 个文件），修复前 10 failed →
   修复后 **52/52**；止损与恢复：白名单词先停用（风险窗口），修复部署（22:07 重启）后
   已于 22:10 恢复启用（审计 `ops:owner-allowlist-resume-c01c03-2026-09-16`）。
+- **R-115 R1–R3 复验整改（2026-09-17，主审 5060361 复验残余）**：主审复验确认
+  指定 105/52 全过、旧反例确已修复，新增 3 项残余（复验包 24 项实测 11 failed /
+  13 passed），已全部修复：
+  ① **R1（P1，C03 残余）**：提前放行判据改为依据**原始全量结果**——`usable`
+  已滤掉 category=None，对空集合检查 needs_review 恒真，导致"两模型都要求人工"
+  仍被白名单放行；修复后 needs_review/degraded/显式 other 一律转人工，
+  纯 None（确定性正常）与 AI 未启用的控制组保持放行（`ai.py`）；
+  ② **R2（P2，C02 残余）**：弱/强非广告分支与转人工分支的类别/置信度改为
+  **非广告证据同源产生**——弱分支 category=首个非广告命中、confidence=非广告
+  独立总分；强分支同口径重建；AI 广告分不得把非广告记录的置信度抬至 0.85；
+  verdict 与动作不变、全部 hits 保留供审计（`rules.py` + `ai.py`）；
+  ③ **R3（P2，C01 残余）**：D-031 办证保护**先于** D-033 弱信号分支执行
+  （此前"办证 + 白名单 + 弱办证 DR"被 D-033 弱分支抢先转人工）；判据与
+  "非办证类显式 DR 照常生效"边界不变（`rules.py`）。
+  回归：主审复验包 24 项正式入库（`tests/test_r115_c02_c03_edges.py`、
+  `tests/test_r115_certificate_dynamic_overlap.py`），修复前 11 failed → **24/24**；
+  R-115 六文件 **105/105**；全量 **1325 收集 / 0 failed / 1310 passed / 15 skipped**
+  （15 项为环境依赖跳过）；ruff check / format 与 mypy（87 源文件）通过。
+  D-031/D-032 完全放行与 D-033"仅免广告"政策不变，本批仅补口径未落实到位处。
 
 ---
 

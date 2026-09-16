@@ -649,32 +649,9 @@ class TextRuleEngine:
                     "reason": base.reason + "；政策豁免：动态规则仅记录",
                 }
             )
-        # D-033 全局白名单：**仅豁免广告**（R-115 W01/C02）——广告证据不参与处罚；
-        # 非广告证据**独立达到原高门槛**（HIGH_THRESHOLD）才走普通升级路径，
-        # 否则保留人工（record_only、建议为空、全部 hits 保留供审计）。
-        if base.verdict == "allow" and any(
-            h.rule_id == ALLOWLIST_ALLOW_RULE_ID for h in base.rule_hits
-        ):
-            non_ad_total = sum(
-                h.confidence_delta for h in dynamic.rule_hits if h.category not in (None, "ad")
-            )
-            if not any(h.category in ALLOWLIST_NON_EXEMPT_CATEGORIES for h in dynamic.rule_hits):
-                return base.model_copy(
-                    update={
-                        "rule_hits": base.rule_hits + dynamic.rule_hits,
-                        "reason": base.reason + "；白名单豁免（仅广告）：动态规则仅记录",
-                    }
-                )
-            if non_ad_total < HIGH_THRESHOLD:
-                return base.model_copy(
-                    update={
-                        "verdict": "record_only",
-                        "recommended_actions": [],
-                        "confidence": min(dynamic.confidence, 0.85),
-                        "rule_hits": base.rule_hits + dynamic.rule_hits,
-                        "reason": base.reason + "；白名单命中且非广告证据未达独立门槛，转人工",
-                    }
-                )
+        # R-115 R3：D-031 办证保护必须**先于** D-033 弱信号分支独立生效——此前
+        # 顺序颠倒，"办证 + 白名单 + 弱办证 DR"被 D-033 弱分支抢先转人工（应完全
+        # 放行）。条件不变：全部动态命中均为办证类词触发；非办证类显式 DR 照常生效。
         if (
             base.verdict == "allow"
             and any(h.rule_id == CERTIFICATE_AD_ALLOW_RULE_ID for h in base.rule_hits)
@@ -686,6 +663,41 @@ class TextRuleEngine:
                     "reason": base.reason + "；办证豁免：办证类动态规则仅记录",
                 }
             )
+        # D-033 全局白名单：**仅豁免广告**（R-115 W01/C02 整改；R2 复验修复）——
+        # 广告证据不参与处罚；非广告证据**独立达到原高门槛**（HIGH_THRESHOLD）才
+        # 走普通升级路径，否则保留人工（record_only、建议为空、全部 hits 保留供
+        # 审计）。类别/置信度必须由**非广告证据同源产生**（不得混入广告分，也不得
+        # 丢失类别；允许规则命中不是证据，不参与重建）。
+        if base.verdict == "allow" and any(
+            h.rule_id == ALLOWLIST_ALLOW_RULE_ID for h in base.rule_hits
+        ):
+            non_ad_hits = [
+                h
+                for h in dynamic.rule_hits
+                if h.category not in (None, "ad") and not h.rule_id.startswith("DR_ALLOW_")
+            ]
+            non_ad_total = sum(h.confidence_delta for h in non_ad_hits)
+            if not any(h.category in ALLOWLIST_NON_EXEMPT_CATEGORIES for h in dynamic.rule_hits):
+                return base.model_copy(
+                    update={
+                        "rule_hits": base.rule_hits + dynamic.rule_hits,
+                        "reason": base.reason + "；白名单豁免（仅广告）：动态规则仅记录",
+                    }
+                )
+            if non_ad_total < HIGH_THRESHOLD:
+                # R2 弱分支：category 取首个非广告命中（与动态引擎"首个命中定
+                # 类别"同源）；confidence 为非广告独立总分（沿用 record_only 的
+                # 0.85 上限）——不得再用包含广告分的 dynamic.confidence。
+                return base.model_copy(
+                    update={
+                        "verdict": "record_only",
+                        "recommended_actions": [],
+                        "category": non_ad_hits[0].category if non_ad_hits else None,
+                        "confidence": min(non_ad_total, 0.85),
+                        "rule_hits": base.rule_hits + dynamic.rule_hits,
+                        "reason": base.reason + "；白名单命中且非广告证据未达独立门槛，转人工",
+                    }
+                )
         if dynamic.verdict == "allow" and base.verdict == "violation_high":
             return base.model_copy(
                 update={
@@ -697,6 +709,21 @@ class TextRuleEngine:
                 }
             )
         if dynamic.verdict == "violation_high" and base.verdict != "violation_high":
+            # R-115 R2：白名单命中时，类别/置信度同样只取非广告证据（判定与动作
+            # 沿用整份动态结果；全部 hits 保留供审计）；无白名单时保持原样。
+            if any(h.rule_id == ALLOWLIST_ALLOW_RULE_ID for h in base.rule_hits):
+                non_ad_hits = [
+                    h
+                    for h in dynamic.rule_hits
+                    if h.category not in (None, "ad") and not h.rule_id.startswith("DR_ALLOW_")
+                ]
+                if non_ad_hits:
+                    return dynamic.model_copy(
+                        update={
+                            "category": non_ad_hits[0].category,
+                            "confidence": min(sum(h.confidence_delta for h in non_ad_hits), 1.0),
+                        }
+                    )
             return dynamic
         if dynamic.verdict == "record_only" and base.verdict == "allow":
             return dynamic

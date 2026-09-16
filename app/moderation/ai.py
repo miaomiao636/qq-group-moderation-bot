@@ -874,17 +874,21 @@ def merge_ai_evidence(
         hit.rule_id in POLICY_ALLOW_RULE_IDS for hit in local.rule_hits
     ):
         return local.model_copy(update={"rule_hits": local.rule_hits + hits})
-    # D-033 全局白名单：**仅豁免广告**（R-115 W01/C03 整改）——提前放行要求
-    # "审核已完成"：调用失败/配置错误（degraded）、待人工（needs_review）、未知
-    # 类别（other/None）一律转人工，绝不以"未出现四类有效结果"为放行充分条件；
-    # AI 未启用（结果列表为空）仍属正常，可放行。
+    # D-033 全局白名单：**仅豁免广告**（R-115 W01/C03 整改；R1 复验修复）——
+    # 提前放行要求"审核已完成"：调用失败/配置错误（degraded）、待人工
+    # （needs_review）、显式未知类别（other）一律转人工，绝不以"未出现四类有效
+    # 结果"为放行充分条件。判据必须基于**原始全量结果**——`usable` 已滤掉
+    # category=None，对空集合检查 needs_review 会恒真并静默放行（R1 缺陷：
+    # "两模型都明确要求人工"仍被放行）。category=None 本身不是未决：仅当它同时
+    # needs_review/降级时转人工；纯 None（确定性正常）与 AI 未启用（空列表）可
+    # 放行（主审控制组，不得倒退）。
     if (
         local.verdict == "allow"
         and any(hit.rule_id == ALLOWLIST_ALLOW_RULE_ID for hit in local.rule_hits)
         and not any(result.category in ALLOWLIST_NON_EXEMPT_CATEGORIES for result in usable)
         and not any(result.degraded_reason for result in ai_results)
-        and not any(result.needs_review for result in usable)
-        and all(result.category not in (None, "other") for result in usable)
+        and not any(result.needs_review for result in ai_results)
+        and not any(result.category == "other" for result in ai_results)
     ):
         return local.model_copy(update={"rule_hits": local.rule_hits + hits})
     candidates: list[AIModerationResult] = []
@@ -1037,9 +1041,13 @@ def merge_ai_evidence(
             category = best_severe.category
             confidence = best_severe.confidence
         else:
-            category = local.category or (usable[0].category if usable else None)
+            # R-115 R2：白名单命中时，广告证据不作为持久类别/分数来源——类别与
+            # 置信度只用非广告证据（与规则的弱/强分支同源口径一致；不得让 AI
+            # 广告分把非广告记录的置信度抬到 0.85）。
+            visible = [r for r in usable if r.category != "ad"] if _allowlist_scoped else usable
+            category = local.category or (visible[0].category if visible else None)
             confidence = max(
-                local.confidence, min(max((r.confidence for r in usable), default=0), 0.85)
+                local.confidence, min(max((r.confidence for r in visible), default=0), 0.85)
             )
         if unresolved:
             reason = "AI复核未形成一致有效证据，转人工"
