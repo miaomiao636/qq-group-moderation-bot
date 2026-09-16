@@ -22,6 +22,8 @@ from app.config import Settings
 from app.core.contracts import StandardMessage
 from app.db import Base
 from app.moderation.decision import (
+    ALLOWLIST_ALLOW_RULE_ID,
+    ALLOWLIST_NON_EXEMPT_CATEGORIES,
     CERTIFICATE_AD_ALLOW_RULE_ID,
     POLICY_ALLOW_RULE_IDS,
     Category,
@@ -866,11 +868,19 @@ def merge_ai_evidence(
     ]
     if local.verdict == "violation_high":
         return local.model_copy(update={"rule_hits": local.rule_hits + hits})
-    # 负责人 2026-09-16 政策放行（办证 / 群主管理员卡片 / 全局白名单）：
-    # AI 结果（含独立二审确认、严重类别疑似）一律不得升级为违规或转人工；
-    # 仅并入证据供审计。
+    # 负责人 2026-09-16 政策放行：D-031 办证 / D-032 卡片为全类别完全放行——
+    # AI 结果（含独立二审确认、严重类别疑似）一律不得升级或转人工，仅并入证据。
     if local.verdict == "allow" and any(
         hit.rule_id in POLICY_ALLOW_RULE_IDS for hit in local.rule_hits
+    ):
+        return local.model_copy(update={"rule_hits": local.rule_hits + hits})
+    # D-033 全局白名单：**仅豁免广告**（R-115 W01 整改）——AI 证据出现任何非广告
+    # 类别（含疑似/需人工）时不再提前返回，落到既有门槛（严重确认才升级、
+    # 疑似与冲突保留人工），不得把"广告放行"扩大成全类别放行。
+    if (
+        local.verdict == "allow"
+        and any(hit.rule_id == ALLOWLIST_ALLOW_RULE_ID for hit in local.rule_hits)
+        and not any(result.category in ALLOWLIST_NON_EXEMPT_CATEGORIES for result in usable)
     ):
         return local.model_copy(update={"rule_hits": local.rule_hits + hits})
     candidates: list[AIModerationResult] = []

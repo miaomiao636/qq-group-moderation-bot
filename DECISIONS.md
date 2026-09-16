@@ -758,9 +758,11 @@ ACTION_MODE 切换为 OFFICIAL、ONEBOT_ACTIONS_ENABLED=true、ONEBOT_ACTION_STA
 - **匹配**：变体归一化（apply_variants：谐音/代称/大小写）+ 子串包含。**否决**了"模糊相似度阈值"方案
   （相似度只判"像不像"，会放行贴近正常话术的诈骗广告；阈值两头不讨好）。
 - **豁免条件**：命中且类别∈{None, ad} 且无任何非广告命中（porn/violence/fraud/flood 存在即不豁免）
-  → 完全放行（不处罚、不转人工）；本地严重词与刷屏照常处理（B-2 底线保持）。
-- **链路保护**：AI 结果（含独立二审确认）与动态规则不得升级或转人工
-  （`POLICY_ALLOW_RULE_IDS` 机制，与 D-031/D-032 同套；媒体层同保护）。
+  → **仅广告放行**（不处罚、不转人工）；本地严重词与刷屏照常处理（B-2 底线保持）。
+- **后续证据层（R-115 W01 整改后）**：动态规则/AI/媒体**逐次复核类别**——出现任何非广告
+  证据（fraud/porn/violence/flood 或未完成图片审核）即回到既有门槛：高置信确认才升级，
+  疑似/冲突/不完整证据保留人工。白名单**不**属于 D-031/D-032 的"全类别完全放行"集合
+  （`POLICY_ALLOW_RULE_IDS` 现只含那两项；三者边界不同，不再笼统表述为"同 B-2"）。
 - **生效**：运行时每条消息直读数据库（emergency_stop 同款 fresh 连接，绕过调用方 WAL 快照）——
   后台保存后下一条消息立即生效、无需重启；读取失败 fail-closed 为空集（绝不因故障放松）。
 - **管理**：后台 `/admin/allowlist`（登录管理员；增/删/启停）+ 全量 AdminAudit 审计；
@@ -768,6 +770,14 @@ ACTION_MODE 切换为 OFFICIAL、ONEBOT_ACTIONS_ENABLED=true、ONEBOT_ACTION_STA
 - **回归**：`tests/test_r115_allowlist.py`（引擎/归一化/严重与刷屏边界/DR 与 AI 不升级/
   服务层增删去重/端到端 run_pipeline 真实生效）。
 - **未包含**：模糊相似度（经评估否决）；白名单按群差异化（本版为全局）；对外分发。
+- **R-115 W01 整改（2026-09-16）**：主审探针复现 16/40 失败——白名单曾遮蔽
+  fraud/porn/violence/flood 及未完成图片审核（实现复用全类别放行机制所致）。修复：
+  `decision.py` 将 `ALLOWLIST_ALLOW_RULE_ID` 移出 `POLICY_ALLOW_RULE_IDS`（只留
+  D-031/D-032）；`rules.py`/`ai.py` 合并层按类别过滤（仅当新证据也无非广告类别时
+  保持放行）；媒体层不再豁免（未知图片转人工）。更正 2 个错误预期测试（其一原用
+  "办证"样本混入 D-031 政策，已改纯白名单样本）；主审 40 项开/关对照正式化为
+  `tests/test_r115_w01_policy_probe.py`（修复前 16 failed → 修复后 40 passed）。
+  **D-031/D-032 按负责本轮确认保持完全放行**，其既有明确例外不受本整改影响。
 
 ---
 
