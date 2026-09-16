@@ -865,6 +865,12 @@ def merge_ai_evidence(
     ]
     if local.verdict == "violation_high":
         return local.model_copy(update={"rule_hits": local.rule_hits + hits})
+    # 负责人 2026-09-16 口径 A：办证/学历类完全放行——AI 结果（含独立二审确认、
+    # 严重类别疑似）一律不得升级为违规或转人工；仅并入证据供审计。
+    if local.verdict == "allow" and any(
+        hit.rule_id == CERTIFICATE_AD_ALLOW_RULE_ID for hit in local.rule_hits
+    ):
+        return local.model_copy(update={"rule_hits": local.rule_hits + hits})
     candidates: list[AIModerationResult] = []
     unresolved = any(result.degraded_reason for result in ai_results)
     # S01：跨模态矛盾（文字判广告/图文判正常、或任一模态要求人工）不得直接升罚。

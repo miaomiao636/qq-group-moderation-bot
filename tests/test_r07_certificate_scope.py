@@ -23,31 +23,32 @@ def _msg(text: str) -> StandardMessage:
 
 
 def test_certificate_promo_text_not_punished() -> None:
-    """主审复现场景：办证推广+联系方式 → 不撤回（record_only、无动作）。"""
+    """主审复现场景：办证推广+联系方式 → **完全放行**（allow、无动作；2026-09-16 口径 A）。"""
     engine = TextRuleEngine()
     decision = engine.evaluate(
         _msg("专业办证，代做学历证书，学信网可查，毕业证定制，加我微信 13800001234")
     )
-    assert decision.verdict == "record_only"
+    assert decision.verdict == "allow"
     assert decision.recommended_actions == []
     assert "办证" in decision.reason
 
 
 def test_certificate_with_recruitment_words_not_punished() -> None:
-    """办证 + 兼职黑名单词混合：办证口径优先，不撤回。"""
+    """办证 + 兼职语境词混合：办证口径优先，完全放行（2026-09-16 口径 A）。"""
     engine = TextRuleEngine()
     decision = engine.evaluate(_msg("办证 代做学籍 有兼职渠道 日结，详情加微聊"))
-    assert decision.verdict == "record_only"
+    assert decision.verdict == "allow"
     assert decision.recommended_actions == []
 
 
 def test_certificate_exception_branch_guards() -> None:
-    """例外分支的守卫条件由实现保证（代码审查点）：
-    category 必须为 ad、命中含 DR_ 前缀（动态规则）时不豁免——见 rules.py 分支。
-    此处验证内置黑名单（extra_blacklist 走 R001）与办证词同现时口径优先。"""
+    """例外分支守卫（R-113 / 2026-09-16 口径 A 更新）：
+    豁免仅在 category==ad 时生效（保留例外仅"严重类别词"，如博彩/裸聊——见
+    v13 场景①回归）；办证词与显式黑名单词（extra_blacklist）同现时按负责人
+    口径完全放行。"""
     engine = TextRuleEngine(extra_blacklist=("代考服务",))
     decision = engine.evaluate(_msg("专业代考服务，学信网可查"))
-    assert decision.verdict == "record_only"
+    assert decision.verdict == "allow"
     assert decision.recommended_actions == []
 
 
