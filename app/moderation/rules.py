@@ -18,6 +18,7 @@ from typing import TYPE_CHECKING, Any
 
 from app.core.contracts import StandardMessage
 from app.moderation.decision import (
+    ALLOWLIST_ALLOW_RULE_ID,
     CERTIFICATE_AD_ALLOW_RULE_ID,
     PROTECTED_CARD_ALLOW_RULE_ID,
     ModerationDecision,
@@ -72,6 +73,9 @@ AD_INTENT_MARKERS: tuple[str, ...] = (
 
 ALLOWED_SHARE_SOURCES: tuple[str, ...] = ("万能校园墙",)
 SEVERE_CATEGORIES: set[str] = {"porn", "violence", "fraud"}
+# 全局白名单只豁免广告/无信号（2026-09-16）：以下类别的命中一律不豁免
+# （覆盖 flood 这类"category 变量可能仍为 ad、但确有非广告命中"的情形）。
+_ALLOWLIST_NON_EXEMPT_CATEGORIES: frozenset[str] = frozenset({"porn", "violence", "fraud", "flood"})
 
 # R07（ad323b6）+ 负责人 2026-09-16 口径 A：办证/学历类内容**完全放行**。
 # 演进：2026-09-12「不撤回、转记录」→ 2026-09-16「不处罚、不转人工」（allow）。
@@ -110,6 +114,20 @@ def _is_certificate_dr_hit(hit: RuleHit) -> bool:
     return hit.rule_id.startswith("DR_") and any(
         term in str(hit.evidence_masked) for term in _CERTIFICATE_SERVICE_TERMS
     )
+
+
+def _match_allowlist(text: str, terms: frozenset[str]) -> str | None:
+    """全局白名单匹配（2026-09-16）：变体归一化后子串；返回命中词或 None。
+
+    词集由运行时装配（app.moderation.allowlist 逐消息直读数据库）；空集恒不命中。
+    """
+    if not text or not terms:
+        return None
+    variant = apply_variants(text)
+    for term in terms:
+        if term and term in variant:
+            return term
+    return None
 
 
 # 明确黑名单词（命中即贡献0.70，覆盖实测样本与常见违法词）。
@@ -422,15 +440,21 @@ class TextRuleEngine:
         frequency_tracker: FrequencyTracker | None = None,
         extra_blacklist: tuple[str, ...] = (),
         rule_snapshot: RuleSnapshot | None = None,
+        allow_terms: frozenset[str] | None = None,
     ) -> None:
         self._high_threshold = high_threshold
         self._blacklist = BLACKLIST_EXPLICIT + tuple(extra_blacklist)
         self.frequency = frequency_tracker or FrequencyTracker()
         self._rule_snapshot = rule_snapshot
+        self._allow_terms: frozenset[str] = allow_terms or frozenset()
 
     def set_rule_snapshot(self, rule_snapshot: RuleSnapshot | None) -> None:
         """替换运行时动态规则快照，同时保留刷屏等进程内状态。"""
         self._rule_snapshot = rule_snapshot
+
+    def set_allowlist(self, allow_terms: frozenset[str]) -> None:
+        """替换运行时全局白名单（每消息从库直读；其他进程内状态保留）。"""
+        self._allow_terms = allow_terms
 
     def evaluate(
         self,
@@ -477,6 +501,7 @@ class TextRuleEngine:
 
         has_hard_blacklist = any(h.rule_id == "R001" for h in hits)
 
+        allowlist_hit = _match_allowlist(msg.text, self._allow_terms)
         if protected and share_card:
             # 负责人 2026-09-16 口径：群主/管理员分享的卡片**完全放行**
             # （不处罚、不转人工）。AI/动态规则/媒体层据此标记不得升级。
@@ -496,6 +521,27 @@ class TextRuleEngine:
         elif protected:
             verdict = "record_only"
             reason = "保护角色（群主/管理员）：命中信号仅记录，不处罚"
+        elif (
+            allowlist_hit
+            and (category is None or category == "ad")
+            and not any(h.category in _ALLOWLIST_NON_EXEMPT_CATEGORIES for h in hits)
+        ):
+            # 负责人 2026-09-16（全局白名单）：命中即**完全放行**（不处罚、不转人工）。
+            # 仅豁免广告/无信号类别；严重类别（fraud/porn/violence）与刷屏仍按
+            # 既有规则处理；AI 与动态规则不得升级（见合并层保护）。
+            verdict = "allow"
+            confidence = 0.0
+            actions = []
+            reason = "全局白名单命中，放行"
+            hits.append(
+                RuleHit(
+                    rule_id=ALLOWLIST_ALLOW_RULE_ID,
+                    rule_name="allowlist",
+                    category="ad",
+                    confidence_delta=0.0,
+                    evidence_masked=f"全局白名单命中：{allowlist_hit}",
+                )
+            )
         elif share_card and share_source_allowed:
             if category in SEVERE_CATEGORIES:
                 verdict = "record_only"
@@ -579,14 +625,16 @@ class TextRuleEngine:
             return base
         # 2026-09-16 口径 A：办证豁免（allow）时，办证类动态规则只记录——
         # 不得升级为违规或转人工（R-113 事故防再犯；非办证类显式 DR 照常生效）。
-        # 2026-09-16 口径：群主/管理员卡片放行（allow）时，动态规则一律不升级。
+        # 2026-09-16 口径：群主/管理员卡片与全局白名单放行（allow）时，
+        # 动态规则一律不升级（直接放行的用户意图优先）。
         if base.verdict == "allow" and any(
-            h.rule_id == PROTECTED_CARD_ALLOW_RULE_ID for h in base.rule_hits
+            h.rule_id in (PROTECTED_CARD_ALLOW_RULE_ID, ALLOWLIST_ALLOW_RULE_ID)
+            for h in base.rule_hits
         ):
             return base.model_copy(
                 update={
                     "rule_hits": base.rule_hits + dynamic.rule_hits,
-                    "reason": base.reason + "；保护卡片豁免：动态规则仅记录",
+                    "reason": base.reason + "；政策豁免：动态规则仅记录",
                 }
             )
         if (

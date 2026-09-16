@@ -20,6 +20,17 @@ CERTIFICATE_AD_ALLOW_RULE_ID = "POLICY_CERTIFICATE_AD_ALLOW"
 # 负责人 2026-09-16 口径：群主/管理员分享的卡片完全放行（不处罚、不转人工）；
 # AI/动态规则/媒体层不得升级（与办证豁免同样的全链路保护机制）。
 PROTECTED_CARD_ALLOW_RULE_ID = "POLICY_PROTECTED_CARD_ALLOW"
+# 负责人 2026-09-16（后台可维护的全局白名单）：命中且非严重类别 → 完全放行。
+# 仅豁免广告/无信号类别；诈骗/色情/暴力/刷屏不豁免（B-2 底线）。
+ALLOWLIST_ALLOW_RULE_ID = "POLICY_ALLOWLIST_ALLOW"
+# 政策放行标记集合：本地命中即"完全放行"——AI/动态规则/媒体层一律不得升级或转人工。
+POLICY_ALLOW_RULE_IDS = frozenset(
+    {
+        CERTIFICATE_AD_ALLOW_RULE_ID,
+        PROTECTED_CARD_ALLOW_RULE_ID,
+        ALLOWLIST_ALLOW_RULE_ID,
+    }
+)
 
 
 class RuleHit(BaseModel):

@@ -63,6 +63,7 @@ def _page(
             '<a href="/admin/rules" style="color:#93c5fd">规则</a> &nbsp; '
             '<a href="/admin/feedback" style="color:#93c5fd">反馈学习</a> &nbsp; '
             '<a href="/admin/groups" style="color:#93c5fd">群管理</a> &nbsp; '
+            '<a href="/admin/allowlist" style="color:#93c5fd">白名单</a> &nbsp; '
             '<a href="/admin/stats" style="color:#93c5fd">统计</a> &nbsp; '
             '<a href="/admin/reports" style="color:#93c5fd">报告</a> &nbsp; '
             '<a href="/admin/notifications" style="color:#93c5fd">通知与接手</a> &nbsp; '
@@ -196,6 +197,10 @@ def _login_redirect() -> RedirectResponse:
 
 def _rules_notice_redirect(notice: str) -> RedirectResponse:
     return RedirectResponse(f"/admin/rules?notice={quote(notice)}", status_code=303)
+
+
+def _allowlist_notice_redirect(notice: str) -> RedirectResponse:
+    return RedirectResponse(f"/admin/allowlist?notice={quote(notice)}", status_code=303)
 
 
 def _feedback_notice_redirect(notice: str) -> RedirectResponse:
@@ -1815,6 +1820,95 @@ async def _ensure_action_routes(
         commit=commit,
     )
     return [provider]
+
+
+@router.get("/allowlist", response_class=HTMLResponse)
+async def allowlist_page(request: Request, notice: str = "") -> Response:
+    """全局白名单（负责人 2026-09-16）：登录管理员可改，保存即生效（逐消息直读）。"""
+    token = await _require_login(request)
+    if not token:
+        return _login_redirect()
+    csrf = _csrf_field(token)
+    from app.models import AllowlistTerm
+
+    async with SessionLocal() as session:
+        terms = (await session.scalars(select(AllowlistTerm).order_by(AllowlistTerm.id))).all()
+    rows = "".join(
+        "<tr>"
+        f"<td><code>{_esc(t.term)}</code></td><td>{_esc(t.normalized)}</td>"
+        f"<td>{'启用' if t.enabled else '<span class=warn>停用</span>'}</td>"
+        f"<td>{_esc(t.created_by)}</td>"
+        f"<td>{t.created_at.strftime('%m-%d %H:%M') if t.created_at else ''}</td>"
+        f'<td><form method=post style=display:inline action="/admin/allowlist/{t.id}/toggle">'
+        f"{csrf}<button class=btn>{'停用' if t.enabled else '启用'}</button></form> "
+        f'<form method=post style=display:inline action="/admin/allowlist/{t.id}/delete" '
+        f"onsubmit=\"return confirm('删除该白名单词？')\">{csrf}"
+        "<button class=btn>删除</button></form></td></tr>"
+        for t in terms
+    )
+    body = (
+        "<h2>白名单设置</h2>"
+        "<p class=muted>全局生效：消息内容包含白名单词（自动识别谐音/大小写变体）且"
+        "不属于严重类别（诈骗/色情/暴力）时，<b>完全放行</b>（不处罚、不转人工）；"
+        "刷屏等其余规则照常处理。词越短影响面越大，请按需添加。"
+        "<b>保存后下一条消息立即生效，无需重启。</b></p>"
+        f"<div role=status>{_esc(notice)}</div>"
+        "<div class=card><h3>添加白名单词</h3>"
+        '<form method=post action="/admin/allowlist/add" style="display:flex;gap:8px;flex-wrap:wrap">'
+        f"{csrf}"
+        '<input name=term maxlength=64 placeholder="例如：办证 / 学历提升 / 校园墙" '
+        'style="width:320px" required><button class=btn>添加（立即生效）</button></form></div>'
+        "<table><tr><th>词</th><th>匹配形式（归一化）</th><th>状态</th><th>添加人</th><th>时间</th>"
+        "<th>操作</th></tr>"
+        f"{rows or '<tr><td colspan=6>暂无白名单词。添加后立即生效。</td></tr>'}</table>"
+    )
+    return _page("白名单设置", body)
+
+
+@router.post("/allowlist/add")
+async def allowlist_add(request: Request, term: str = Form(""), csrf: str = Form("")) -> Response:
+    await _require_admin_post(request, csrf)
+    operator = await _operator(request)
+    from app.moderation.allowlist import add_term
+
+    async with SessionLocal() as session:
+        try:
+            row, created = await add_term(session, term, operator=operator)
+        except ValueError as exc:
+            return _allowlist_notice_redirect(str(exc))
+    if not created:
+        return _allowlist_notice_redirect(f"已存在等价词「{row.term}」（归一化相同），未重复添加")
+    return _allowlist_notice_redirect(f"已添加「{row.term}」——下一条消息立即生效")
+
+
+@router.post("/allowlist/{term_id}/toggle")
+async def allowlist_toggle(request: Request, term_id: int, csrf: str = Form("")) -> Response:
+    await _require_admin_post(request, csrf)
+    operator = await _operator(request)
+    from app.models import AllowlistTerm
+    from app.moderation.allowlist import set_term_enabled
+
+    async with SessionLocal() as session:
+        row = await session.get(AllowlistTerm, term_id)
+        if row is None:
+            return _allowlist_notice_redirect("白名单词不存在")
+        updated = await set_term_enabled(session, term_id, not row.enabled, operator=operator)
+    state = "启用" if updated.enabled else "停用"
+    return _allowlist_notice_redirect(f"「{updated.term}」已{state}——下一条消息立即生效")
+
+
+@router.post("/allowlist/{term_id}/delete")
+async def allowlist_delete(request: Request, term_id: int, csrf: str = Form("")) -> Response:
+    await _require_admin_post(request, csrf)
+    operator = await _operator(request)
+    from app.moderation.allowlist import delete_term
+
+    async with SessionLocal() as session:
+        try:
+            term = await delete_term(session, term_id, operator=operator)
+        except ValueError as exc:
+            return _allowlist_notice_redirect(str(exc))
+    return _allowlist_notice_redirect(f"已删除「{term}」——下一条消息立即生效")
 
 
 @router.get("/groups", response_class=HTMLResponse)

@@ -23,7 +23,7 @@ from app.core.contracts import StandardMessage
 from app.db import Base
 from app.moderation.decision import (
     CERTIFICATE_AD_ALLOW_RULE_ID,
-    PROTECTED_CARD_ALLOW_RULE_ID,
+    POLICY_ALLOW_RULE_IDS,
     Category,
     ModerationDecision,
     RuleHit,
@@ -866,12 +866,11 @@ def merge_ai_evidence(
     ]
     if local.verdict == "violation_high":
         return local.model_copy(update={"rule_hits": local.rule_hits + hits})
-    # 负责人 2026-09-16 口径 A：办证/学历类完全放行——AI 结果（含独立二审确认、
-    # 严重类别疑似）一律不得升级为违规或转人工；仅并入证据供审计。
-    # 2026-09-16 口径：群主/管理员分享卡片完全放行——同一保护。
+    # 负责人 2026-09-16 政策放行（办证 / 群主管理员卡片 / 全局白名单）：
+    # AI 结果（含独立二审确认、严重类别疑似）一律不得升级为违规或转人工；
+    # 仅并入证据供审计。
     if local.verdict == "allow" and any(
-        hit.rule_id in (CERTIFICATE_AD_ALLOW_RULE_ID, PROTECTED_CARD_ALLOW_RULE_ID)
-        for hit in local.rule_hits
+        hit.rule_id in POLICY_ALLOW_RULE_IDS for hit in local.rule_hits
     ):
         return local.model_copy(update={"rule_hits": local.rule_hits + hits})
     candidates: list[AIModerationResult] = []

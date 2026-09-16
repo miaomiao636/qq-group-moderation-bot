@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 
-from sqlalchemy import DateTime, String, Text
+from sqlalchemy import Boolean, DateTime, Integer, String, Text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db import Base
@@ -125,6 +125,26 @@ class HiddenGroup(Base):
     external_group_id: Mapped[str] = mapped_column(String(128), primary_key=True)
     reason: Mapped[str] = mapped_column(String(255), default="")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
+
+
+class AllowlistTerm(Base):
+    """全局白名单词（负责人 2026-09-16）：命中且非严重类别 → 完全放行。
+
+    normalized 为变体归一化后的匹配形式（apply_variants：谐音/大小写）；
+    运行时每条消息直读本表（跨进程立即生效）；变更经 AdminAudit 审计。
+    """
+
+    __tablename__ = "allowlist_terms"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    term: Mapped[str] = mapped_column(String(64), unique=True)
+    normalized: Mapped[str] = mapped_column(String(64), index=True)
+    enabled: Mapped[bool] = mapped_column(Boolean, default=True)
+    created_by: Mapped[str] = mapped_column(String(64), default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=_utcnow, onupdate=_utcnow
+    )
 
 
 class AdminChangePlan(Base):

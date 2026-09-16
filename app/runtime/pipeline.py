@@ -24,11 +24,8 @@ from app.actions.orchestrator import (
 from app.core.contracts import MessageParseError, MessageSource, StandardMessage
 from app.core.dedup import begin_processing, mark_failed, mark_processed
 from app.moderation.ai import AIReviewService
-from app.moderation.decision import (
-    CERTIFICATE_AD_ALLOW_RULE_ID,
-    PROTECTED_CARD_ALLOW_RULE_ID,
-    ModerationDecision,
-)
+from app.moderation.allowlist import load_allowlist_terms
+from app.moderation.decision import POLICY_ALLOW_RULE_IDS, ModerationDecision
 from app.moderation.dynamic_rules import load_cached_active_snapshot
 from app.moderation.image_engine import ImageModerationEngine, MediaAnalysis, merge_decisions
 from app.moderation.media_engine import evaluate_file, evaluate_video, evaluate_voice
@@ -241,10 +238,13 @@ async def _run_pipeline(
             session, None if ambiguous_scope else msg.external_group_id
         )
         rule_version_ids = rule_snapshot.version_ids
+        # 全局白名单每消息直读（跨进程即时生效；读取失败 fail-closed 为空集）。
+        allow_terms = await load_allowlist_terms(session)
         if text_engine is None:
             text_engine = TextRuleEngine(rule_snapshot=rule_snapshot)
         else:
             text_engine.set_rule_snapshot(rule_snapshot)
+        text_engine.set_allowlist(allow_terms)
         decision: ModerationDecision = text_engine.evaluate(msg)
         decision = gate.review(msg, decision)
 
@@ -348,10 +348,7 @@ async def _run_pipeline(
             elif (
                 any(d.verdict == "record_only" for d in media_decisions)
                 and decision.verdict == "allow"
-                and not any(
-                    h.rule_id in (CERTIFICATE_AD_ALLOW_RULE_ID, PROTECTED_CARD_ALLOW_RULE_ID)
-                    for h in decision.rule_hits
-                )
+                and not any(h.rule_id in POLICY_ALLOW_RULE_IDS for h in decision.rule_hits)
             ):
                 decision = decision.model_copy(
                     update={"verdict": "record_only", "reason": "媒体部分转人工"}
