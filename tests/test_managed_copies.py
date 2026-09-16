@@ -158,3 +158,50 @@ def test_normal_registered_dir_still_cleaned_control(tmp_path: Path) -> None:
     stats = purge_managed_copies(root=root)
     assert stats["managed_copy_files_deleted"] == 1
     assert not (root / "t002_media" / "old.jpg").exists()
+
+
+# ---------- R-113 F01 回归：完整祖先链检查（主审合成复现：data/media → 未登记目录） ----------
+
+
+def test_ancestor_link_to_unregistered_dir_is_never_deleted(tmp_path: Path) -> None:
+    """F01 场景：登记路径的**祖先**是链接（media → unknown_keep），不得删除。"""
+    root = tmp_path / "data"
+    unknown = root / "unknown_keep"
+    _mkfile(unknown / "_frames" / "synthetic.jpg", 40)
+    if not _make_dir_link(root / "media", unknown):
+        pytest.skip("本环境不支持创建目录链接")
+    plan = plan_managed_copies(root=root)
+    assert plan["file_count"] == 0
+    stats = purge_managed_copies(root=root)
+    assert stats["managed_copy_files_deleted"] == 0
+    assert (unknown / "_frames" / "synthetic.jpg").exists()
+
+
+def test_delete_precheck_rejects_parent_swapped_after_scan(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """F01 纵深：扫描返回路径在执行删除前被换到链接下 → 删除前复核必须拒绝。"""
+    from app.reports import cleanup as cleanup_mod
+
+    root = tmp_path / "data"
+    unknown = root / "unknown_keep"
+    _mkfile(unknown / "x.jpg", 40)
+    link = root / "t002_media"
+    if not _make_dir_link(link, unknown):
+        pytest.skip("本环境不支持创建目录链接")
+    entry = next(e for e in cleanup_mod._MANAGED_COPIES if e.pattern == "t002_media")
+    monkeypatch.setattr(
+        cleanup_mod, "_scan_managed_copies", lambda ts, r: [(entry, link / "x.jpg")]
+    )
+    stats = cleanup_mod.purge_managed_copies(root=root)
+    assert stats["managed_copy_files_deleted"] == 0
+    assert (unknown / "x.jpg").exists()
+
+
+def test_normal_media_frames_still_cleaned_control(tmp_path: Path) -> None:
+    """对照：正常 media/_frames（无链接）超期文件仍照删。"""
+    root = tmp_path / "data"
+    _mkfile(root / "media" / "_frames" / "frame.jpg", 40)
+    stats = purge_managed_copies(root=root)
+    assert stats["managed_copy_files_deleted"] == 1
+    assert not (root / "media" / "_frames" / "frame.jpg").exists()

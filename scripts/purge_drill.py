@@ -265,6 +265,8 @@ def _evaluate(checks: dict[str, object]) -> list[str]:
         )
     if "DRILL影子原文" in str(checks.get("shadow_old_detail") or ""):
         failures.append("shadow_old_detail：超期影子原文未被清除")
+    if "未到期影子原文" not in str(checks.get("shadow_new_detail") or ""):
+        failures.append("shadow_new_detail：未到期影子对照缺失（误删/误清）")
     if checks.get("feedback_old_text"):
         failures.append("feedback_old_text：超期反馈原文未被清除")
     if checks.get("media_old_exists"):

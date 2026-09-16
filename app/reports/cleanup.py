@@ -458,6 +458,28 @@ def _is_link_like(p: Path) -> bool:
     return bool(getattr(st, "st_file_attributes", 0) & _REPARSE_POINT_ATTRIBUTE)
 
 
+def _chain_has_link(root: Path, target: Path) -> bool:
+    """从数据根到目标的**每一级**（含目标）检查链接/重解析点（R-113 F01）。
+
+    旧实现只查叶节点：`data/media`（祖先）是链接时无法发现，遍历会沿链接
+    删除未登记目录的原文件（主审合成复现：media → unknown_keep 后
+    media/_frames 被错删）。这里逐级核对，任一级为链接即整体拒绝
+    （fail-closed）；目标不在根内同样拒绝。
+    """
+    try:
+        rel = target.relative_to(root)
+    except ValueError:
+        return True
+    current = root
+    if _is_link_like(current):
+        return True
+    for part in rel.parts:
+        current = current / part
+        if _is_link_like(current):
+            return True
+    return False
+
+
 def _resolve_managed_targets(root: Path, pattern: str) -> list[Path]:
     """解析登记 pattern：仅 data 根内、单层 glob；链接与越界结果直接丢弃。"""
     if ".." in Path(pattern).parts:
@@ -471,8 +493,8 @@ def _resolve_managed_targets(root: Path, pattern: str) -> list[Path]:
     for m in matches:
         if not m.exists():
             continue
-        if _is_link_like(m):
-            continue  # R-112 N01：登记名不得是链接/重解析点（根内别名绕行）
+        if _chain_has_link(root, m):
+            continue  # R-112 N01 + R-113 F01：登记名及完整祖先链不得含链接/重解析点
         try:
             rp = m.resolve()
         except OSError:
@@ -596,8 +618,8 @@ def purge_managed_copies(
     for _entry, f in _scan_managed_copies(ts, root):
         if dry_run:
             continue
-        if _is_link_like(f):
-            continue  # R-112 N01：删除前复核（纵深防护）
+        if _chain_has_link(root, f):
+            continue  # R-112 N01 + R-113 F01：删除前按完整链复核（防扫描后替换）
         try:
             size = f.stat().st_size
             f.unlink()
@@ -611,8 +633,8 @@ def purge_managed_copies(
             targets_seen.add(parent)
     if not dry_run:
         for d in sorted(targets_seen, key=lambda p: len(p.parts), reverse=True):
-            if _is_link_like(d):
-                continue  # R-112 N01：只回收真实空目录，不触碰链接
+            if _chain_has_link(root, d):
+                continue  # R-112 N01 + R-113 F01：目录回收前按完整链复核
             try:
                 d.rmdir()  # 仅空目录
                 dirs_removed += 1
