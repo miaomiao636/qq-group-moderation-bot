@@ -19,6 +19,7 @@ from typing import TYPE_CHECKING, Any
 from app.core.contracts import StandardMessage
 from app.moderation.decision import (
     ALLOWLIST_ALLOW_RULE_ID,
+    ALLOWLIST_NON_EXEMPT_CATEGORIES,
     CERTIFICATE_AD_ALLOW_RULE_ID,
     PROTECTED_CARD_ALLOW_RULE_ID,
     ModerationDecision,
@@ -73,9 +74,9 @@ AD_INTENT_MARKERS: tuple[str, ...] = (
 
 ALLOWED_SHARE_SOURCES: tuple[str, ...] = ("万能校园墙",)
 SEVERE_CATEGORIES: set[str] = {"porn", "violence", "fraud"}
-# 全局白名单只豁免广告/无信号（2026-09-16）：以下类别的命中一律不豁免
-# （覆盖 flood 这类"category 变量可能仍为 ad、但确有非广告命中"的情形）。
-_ALLOWLIST_NON_EXEMPT_CATEGORIES: frozenset[str] = frozenset({"porn", "violence", "fraud", "flood"})
+# 全局白名单只豁免广告/无信号（2026-09-16）：非豁免类别统一定义在 decision.py
+# （ALLOWLIST_NON_EXEMPT_CATEGORIES，覆盖 flood 这类"category 变量可能仍为 ad、
+# 但确有非广告命中"的情形；R-115 W01 要求全部证据层共用同一份定义）。
 
 # R07（ad323b6）+ 负责人 2026-09-16 口径 A：办证/学历类内容**完全放行**。
 # 演进：2026-09-12「不撤回、转记录」→ 2026-09-16「不处罚、不转人工」（allow）。
@@ -524,11 +525,12 @@ class TextRuleEngine:
         elif (
             allowlist_hit
             and (category is None or category == "ad")
-            and not any(h.category in _ALLOWLIST_NON_EXEMPT_CATEGORIES for h in hits)
+            and not any(h.category in ALLOWLIST_NON_EXEMPT_CATEGORIES for h in hits)
         ):
-            # 负责人 2026-09-16（全局白名单）：命中即**完全放行**（不处罚、不转人工）。
-            # 仅豁免广告/无信号类别；严重类别（fraud/porn/violence）与刷屏仍按
-            # 既有规则处理；AI 与动态规则不得升级（见合并层保护）。
+            # 负责人 2026-09-16（全局白名单）：命中即**放行**（不处罚、不转人工）。
+            # **仅豁免广告/无信号类别**；严重类别（fraud/porn/violence）与刷屏
+            # 仍按既有规则处理；后续证据层（DR/AI/媒体）逐次复核类别——
+            # 只有也无非广告证据时才保持放行（R-115 W01 整改）。
             verdict = "allow"
             confidence = 0.0
             actions = []
@@ -625,16 +627,27 @@ class TextRuleEngine:
             return base
         # 2026-09-16 口径 A：办证豁免（allow）时，办证类动态规则只记录——
         # 不得升级为违规或转人工（R-113 事故防再犯；非办证类显式 DR 照常生效）。
-        # 2026-09-16 口径：群主/管理员卡片与全局白名单放行（allow）时，
-        # 动态规则一律不升级（直接放行的用户意图优先）。
+        # D-032 群主/管理员卡片：全类别不升级（负责人确认的完全放行）。
         if base.verdict == "allow" and any(
-            h.rule_id in (PROTECTED_CARD_ALLOW_RULE_ID, ALLOWLIST_ALLOW_RULE_ID)
-            for h in base.rule_hits
+            h.rule_id == PROTECTED_CARD_ALLOW_RULE_ID for h in base.rule_hits
         ):
             return base.model_copy(
                 update={
                     "rule_hits": base.rule_hits + dynamic.rule_hits,
                     "reason": base.reason + "；政策豁免：动态规则仅记录",
+                }
+            )
+        # D-033 全局白名单：**仅豁免广告**（R-115 W01）——动态规则命中出现任何
+        # 非广告类别（fraud/porn/violence/flood）时不得沿放行，落到既有合并门槛。
+        if (
+            base.verdict == "allow"
+            and any(h.rule_id == ALLOWLIST_ALLOW_RULE_ID for h in base.rule_hits)
+            and all(h.category not in ALLOWLIST_NON_EXEMPT_CATEGORIES for h in dynamic.rule_hits)
+        ):
+            return base.model_copy(
+                update={
+                    "rule_hits": base.rule_hits + dynamic.rule_hits,
+                    "reason": base.reason + "；白名单豁免（仅广告）：动态规则仅记录",
                 }
             )
         if (

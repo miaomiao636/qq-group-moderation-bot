@@ -20,17 +20,22 @@ CERTIFICATE_AD_ALLOW_RULE_ID = "POLICY_CERTIFICATE_AD_ALLOW"
 # 负责人 2026-09-16 口径：群主/管理员分享的卡片完全放行（不处罚、不转人工）；
 # AI/动态规则/媒体层不得升级（与办证豁免同样的全链路保护机制）。
 PROTECTED_CARD_ALLOW_RULE_ID = "POLICY_PROTECTED_CARD_ALLOW"
-# 负责人 2026-09-16（后台可维护的全局白名单）：命中且非严重类别 → 完全放行。
-# 仅豁免广告/无信号类别；诈骗/色情/暴力/刷屏不豁免（B-2 底线）。
+# 负责人 2026-09-16（后台可维护的全局白名单）：命中且非严重类别 → 放行。
+# **仅豁免广告/无信号类别**；诈骗/色情/暴力/刷屏不豁免（B-2 底线）。
+# R-115 W01 整改：白名单不属于"全类别完全放行"政策——后续证据层必须
+# 逐次复核类别（见 `is_allowlist_ad_only_hit`），非广告回到既有判定门槛。
 ALLOWLIST_ALLOW_RULE_ID = "POLICY_ALLOWLIST_ALLOW"
-# 政策放行标记集合：本地命中即"完全放行"——AI/动态规则/媒体层一律不得升级或转人工。
+# 政策放行标记集合（**全类别**完全放行——负责人确认的独立政策）：
+# 仅 D-031 办证 / D-032 群主管理员卡片。全局白名单（D-033）**不在此列**：
+# 它只压制广告，严重类别证据必须照常升级 / 转人工（R-115 审查 P1）。
 POLICY_ALLOW_RULE_IDS = frozenset(
     {
         CERTIFICATE_AD_ALLOW_RULE_ID,
         PROTECTED_CARD_ALLOW_RULE_ID,
-        ALLOWLIST_ALLOW_RULE_ID,
     }
 )
+# 白名单非豁免类别（R-115 W01）：任一出现即视为"非广告证据"，不得沿用放行。
+ALLOWLIST_NON_EXEMPT_CATEGORIES = frozenset({"fraud", "porn", "violence", "flood"})
 
 
 class RuleHit(BaseModel):

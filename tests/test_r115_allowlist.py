@@ -1,7 +1,9 @@
 """R-115 全局白名单回归（负责人 2026-09-16）。
 
-口径：白名单命中且非严重类别 → 完全放行（不处罚、不转人工）；
-严重类别（诈骗/色情/暴力）与刷屏不豁免；AI 与动态规则不得升级；
+口径（R-115 W01 整改后）：白名单命中且非严重类别 → **仅广告放行**（不处罚、
+不转人工）；诈骗/色情/暴力/刷屏不豁免；**后续证据层（动态规则/AI/媒体）
+逐次复核类别**——出现任何非广告证据即回到既有门槛（高置信确认才升级、
+疑似/冲突/不完整保留人工），不得把"免广告"扩大成全类别放行；
 后台保存后下一条消息立即生效（运行时逐消息直读数据库）。
 """
 
@@ -94,8 +96,11 @@ def test_allowlist_empty_terms_do_not_change_behavior() -> None:
 
 
 async def test_allowlist_dr_does_not_upgrade() -> None:
-    """白名单放行 + 动态规则高置信命中 → 仍 allow（仅记录）。"""
-    msg = _msg("测试白名单词B 加微信 abc12345")
+    """白名单 + 非广告动态规则（fraud 0.95）→ **不得放行**（R-115 W01 整改）。
+
+    修复前：白名单无条件压制动态规则 → allow（审查认定的 P1 缺陷）；
+    修复后：非广告动态规则照常升级（violation_high）。"""
+    msg = _msg("BANZHENG 广告 加微信 abc12345")
     async with SessionLocal() as session:
         draft = await create_rule_draft(
             session, scope="group", scope_key=msg.external_group_id, name="allowlist dr"
@@ -104,22 +109,28 @@ async def test_allowlist_dr_does_not_upgrade() -> None:
             session,
             draft.id,
             item_type="keyword",
-            pattern="测试白名单词B",
+            pattern="BANZHENG",
             category="fraud",
             weight=0.95,
         )
         await publish_rule_version(session, draft.id, operator="synthetic-allowlist")
         snapshot = await load_active_snapshot(session, msg.external_group_id)
-    engine = TextRuleEngine(rule_snapshot=snapshot, allow_terms=frozenset(("测试白名单词b",)))
+    # 无动态规则时该样本走白名单放行（确保本回归测的是合并层而非本地层）
+    baseline = _engine(("banzheng",)).evaluate(msg)
+    assert baseline.verdict == "allow"
+    engine = TextRuleEngine(rule_snapshot=snapshot, allow_terms=frozenset(("banzheng",)))
     result = engine.evaluate(msg)
-    assert result.verdict == "allow"
-    assert result.recommended_actions == []
+    assert result.verdict == "violation_high"
 
 
 def test_allowlist_ai_pair_does_not_upgrade() -> None:
-    """白名单放行 + AI 独立二审确认 fraud 0.99 → 仍 allow。"""
-    local = _engine(("办证",)).evaluate(_msg("办证 加微信 synthetic_contact"))
-    assert local.verdict == "allow"
+    """白名单 + AI 独立二审确认 fraud 0.99 → **不得放行**（R-115 W01 整改）。
+
+    修复前：提前返回 → allow；修复后：落到既有门槛 → violation_high。
+    注意：旧版本此测试使用"办证"样本（混入 D-031 独立政策）——本回归改用
+    纯白名单词样本，避免政策混淆（审查 §W01 指出的测试污染）。"""
+    local = _engine(("banzheng",)).evaluate(_msg("BANZHENG 广告 加微信 abc12345"))
+    assert local.verdict == "allow"  # 本地白名单放行（仅广告类命中）
     ai_pair = [
         AIModerationResult(
             model_id=model_id,
@@ -134,8 +145,7 @@ def test_allowlist_ai_pair_does_not_upgrade() -> None:
         for model_id, role in (("synthetic-p", "primary"), ("synthetic-s", "secondary"))
     ]
     decision = merge_ai_evidence(local, ai_pair)
-    assert decision.verdict == "allow"
-    assert decision.recommended_actions == []
+    assert decision.verdict == "violation_high"
 
 
 # ---------- 服务层：增删启停 + 立即生效 ----------
