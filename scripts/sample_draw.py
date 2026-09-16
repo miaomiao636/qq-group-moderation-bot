@@ -70,6 +70,12 @@ def main() -> int:
                 detail = json.loads(r[9] or "{}")
             except json.JSONDecodeError:
                 detail = {}
+            # R-113 F02：降级状态从存储详情恢复为 unavailable（未知不得默认可用）
+            degraded = ""
+            for ai in detail.get("ai_results") or []:
+                if isinstance(ai, dict) and str(ai.get("degraded_reason") or "").strip():
+                    degraded = "degraded"
+                    break
             item = {
                 "sample_id": str(r[0]).split(":")[-1],
                 "message_id": str(r[0]),
@@ -82,6 +88,7 @@ def main() -> int:
                 "reason": str(r[8])[:200],
                 "text_preview": str(detail.get("text_preview") or "")[:200],
                 "media_kinds": detail.get("media_kinds") or [],
+                "unavailable": degraded,
                 "created_at": str(r[10]),
                 "label": "",
                 "truth_category": "",

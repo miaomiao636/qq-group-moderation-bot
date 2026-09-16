@@ -72,3 +72,17 @@ def test_partial_residual_isolated_failures() -> None:
     deleted_fresh["event_new_remaining"] = 0
     failures = mod._evaluate(deleted_fresh)
     assert any("event_new_remaining" in f for f in failures)
+
+
+def test_shadow_new_missing_must_fail() -> None:
+    """R-113 F04：未到期影子对照缺失（None 或误清空）必须失败。"""
+    mod = _load()
+    deleted = dict(_CLEAN)
+    deleted["shadow_new_detail"] = None
+    failures = mod._evaluate(deleted)
+    assert any("shadow_new_detail" in f for f in failures)
+
+    wiped = dict(_CLEAN)
+    wiped["shadow_new_detail"] = '{"text_preview": ""}'
+    failures = mod._evaluate(wiped)
+    assert any("shadow_new_detail" in f for f in failures)

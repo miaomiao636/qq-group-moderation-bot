@@ -44,6 +44,7 @@ def _row(
         "reason": "",
         "text_preview": "",
         "media_kinds": [],
+        "unavailable": "",
         "created_at": "2026-09-15 12:00:00",
         "label": label,
         "truth_category": truth,
@@ -110,3 +111,92 @@ def test_forward_record_kind_maps_to_unknown() -> None:
     )
     assert out is not None
     assert out["kind"] == "unknown"
+
+
+# ---------- R-113 F02/F03/F07 回归 ----------
+
+
+def test_missing_unavailable_is_rejected() -> None:
+    """F02：缺 unavailable 字段直接拒绝——未知不得默认可用。"""
+    mod = _load()
+    row = _row("onebot:g:9", "confirmed_violation", "ad")
+    del row["unavailable"]
+    with pytest.raises(ValueError):
+        mod.convert_row(row, model_revision="m", rule_revision="r")
+
+
+def test_degraded_availability_passthrough() -> None:
+    """F02：已知降级状态透传到正式契约字段。"""
+    mod = _load()
+    row = _row("onebot:g:9", "confirmed_violation", "ad")
+    row["unavailable"] = "degraded"
+    out = mod.convert_row(row, model_revision="m", rule_revision="r")
+    assert out is not None and out["unavailable"] == "degraded"
+
+
+def test_voice_kind_maps_to_audio() -> None:
+    """F07：parser 产出 voice、契约枚举 audio。"""
+    mod = _load()
+    out = mod.convert_row(
+        _row("onebot:g:9", "confirmed_violation", "ad", kind="voice"),
+        model_revision="m",
+        rule_revision="r",
+    )
+    assert out is not None and out["kind"] == "audio"
+
+
+def test_real_parser_voice_flows_to_converter_and_contract() -> None:
+    """F07 串联：真实 OneBot record fixture → parser → 转换器 → 正式契约。"""
+    from app.adapters.onebot.parser import OneBotMessageSource
+
+    fixture = Path(__file__).parent / "fixtures" / "onebot" / "group_message_voice.json"
+    event = json.loads(fixture.read_text(encoding="utf-8"))["event"]
+    msg = OneBotMessageSource().parse_group_message(event)
+    assert msg.kind == "voice"
+
+    import app.reports.evaluation as ev
+
+    mod = _load()
+    row = {
+        "sample_id": msg.external_message_id,
+        "message_id": msg.message_id,
+        "kind": msg.kind,
+        "system_verdict": "record_only",
+        "label": "confirmed_normal",
+        "truth_category": "other",
+        "unavailable": "",
+    }
+    out = mod.convert_row(row, model_revision="m", rule_revision="r")
+    assert out is not None
+    ev.EvaluationSample.from_dict(out)
+    assert out["kind"] == "audio"
+
+
+def test_same_source_output_is_rejected(tmp_path: Path) -> None:
+    """F03：输入输出同源拒绝（含路径别名）。"""
+    mod = _load()
+    src = tmp_path / "a.jsonl"
+    src.write_text(
+        json.dumps(_row("onebot:g:1", "confirmed_normal", "other"), ensure_ascii=False),
+        encoding="utf-8",
+    )
+    with pytest.raises(ValueError):
+        mod.convert_file(src, src, model_revision="m", rule_revision="r")
+
+
+def test_existing_output_rejected_without_force_and_bytes_preserved(tmp_path: Path) -> None:
+    """F03：已存在输出默认拒绝且不破坏已有字节；force=True 显式覆盖。"""
+    mod = _load()
+    src = tmp_path / "a.jsonl"
+    src.write_text(
+        json.dumps(_row("onebot:g:1", "confirmed_normal", "other"), ensure_ascii=False),
+        encoding="utf-8",
+    )
+    dst = tmp_path / "b.jsonl"
+    dst.write_text("keep-me", encoding="utf-8")
+    with pytest.raises(ValueError):
+        mod.convert_file(src, dst, model_revision="m", rule_revision="r")
+    assert dst.read_text(encoding="utf-8") == "keep-me"
+
+    stats = mod.convert_file(src, dst, model_revision="m", rule_revision="r", force=True)
+    assert stats["converted"] == 1
