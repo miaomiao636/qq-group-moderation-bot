@@ -17,6 +17,9 @@ Category = Literal["ad", "fraud", "porn", "violence", "flood", "other", None]
 
 # Deterministic local policy marker, never inferred from an AI explanation.
 CERTIFICATE_AD_ALLOW_RULE_ID = "POLICY_CERTIFICATE_AD_ALLOW"
+# 负责人 2026-09-16 口径：群主/管理员分享的卡片完全放行（不处罚、不转人工）；
+# AI/动态规则/媒体层不得升级（与办证豁免同样的全链路保护机制）。
+PROTECTED_CARD_ALLOW_RULE_ID = "POLICY_PROTECTED_CARD_ALLOW"
 
 
 class RuleHit(BaseModel):
