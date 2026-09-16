@@ -800,7 +800,8 @@ ACTION_MODE 切换为 OFFICIAL、ONEBOT_ACTIONS_ENABLED=true、ONEBOT_ACTION_STA
   （other/None）时白名单**不得**提前放行（转人工）；AI 未启用仍正常放行。
   回归：主审交付包 4 探针（政策重叠 12 项 / 残余场景 14 项 / 管理面 26 项）正式
   入库（`tests/test_r115_policy_overlap.py` 等 4 个文件），修复前 10 failed →
-  修复后 **52/52**；止损：白名单词停用（修复上线后由负责人恢复）。
+  修复后 **52/52**；止损与恢复：白名单词先停用（风险窗口），修复部署（22:07 重启）后
+  已于 22:10 恢复启用（审计 `ops:owner-allowlist-resume-c01c03-2026-09-16`）。
 
 ---
 
