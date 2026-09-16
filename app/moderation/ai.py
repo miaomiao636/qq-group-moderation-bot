@@ -874,16 +874,23 @@ def merge_ai_evidence(
         hit.rule_id in POLICY_ALLOW_RULE_IDS for hit in local.rule_hits
     ):
         return local.model_copy(update={"rule_hits": local.rule_hits + hits})
-    # D-033 全局白名单：**仅豁免广告**（R-115 W01 整改）——AI 证据出现任何非广告
-    # 类别（含疑似/需人工）时不再提前返回，落到既有门槛（严重确认才升级、
-    # 疑似与冲突保留人工），不得把"广告放行"扩大成全类别放行。
+    # D-033 全局白名单：**仅豁免广告**（R-115 W01/C03 整改）——提前放行要求
+    # "审核已完成"：调用失败/配置错误（degraded）、待人工（needs_review）、未知
+    # 类别（other/None）一律转人工，绝不以"未出现四类有效结果"为放行充分条件；
+    # AI 未启用（结果列表为空）仍属正常，可放行。
     if (
         local.verdict == "allow"
         and any(hit.rule_id == ALLOWLIST_ALLOW_RULE_ID for hit in local.rule_hits)
         and not any(result.category in ALLOWLIST_NON_EXEMPT_CATEGORIES for result in usable)
+        and not any(result.degraded_reason for result in ai_results)
+        and not any(result.needs_review for result in usable)
+        and all(result.category not in (None, "other") for result in usable)
     ):
         return local.model_copy(update={"rule_hits": local.rule_hits + hits})
     candidates: list[AIModerationResult] = []
+    # R-115 C02：白名单命中时——广告证据不参与处罚候选（非广告证据独立达到原
+    # 门槛才允许升级）；弱严重信号仍保留在证据与转人工路径中。
+    _allowlist_scoped = any(hit.rule_id == ALLOWLIST_ALLOW_RULE_ID for hit in local.rule_hits)
     unresolved = any(result.degraded_reason for result in ai_results)
     # S01：跨模态矛盾（文字判广告/图文判正常、或任一模态要求人工）不得直接升罚。
     _text_signals = [r for r in ai_results if r.source == "text"]
@@ -931,7 +938,8 @@ def merge_ai_evidence(
                 # 视觉单通道不得升罚，保留人工。
                 unresolved = True
             else:
-                candidates.append(primary)
+                if not (_allowlist_scoped and primary.category == "ad"):
+                    candidates.append(primary)
                 _vision_resolved_ids.add(id(primary))
         elif (
             primary.category in ("ad", "fraud", "porn")
@@ -941,7 +949,8 @@ def merge_ai_evidence(
             if _text_veto:
                 unresolved = True
             else:
-                candidates.append(primary)
+                if not (_allowlist_scoped and primary.category == "ad"):
+                    candidates.append(primary)
                 _vision_resolved_ids.add(id(primary))
     # A04：有效二审已确认的视觉结论，其原始 needs_review 疑问视为已消解；
     # 只有"确定性正常"或"未被消解的 gray/needs_review"才阻止文字单通道升罚。
@@ -978,7 +987,8 @@ def merge_ai_evidence(
                 # 文字单通道不得升罚，保留人工。
                 unresolved = True
             else:
-                candidates.append(text_result)
+                if not (_allowlist_scoped and text_result.category == "ad"):
+                    candidates.append(text_result)
     # An orphaned secondary can never become a new primary by filtering.
     primary_groups = {r.review_group for r in primaries}
     if any(

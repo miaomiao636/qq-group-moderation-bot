@@ -544,6 +544,18 @@ class TextRuleEngine:
                     evidence_masked=f"全局白名单命中：{allowlist_hit}",
                 )
             )
+            # R-115 C01（政策独立计票）：白名单命中**不得遮蔽** D-031——办证/学历
+            # 文本同时保留办证政策标记，后续证据层按"保护最强"的政策（全类别）执行。
+            if _is_certificate_service_content(msg.text):
+                hits.append(
+                    RuleHit(
+                        rule_id=CERTIFICATE_AD_ALLOW_RULE_ID,
+                        rule_name="certificate_ad_scope",
+                        category="ad",
+                        confidence_delta=0.0,
+                        evidence_masked=("办证政策与广告白名单同时命中；D-031 全类别保护保留"),
+                    )
+                )
         elif share_card and share_source_allowed:
             if category in SEVERE_CATEGORIES:
                 verdict = "record_only"
@@ -620,7 +632,7 @@ class TextRuleEngine:
         if self._rule_snapshot is None:
             return base
 
-        from app.moderation.dynamic_rules import DynamicRuleEngine
+        from app.moderation.dynamic_rules import HIGH_THRESHOLD, DynamicRuleEngine
 
         dynamic = DynamicRuleEngine(self._rule_snapshot).evaluate(msg)
         if not dynamic.rule_hits:
@@ -637,19 +649,32 @@ class TextRuleEngine:
                     "reason": base.reason + "；政策豁免：动态规则仅记录",
                 }
             )
-        # D-033 全局白名单：**仅豁免广告**（R-115 W01）——动态规则命中出现任何
-        # 非广告类别（fraud/porn/violence/flood）时不得沿放行，落到既有合并门槛。
-        if (
-            base.verdict == "allow"
-            and any(h.rule_id == ALLOWLIST_ALLOW_RULE_ID for h in base.rule_hits)
-            and all(h.category not in ALLOWLIST_NON_EXEMPT_CATEGORIES for h in dynamic.rule_hits)
+        # D-033 全局白名单：**仅豁免广告**（R-115 W01/C02）——广告证据不参与处罚；
+        # 非广告证据**独立达到原高门槛**（HIGH_THRESHOLD）才走普通升级路径，
+        # 否则保留人工（record_only、建议为空、全部 hits 保留供审计）。
+        if base.verdict == "allow" and any(
+            h.rule_id == ALLOWLIST_ALLOW_RULE_ID for h in base.rule_hits
         ):
-            return base.model_copy(
-                update={
-                    "rule_hits": base.rule_hits + dynamic.rule_hits,
-                    "reason": base.reason + "；白名单豁免（仅广告）：动态规则仅记录",
-                }
+            non_ad_total = sum(
+                h.confidence_delta for h in dynamic.rule_hits if h.category not in (None, "ad")
             )
+            if not any(h.category in ALLOWLIST_NON_EXEMPT_CATEGORIES for h in dynamic.rule_hits):
+                return base.model_copy(
+                    update={
+                        "rule_hits": base.rule_hits + dynamic.rule_hits,
+                        "reason": base.reason + "；白名单豁免（仅广告）：动态规则仅记录",
+                    }
+                )
+            if non_ad_total < HIGH_THRESHOLD:
+                return base.model_copy(
+                    update={
+                        "verdict": "record_only",
+                        "recommended_actions": [],
+                        "confidence": min(dynamic.confidence, 0.85),
+                        "rule_hits": base.rule_hits + dynamic.rule_hits,
+                        "reason": base.reason + "；白名单命中且非广告证据未达独立门槛，转人工",
+                    }
+                )
         if (
             base.verdict == "allow"
             and any(h.rule_id == CERTIFICATE_AD_ALLOW_RULE_ID for h in base.rule_hits)
