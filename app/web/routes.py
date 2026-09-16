@@ -1840,7 +1840,8 @@ async def allowlist_page(request: Request, notice: str = "") -> Response:
         f"<td>{_esc(t.created_by)}</td>"
         f"<td>{t.created_at.strftime('%m-%d %H:%M') if t.created_at else ''}</td>"
         f'<td><form method=post style=display:inline action="/admin/allowlist/{t.id}/toggle">'
-        f"{csrf}<button class=btn>{'停用' if t.enabled else '启用'}</button></form> "
+        f'{csrf}<input type=hidden name=target_enabled value="{"false" if t.enabled else "true"}">'
+        f"<button class=btn>{'停用' if t.enabled else '启用'}</button></form> "
         f'<form method=post style=display:inline action="/admin/allowlist/{t.id}/delete" '
         f"onsubmit=\"return confirm('删除该白名单词？')\">{csrf}"
         "<button class=btn>删除</button></form></td></tr>"
@@ -1882,17 +1883,25 @@ async def allowlist_add(request: Request, term: str = Form(""), csrf: str = Form
 
 
 @router.post("/allowlist/{term_id}/toggle")
-async def allowlist_toggle(request: Request, term_id: int, csrf: str = Form("")) -> Response:
+async def allowlist_toggle(
+    request: Request, term_id: int, target_enabled: str = Form(""), csrf: str = Form("")
+) -> Response:
     await _require_admin_post(request, csrf)
     operator = await _operator(request)
     from app.models import AllowlistTerm
     from app.moderation.allowlist import set_term_enabled
 
+    # R-115 W02：服务端不猜测目标状态——表单必须显式携带目标（幂等 set）。
+    # 旧页面/双击/请求重试缺少目标时一律拒绝，杜绝"停用→再提交又启用"的翻转。
+    raw = target_enabled.strip().lower()
+    if raw not in ("true", "false"):
+        return _allowlist_notice_redirect("请求缺少目标状态，未执行——请刷新页面后重试")
+    target = raw == "true"
     async with SessionLocal() as session:
         row = await session.get(AllowlistTerm, term_id)
         if row is None:
             return _allowlist_notice_redirect("白名单词不存在")
-        updated = await set_term_enabled(session, term_id, not row.enabled, operator=operator)
+        updated = await set_term_enabled(session, term_id, target, operator=operator)
     state = "启用" if updated.enabled else "停用"
     return _allowlist_notice_redirect(f"「{updated.term}」已{state}——下一条消息立即生效")
 

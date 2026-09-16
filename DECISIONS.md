@@ -778,6 +778,17 @@ ACTION_MODE 切换为 OFFICIAL、ONEBOT_ACTIONS_ENABLED=true、ONEBOT_ACTION_STA
   "办证"样本混入 D-031 政策，已改纯白名单样本）；主审 40 项开/关对照正式化为
   `tests/test_r115_w01_policy_probe.py`（修复前 16 failed → 修复后 40 passed）。
   **D-031/D-032 按负责本轮确认保持完全放行**，其既有明确例外不受本整改影响。
+- **R-115 W02–W04 整改（2026-09-16，管理面 P2）**：
+  ① **W02 启停幂等**：按钮表单携带**显式目标状态**，服务端拒绝缺失目标的旧请求
+  （不再"取反"——双击/请求重试不会反向翻转）；审计 detail 记录 before/changed。
+  ② **W03 ID 不可复用**：`allowlist_terms` 重建为 `INTEGER NOT NULL PRIMARY KEY
+  AUTOINCREMENT`（删除后新词不复用旧 id；旧页面表单不能再操作替代对象）。
+  ③ **W04 等价词唯一**：`normalized` 升级为**库级唯一约束** + 服务层并发冲突
+  安全复用（IntegrityError 后回查既有项）；`load` 对（约束上线前的）历史重复
+  保守合并——**全部启用才生效**，不静默取更宽松值。
+  迁移 `b8d4f2a05e31`（升级/降级/`alembic check` 零漂移；迁移前重复核查不静默）；
+  回归：`tests/test_r115_allowlist.py` 新增管理面 4 项（服务幂等 / 路由缺目标拒绝
+  与双击幂等 / 删除后 ID 不复用 / 唯一约束兜底）。
 
 ---
 
