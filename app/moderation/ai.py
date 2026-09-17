@@ -968,9 +968,17 @@ def merge_ai_evidence(
     # AI 是唯一判据，允许高置信直接升级；但规则/白名单冲突、本地类别冲突、
     # needs_review、unknown_category 一律不升级（转人工或条件复核）。
     # 此前仅检查类别/置信度，复现了"本地已判转人工却被升级为撤回+禁言建议"。
+    # T1（主审 2026-09-17 ddeb893 复验）：非降级文字结果提出 needs_review 时，
+    # 其尚未消解的疑问必须与视觉"未消解 gray"同口径进入人工兜底条件——
+    # category=None 不在 usable 中，若不在此显式记录，最终会静默落回 allow
+    # （复现：纯文字 None+needs_review=True 被放行）。只补"原本会落到 allow"的
+    # 路径；升级判定与既有 record_only 分支的原因/类别口径均不变。
+    unresolved_text_review = False
     for text_result in ai_results:
         if text_result.source != "text" or text_result.degraded_reason:
             continue
+        if text_result.needs_review:
+            unresolved_text_review = True
         reason = secondary_review_reason(
             text_result,
             local,
@@ -1021,6 +1029,9 @@ def merge_ai_evidence(
     severe_suspects = [r for r in usable if r.category in ("fraud", "porn", "violence")]
     if (
         unresolved
+        # T1：文字通道未消解的 needs_review（含 category=None）必须转人工，
+        # 不得因"未产出可用类别"而静默落回 allow。
+        or unresolved_text_review
         or meaningful
         or severe_suspects
         or local.verdict == "record_only"

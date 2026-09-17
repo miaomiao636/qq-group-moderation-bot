@@ -821,6 +821,19 @@ ACTION_MODE 切换为 OFFICIAL、ONEBOT_ACTIONS_ENABLED=true、ONEBOT_ACTION_STA
   R-115 六文件 **105/105**；全量 **1325 收集 / 0 failed / 1310 passed / 15 skipped**
   （15 项为环境依赖跳过）；ruff check / format 与 mypy（87 源文件）通过。
   D-031/D-032 完全放行与 D-033"仅免广告"政策不变，本批仅补口径未落实到位处。
+- **R-115 T1 复验整改（2026-09-17，主审 ddeb893 复验单列项）**：主审确认 R1–R3 按原关闭
+  标准通过（可关闭）、运行补证 v2 维持通过；单列 1 项 **P2 旧缺陷**（非 R1–R3 引入，
+  5060361 基线同样复现）：纯文字结果 category=None + needs_review=True 被静默放行——
+  文字循环只对两个"冲突"原因置 unresolved，None 不在 `usable` 中，后续人工兜底条件
+  全不满足，最终落回 allow（主审探针 2 failed / 2 passed）。修复：非降级文字结果的
+  **未消解 needs_review 与视觉"未消解 gray"同口径进入人工兜底条件**
+  （`ai.py` 新增 `unresolved_text_review` 并入转人工 if）；升级判定、既有 record_only
+  分支的原因/类别口径均不变；D-031/D-032 提前返回与 D-033 提前放行边界不受影响。
+  回归：主审 T1 探针 4 项正式入库 `tests/test_r115_text_needs_review.py`
+  （修复前 2 failed / 2 passed → **4/4**；needs_review=True 转人工 ×2 与控制组 allow ×2，
+  白名单开/关全覆盖，全合成输入固定替身无外呼）；r115 系 **133/133**；全量
+  **1329 收集 / 0 failed / 1314 passed / 15 skipped**（15 项为环境依赖跳过）；
+  ruff check / format（228 文件）与 mypy（87 源文件）通过。
 
 ---
 
