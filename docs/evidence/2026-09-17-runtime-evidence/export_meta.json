@@ -1,0 +1,40 @@
+{
+ "export_time_local": "2026-09-17 08:10:51",
+ "export_time_utc": "2026-09-17 00:10:51",
+ "timezone": "Asia/Shanghai (UTC+8); DB stores UTC naive",
+ "source": "data/moderation.db (read-only, no new actions triggered)",
+ "row_counts": {
+  "action_logs": 549,
+  "action_intents": 1320,
+  "admin_audits": 795,
+  "groups": 16
+ },
+ "windows_utc": {
+  "W0_local_day_09-16": [
+   "2026-09-15 16:00:00",
+   "2026-09-16 16:00:00"
+  ],
+  "W0u_utc_day_09-16": [
+   "2026-09-16 00:00:00",
+   "2026-09-17 00:00:00"
+  ],
+  "W1_pre_resume": [
+   "2026-09-16 00:00:00",
+   "2026-09-16 09:35:59"
+  ],
+  "W2_new_account_pre_deploy": [
+   "2026-09-16 09:35:59",
+   "2026-09-16 16:51:36"
+  ],
+  "W3_allowlist_restored_pre_deploy": [
+   "2026-09-16 14:10:19",
+   "2026-09-16 16:51:36"
+  ],
+  "W4_post_deploy_reconnected": [
+   "2026-09-16 16:51:36",
+   "2026-09-17 00:10:51"
+  ]
+ },
+ "note": "W0 为本地 09-16 全天窗口（UTC 09-15 16:00 起）；W0u 为 UTC 日界窗口（非本地全天）。",
+ "deploy_marker_utc": "2026-09-16 16:51:36 (QQBotWeb reconnect after R1-R3 deploy)"
+}
