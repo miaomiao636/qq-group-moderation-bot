@@ -14,7 +14,7 @@
 
 | 项 | 值 | 证据 |
 | --- | --- | --- |
-| 机器人账号 | **530297362**（login_state=online、connected=true、connect_count=1） | `onebot_status.json`（采集于部署核验时，≈2026-09-17 00:53 本地） |
+| 机器人账号 | **<BOT_QQ>**（login_state=online、connected=true、connect_count=1） | `onebot_status.json`（采集于部署核验时，≈2026-09-17 00:53 本地） |
 | 部署版本 | main = **8659ca0**（含 R1–R3 修复，PR #32）；本机工作区与 main 内容一致（`git diff` 为空） | 本机 git |
 | 本次部署 | 2026-09-17 00:51 提权重启：QQBotRuntime PID 25048（00:51:01）、QQBotWeb PID 45180（00:51:07）；**WS 重连完成 = 16:51:36 UTC**（healthz `last_connect_at`，即 W4 窗口起点） | 服务进程核验 |
 | 版本绑定校验 | `app/moderation/ai.py`：工作区 blob == HEAD blob == `43ba60d3a96f2771bb5d7ccf2f5310faec0c8063`；`app/moderation/rules.py`：工作区 blob == HEAD blob == `545b53ea2c44fbc0f0889991375091fdc3393974`（内容级绑定，非仅 PID） | 文件哈希 |
@@ -101,7 +101,7 @@ W4 逐群分布（部署后真实动作，全部成功）：
 | --- | --- |
 | `export_meta.json` | **导出时刻（本地/UTC）、全部窗口起止、四个数据文件的行数**（本包时序口径的唯一权威记录） |
 | `healthz.json` | 部署核验时 /healthz 原样输出 |
-| `onebot_status.json` | 部署核验时 /onebot/status 原样输出（self_id=530297362、online） |
+| `onebot_status.json` | 部署核验时 /onebot/status 原样输出（self_id=<BOT_QQ>、online） |
 | `action_logs.json` | 549 行；UTC+本地双时间列；已去除成员/消息标识 |
 | `action_intents.json` | 1320 行；状态/原因/操作者/群号/双时间列；已去除成员/消息标识 |
 | `admin_audits.json` | 795 行审计元数据原行（operator/action/target/detail 原文） |

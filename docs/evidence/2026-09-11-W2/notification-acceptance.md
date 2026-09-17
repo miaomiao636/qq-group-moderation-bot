@@ -7,7 +7,7 @@
 | 通道 | 角色 | 配置 |
 |---|---|---|
 | QQ 群（群 1043951076） | primary | `NOTIFICATION_QQ_ENABLED=true` |
-| 邮件（smtp.qq.com:465/ssl） | **QQ 失败时的 fallback 升级通道**（`qq_fallback:{notice_id}` → email） | `NOTIFICATION_EMAIL_ENABLED=true`，收发件人同 `3573002001@qq.com` |
+| 邮件（smtp.qq.com:465/ssl） | **QQ 失败时的 fallback 升级通道**（`qq_fallback:{notice_id}` → email） | `NOTIFICATION_EMAIL_ENABLED=true`，收发件人同 `<OWNER_EMAIL>` |
 
 ## 已验证
 
