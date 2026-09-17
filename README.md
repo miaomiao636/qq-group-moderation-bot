@@ -1,170 +1,200 @@
 # QQ 群多模态智能管理机器人
 
-24×7 识别 QQ 群中的垃圾广告、诈骗及自定义违规内容，支持文字、图片、GIF、表情、视频、语音、文件和卡片；自动执行高置信消息的撤回和分级禁言，整理两次违规证据并交由人工决定是否踢人。
+面向 QQ 群的多模态内容审核与自动管理：24×7 识别广告、诈骗及自定义违规内容（文字 / 图片 /
+GIF / 表情 / 视频 / 语音 / 文件 / 卡片），自动执行高置信消息的撤回与分级禁言，整理两次违规
+证据并交由人工决定是否踢人；全部判定与动作可审计、可急停、可回退。
 
-> 当前阶段（2026-09-10）：PR #5已合并；R-106加入默认关闭的主动通知、人工接手与外部健康探针。默认SHADOW、OneBot真实动作关闭。代码不等于Windows验收。先读[交付清单](docs/windows-delivery-checklist.md)和[通知部署手册](docs/proactive-notifications.md)；实际门禁见PROGRESS/PR。
+> **交付说明**：本项目面向单一接收方交付（文件包）。使用**自己的 QQ 账号、自己的群、自己的
+> 密钥**从零部署，即为独立安装。**新部署 = 新现场验收**：代码行为一致，生效证据由各部署方
+> 自行采集（见 §7）。
+> 交付包中的历史文档用 `<BOT_QQ>` / `<OLD_BOT_QQ>` / `<OWNER_EMAIL>` 占位符代替了原部署的
+> 真实账号与邮箱；`.env`、`data/`、日志等运行数据不在包内。
 
-## 架构概览
+## 能力概览
 
-- **NapCatQQ + OneBot 11**：主通道；持久接收箱、账号绑定、撤回/禁言/警告Adapter已实现，真实效果待Windows验证。
-- **QQ 官方机器人**：已实现的可选/测试Adapter，只能用于它实际可进入的群。
-- **审核服务**：规则、行为、多模态识别、独立复核、违规累计、案件、证据、审批和报告。
-- **人工 QQ 客户端 / NapCat**：互斥的踢人执行出口，踢人必须人工批准；首版可仅使用人工QQ客户端踢人。
-- 详见 `PROJECT_CONTEXT.md`、`DECISIONS.md` 与 [`AI辅助审核、动态规则与反馈学习设计`](docs/superpowers/specs/2026-09-06-ai-rule-learning-design.md)。
+- **多模态审核**：文本 / 图片 / GIF / 表情 / 视频 / 语音 / 文件 / 卡片
+- **分级处置**：记录 → 撤回 → 1 小时禁言 + 警告 → 24 小时禁言（高置信自动执行）；
+  两次违规合并为案件，由人工决定是否踢出
+- **策略保护**：全局白名单（仅免广告）、办证/学历内容放行、群主/管理员卡片放行
+  （均可在代码策略与后台配置，详见 `DECISIONS.md` 中的 D-031/D-032/D-033）
+- **管理后台**：群管理、案件处理、影子记录、白名单、动态规则、通知中心、审计
+- **安全底线**：急停开关（只记录不动手）、按群动作开关、动作结果未知不盲目重放、全链路审计
+- **主通道**：NapCat + OneBot 11（反向 WebSocket）；可选 QQ 官方机器人通道
 
-## 环境要求
+## 架构
 
-- Python 3.12+
-- [uv](https://docs.astral.sh/uv/)（依赖与虚拟环境管理）
+```
+QQ 群消息
+   │
+   ▼
+QQ 客户端 + NapCat（同机运行，反向 WebSocket 客户端）
+   │  ws://127.0.0.1:<WEB_PORT>/onebot/ws   （Authorization: Bearer <令牌>）
+   ▼
+审核服务（本仓库，Python 3.12）
+   ├─ 消息解析 → 规则引擎（本地/动态）→ AI 复核（可选）→ 判定与分级
+   ├─ 动作编排（撤回 / 禁言 / 警告：按群授权 + 急停 + 结果未知保护）
+   ├─ 案件与证据、违规累计、审计
+   ├─ 通知（QQ 群 / 邮件，可选，默认全关）
+   └─ 管理后台（HTTP，默认仅本机）
+   │
+   ▼
+SQLite（data/moderation.db，WAL）+ 媒体文件（data/）
+```
 
-## 安装
+| 组件 | 说明 | 是否必须 |
+| --- | --- | --- |
+| Web 服务（`python -m app`） | 管理后台 + OneBot 反向 WS 接收 + 通知工作器 | 必须 |
+| 运行器（`python -m app.runtime`） | 常驻影子运行器（后台任务） | 必须 |
+| NapCat | QQ 协议端；需交互式登录（扫码/快速登录），**不能**注册为 Windows 服务 | 必须 |
+| NSSM | 把上面两个 Python 进程注册为 Windows 服务（开机自启） | 推荐 |
+| SMTP / AI Key | 通知与 AI 复核 | 可选 |
 
-```bash
-# 1. 克隆仓库后进入项目根目录
-cd qq-group-moderation-bot
+## 1. 环境要求
 
-# 2. 创建虚拟环境并安装依赖（含开发依赖）
+- Windows 10/11（建议**专用机** 24×7 在线：禁止睡眠/休眠；BIOS 开启"恢复供电自动开机"）
+- Python 3.12+、[uv](https://docs.astral.sh/uv/)、Git
+- NapCat（自带 QQ 客户端）
+- （可选）[NSSM](https://nssm.cc/)：放入如 `C:\nssm\nssm.exe`
+
+## 2. 从零部署
+
+### 2.1 获取代码并安装依赖
+
+```powershell
+cd <项目目录>
 uv sync --all-groups
-
-# 3. 复制环境模板并填写真实值（真实凭据绝不提交仓库）
-cp .env.example .env
 ```
 
-## 运行
+### 2.2 配置 `.env`
 
-```bash
-# 启动服务器（读取 .env 中的 WEB_HOST 与 WEB_PORT，默认 127.0.0.1:8000）
-uv run python -m app
+```powershell
+Copy-Item .env.example .env
 ```
 
-> 启动前必须先执行数据库迁移（见下节），否则应用会因数据库未初始化而拒绝启动。
+必填 / 常用项（完整注释见 `.env.example`）：
 
-健康检查：`GET http://127.0.0.1:8000/healthz`（端口以 `.env` 中 `WEB_PORT` 为准）
+| 键 | 说明 |
+| --- | --- |
+| `WEB_HOST` / `WEB_PORT` | 后台监听地址与端口（默认 `127.0.0.1:8000`；本文示例用 `8001`） |
+| `ADMIN_USERNAME` / `ADMIN_PASSWORD` | 后台登录；`APP_ENV=prod` 时必须强口令 |
+| `ONEBOT_WS_ENABLED=true` | 启用 OneBot 反向 WS 接收 |
+| `ONEBOT_ACCESS_TOKEN` | 强随机令牌（NapCat 与系统共用，建议 ≥32 字符） |
+| `ONEBOT_SELF_ID` | **你的机器人 QQ 号** |
+| `ONEBOT_ACTIONS_ENABLED` | 真实动作总开关；**首次部署保持 `false`**（先影子观察） |
+| `ONEBOT_ACTION_STAGE` | 先 `recall_only`（只撤回）；确认稳定后按需 `full` |
+| `ACTION_MODE` | `SHADOW`（默认，只记录）/ `OFFICIAL`（允许真实动作，另需 prod、口令、非急停） |
+| `AI_*` / `NOTIFICATION_*` | 可选；通知详见 `docs/proactive-notifications.md` |
 
-当前常驻运行器是**QQ官方通道影子运行器**，只能用于机器人实际可进入的隔离群：
+> ⚠️ `.env` 只在本机保存：**永不提交仓库、永不随交付包分发**。
 
-```bash
-uv run python -m app.runtime
-```
+### 2.3 数据库迁移
 
-该入口需要本地配置QQ官方凭据。默认 `ACTION_MODE=SHADOW`，只记录审核建议和模拟动作，不执行撤回、禁言或警告。
-
-NapCat反向WebSocket由上面的Web服务接收：在 `.env` 显式设置 `ONEBOT_WS_ENABLED=true` 与强令牌，把NapCat反向WS地址配置为 `ws://<WEB_HOST>:<WEB_PORT>/onebot/ws`，并让NapCat使用同一令牌发送 `Authorization: Bearer` 请求头。令牌不允许放在URL查询参数中。`/onebot/status` 同样需要Bearer令牌；公开的 `/healthz` 只返回不含QQ号、群号和内部错误的聚合就绪状态。Windows正式安装、版本固定和自启动仍按T-303/T-404完成。
-
-开发时如需热重载，可显式指定端口：
-```bash
-uv run uvicorn app.main:app --reload --host 127.0.0.1 --port 8000
-```
-
-## 数据库迁移
-
-```bash
-# 生成迁移脚本（模型变更后）
-uv run alembic revision --autogenerate -m "描述"
-
-# 应用迁移
+```powershell
 uv run alembic upgrade head
 ```
 
-## 质量门禁
+全新安装 = 空库；迁移会自动建表。
 
-```bash
-# 单元测试
-uv run pytest
+### 2.4 前台试运行与验证
 
-# 代码格式化（检查）
-uv run ruff format --check app tests alembic
+```powershell
+uv run python -m app           # 终端 A：Web + OneBot WS + 通知工作器
+uv run python -m app.runtime   # 终端 B：常驻运行器
+```
 
-# 代码格式化（自动修复）
-uv run ruff format app tests alembic
+- 健康检查：`http://127.0.0.1:<WEB_PORT>/healthz` → `"status":"ok"`
+- 管理后台：`http://127.0.0.1:<WEB_PORT>/admin` → 用 `ADMIN_*` 登录
 
-# 静态检查
+### 2.5 接入 NapCat（反向 WebSocket）
+
+1. 安装并登录 NapCat（扫码或快速登录；**不能**注册为 Windows 服务——需要交互式会话）
+2. NapCat WebUI →「**网络配置**」→ 添加「**WebSocket 客户端**」：
+
+   | 字段 | 值 |
+   | --- | --- |
+   | URL | `ws://127.0.0.1:<WEB_PORT>/onebot/ws` |
+   | Token | 与 `ONEBOT_ACCESS_TOKEN` 完全一致 |
+   | 消息格式 | `Array` |
+   | 启用 | ✓ |
+
+3. 保存后 NapCat 自动连接（列表显示"已连接"）。验证：
+   - `/onebot/status`（带 `Authorization: Bearer <令牌>`）→ `self_id` = 你的机器人 QQ、`login_state=online`
+   - `/healthz` → `onebot.state = ready`
+4. 常见问题：连不上 → 检查 `WEB_HOST/PORT`、令牌一致性、防火墙；本地明文 `ws://` 如遇证书
+   校验拦截可关闭"SSL 证书验证"；令牌仅经 `Authorization` 头传递，**不要**拼接进 URL。
+
+### 2.6 服务化（开机自启）
+
+```powershell
+# 管理员 PowerShell：
+powershell -ExecutionPolicy Bypass -File scripts\install-services-nssm.ps1 `
+  -ProjectDir "<项目路径>" -NssmPath "C:\nssm\nssm.exe"
+```
+
+脚本注册两个服务（基于 NSSM）：
+
+- `QQBotWeb` = `python -m app`；`QQBotRuntime` = `python -m app.runtime`
+- 自动启动；崩溃 5 秒后自动重启；日志轮转到 `data\service_*.log`（10MB 轮转）
+
+> ⚠️ **中文路径坑**：PowerShell 5.1 会把无 BOM 的 UTF-8 脚本按 GBK 解析——含中文的安装脚本
+> 必须以 **UTF-8 带 BOM** 保存。本仓库的脚本为纯 ASCII，避免此问题；自行修改时请留意。
+
+NapCat 自启：把 `scripts\napcat-autostart-template.bat` 复制到「启动」文件夹
+（`Win+R` → `shell:startup`），按注释填好路径与机器人 QQ——登录 Windows 后自动拉起
+（带单实例保护，避免重复启动）。
+
+电源设置：控制面板 → 电源选项 → "使设备进入睡眠" = **从不**；BIOS 开启来电自启。
+
+## 3. 首次验收检查（新部署 = 新现场验收）
+
+| # | 检查 | 通过标准 |
+| --- | --- | --- |
+| 1 | 服务 | `sc query QQBotWeb` / `QQBotRuntime` = RUNNING；`/healthz` = ok |
+| 2 | NapCat | `/onebot/status` = online；`/healthz` napcat = ready |
+| 3 | 后台 | `/admin` 登录正常 |
+| 4 | 影子链路 | 在机器人所在任意群发一条消息 → 后台「影子记录」出现该消息判定（只记录，不动手） |
+| 5 | 群授权 | 在「群管理」添加要管理的群；**动作开关保持关闭**，先观察 |
+| 6 | 动作权限 | 机器人须为群**管理员/群主**方能撤回；开通动作前逐群确认 |
+| 7 | （可选）通知 | 按 `docs/proactive-notifications.md` 验收 QQ 群 / 邮件通道 |
+
+## 4. 默认运行口径（部署后请知悉）
+
+- **判定与记录**：机器人所在群收到的消息默认**全部判定入库**（无记录群默认审核开启，
+  可在群设置中调整）——这是影子观察的基础。
+- **真实动作**：仅发生在**显式授权**（群管理里动作开关打开）的群；未授权群只记录不动手。
+- **首次上手建议**：先全量影子观察 1–2 天 → 逐步给群开动作（先 `recall_only`）→ 稳定后再考虑
+  禁言/警告档位。
+
+## 5. 日常运营（管理后台）
+
+- **群管理**：按群开关审核 / 动作
+- **案件**：两次违规合并 → 人工决定（踢出 / 误报 / 保留观察）
+- **白名单**：仅免广告；诈骗/色情/暴力证据照常处理
+- **动态规则**：后台发布（全局或按群）
+- **急停**：一键切换"只记录不动手"（跨进程立即生效，无需重启）
+- **备份**：整备 `data/` 目录（含 `moderation.db` 与媒体）；恢复 = 放回并重启服务
+- **升级**：`git pull` → `uv sync --all-groups` → `alembic upgrade head` → 重启两个服务
+
+## 6. 质量门禁（开发 / 验收）
+
+```powershell
+uv run pytest                       # 全量回归
 uv run ruff check app tests alembic
-
-# 类型检查
+uv run ruff format --check app tests alembic
 uv run mypy app
 ```
 
-CI（`.github/workflows/ci.yml`）会在每次 push/PR 时，在 Linux 与 Windows 上自动运行以上全部检查。
+## 7. 文档导航
 
-> 质量记录按提交核对：历史CI不能替代新版本。本轮结果见PROGRESS；真实模型、QQ操作、Windows恢复不由mock单测证明。R-106迁移head为 `d3f5a7b9c111`，仅增加通知表，保留旧记录；R-105旧授权安全关闭政策不变，不能自动恢复。
+| 主题 | 文档 |
+| --- | --- |
+| Windows 运行要求与恢复模型 | `docs/windows-operations.md` |
+| 交付与实测清单 | `docs/windows-delivery-checklist.md` |
+| 更换机器人 QQ 账号 | `docs/switch-qq-account.md`（含实操记录） |
+| 主动通知（QQ 群 / 邮件） | `docs/proactive-notifications.md` |
+| 决策与审计 | `DECISIONS.md` |
+| 当前进度 / 后续任务 | `PROGRESS.md` / `NEXT_TASKS.md` |
 
-## 目录结构
+## 8. 许可
 
-### 当前实际存在的目录
-
-```text
-app/            # 应用包
-  actions/      # provider中立撤回/禁言/警告编排（默认SHADOW）
-  config.py     # 应用配置（环境变量，含校验）
-  db.py         # 数据库引擎与会话（SQLite WAL）
-  models.py     # 系统、事件去重与动作审计模型
-  main.py       # FastAPI 应用入口
-  __main__.py   # 启动入口（读取 WEB_HOST/WEB_PORT）
-  logging_config.py  # JSON 日志
-alembic/        # 数据库迁移脚本
-tests/          # 单元测试
-docs/           # 运行手册、隐私告知、架构决策记录
-```
-
-### 已有业务目录与待补能力
-
-```text
-app/adapters/     # QQ官方、OneBot入站/动作与供应商兼容AI适配
-app/core/         # 传输中立消息、动作、路由和去重契约
-app/moderation/   # 已有文字、图片/GIF、视频/语音/文件、动态规则、AI软证据与反馈学习
-app/cases/        # 已有违规历史、案件和审批状态机
-app/reports/      # 已有日报、周报和数据清理构建器
-app/runtime/      # WebSocket、持久接收箱与处理流水线
-app/web/          # 已有服务端管理后台、CSRF、动态规则和反馈学习页面
-tests/fixtures/   # 脱敏QQ事件和媒体/模型固定样本
-```
-
-## 关键配置开关
-
-- `ACTION_MODE=SHADOW`：默认不执行真实动作；`OFFICIAL`为兼容保留的全局真实动作门禁名，实际Adapter由provider路由选择。OneBot-only无需官方凭据，官方出口仍需凭据。
-- OneBot真实动作另需 `ONEBOT_ACTIONS_ENABLED=true`、`ONEBOT_SELF_ID`专用数字账号、就绪连接、明确路由与真人批准按群动作。`ONEBOT_ACTION_STAGE=recall_only`默认仅撤回，负责人在本机改为full并重启才进入禁言/警告阶梯。所有开关全开就可能处罚真实成员，程序不会自动判断你的验收报告是否通过。
-- `EMERGENCY_STOP=false`：急停开关；为 `true` 时禁止进入 `OFFICIAL`。
-- `AI_ENABLED=false`：远程AI默认关闭。
-- `AI_ENABLED_GROUPS=`：远程AI必须按群显式启用，例如填 `GROUP_OPENID_A,GROUP_OPENID_B`，或在测试环境用 `*`。
-- `AI_BASE_URL` / `AI_API_KEY` / `AI_TEXT_MODEL` / `AI_VISION_MODEL`：OpenAI-compatible/MiMo类接口配置；真实密钥只写本地 `.env` 或系统凭据。
-- `ONEBOT_WS_ENABLED=false`：OneBot反向WS默认关闭；启用时必须设置 `ONEBOT_ACCESS_TOKEN`，并只绑定回环或明确的私有网段地址（通配地址 `0.0.0.0`/`::` 会被拒绝）。
-- `ONEBOT_WS_PATH=/onebot/ws`：NapCat连接使用Bearer请求头；URL查询参数令牌被拒绝，避免令牌进入访问日志。
-- `AI_REVIEW_MODEL`：必须不同于主视觉模型；只有灰区/冲突/疑难才调用。缺复核或失败只记录，默认不为正常消息调用第二模型。
-- `AI_DAILY_CALL_LIMIT=1000`：调用上限不含缓存，主/次分别可查；价格未接入时“未核算”，不要把0当免费。完整配置见 `.env.example`。
-- `AGENT_API_READ_TOKEN` / `AGENT_API_TOKEN`：分离只读/有限写令牌，不能复用ADMIN_PASSWORD；`AGENT_API_WRITE_SCOPES=project:read`默认只读。高风险操作保存计划后由真人后台会话+CSRF预览批准，Agent不能自行批准、跨目标执行或重放。
-- `ADMIN_SESSION_TTL_SECONDS=3600`：管理员会话有限期；本机HTTP只用回环，非本机访问需TLS或安全隧道，不能靠“内网”代替传输加密。
-
-## AI学习与验收
-
-这不是在线训练系统。人工标注→本地候选（自动挖掘至少3条消息、2名成员）→草稿回放→真人发布→版本回滚；负责人明确指定群规可以直接建规则草稿，不必凑样本数。单条标签不立即变成所有消息的prompt背景，未标注也不当正常。候选只取每条消息最新标签，撤销真值会使未发布候选重新计算/失效，复制前再核验；不擅自回滚已发布规则。
-
-管理后台的“已标注样本一致率”不是独立精确率。离线报告使用 `uv run python -m app.reports.evaluation --input <脱敏JSONL> --output <新的报告JSON>`，样本字段、指标与Windows证据要求见交付清单；此工具只统计，不自动宣告通过。
-
-## 安全与隐私
-
-- 管理接口只监听本机或可信内网，必须鉴权，禁止无保护暴露公网。
-- 真实凭据（API Key、Token、密码、Cookie、私钥）只通过环境变量或系统凭据存储，绝不写入源码、Markdown、测试、日志或 Git 历史。
-- 群消息不被当作系统指令、代码、工具参数或提示词执行。
-- 上传文件一律视为不可信数据，只解析允许的安全格式，不执行文件、宏、脚本或压缩包内容。
-- 群成员内容按最小必要原则处理，样本必须脱敏。
-- 远程AI默认关闭并按群启用；模型只返回结构化建议，不能直接撤回、禁言或踢人。
-- 管理员反馈只生成候选规则，必须回放、预览和人工发布后才生效。
-
-## 故障排查
-
-- 端口被占用：修改 `.env` 中的 `WEB_PORT`，并用 `uv run python -m app` 启动（该入口会读取 `WEB_HOST`/`WEB_PORT`）。
-- 数据库未初始化：应用启动会校验 Alembic 迁移，需先运行 `uv run alembic upgrade head`。
-- 数据库文件位置：默认 `data/moderation.db`（SQLite WAL）。
-- 日志：默认输出结构化 JSON 到标准输出，级别由 `LOG_LEVEL` 控制（可选 `DEBUG/INFO/WARNING/ERROR/CRITICAL`）。
-- 生产环境（`APP_ENV=prod`）必须设置非空 `ADMIN_PASSWORD`，否则拒绝启动。
-
-## Windows 24×7运行
-
-历史实施报告已描述NSSM服务化，但本轮主审未核验Windows原件；按T-404和[交付清单](docs/windows-delivery-checklist.md)重验锁屏/开机登录依赖/断网/进程崩溃/备份恢复。必须单Web/OneBot实例，禁止多worker；SQLite是本轮支持的数据方案。
-
-屏幕可以关闭并锁屏，但主机不能进入睡眠或休眠。开发命令 `uv run uvicorn app.main:app --reload` 只用于开发，不得作为生产运行方式；生产运行使用 `uv run python -m app` 或由 Windows Service 管理。
-
-项目已确定使用一台空白Windows电脑进行正式整机测试。W0基础兼容性已通过；新路线为：R-104/T-305/T-306后进入W1 NapCat影子接收，W2验证完整影子闭环，T-307后进入W3隔离群管理动作，T-404后执行W4无人值守恢复，最后才进入W5目标群分阶段上线。详细进入条件见 [`docs/windows-operations.md`](docs/windows-operations.md) 的“分阶段测试计划”。
-
-R-106提供[通知与人工接手](docs/proactive-notifications.md)：后台 `/admin/notifications`、QQ固定管理员群、TLS邮件、机器外Healthchecks与独立探针。全部默认关闭；配置好不代表接通或到人，需Windows实测。无法完成时明确按有人值班辅助工具交付。Windows 10安全支持与补丁也需复核，不擅自更改正式电脑系统。
+MIT License，见 [`LICENSE`](LICENSE)。
