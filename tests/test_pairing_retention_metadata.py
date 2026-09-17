@@ -52,9 +52,11 @@ def test_cleanup_does_not_preserve_invalid_or_content_bearing_time(value) -> Non
 @pytest.mark.parametrize(
     "historical_kind,expected",
     [
+        # 口径 C（2026-09-17）：历史行（含清理标记）既不能毒化豁免窗口（阻断），
+        # 也不能越过来源结构化校验（此处校园墙图仍为唯一来源）。
         ("legacy-purged", "record_only"),
-        ("unpurged-missing", "violation_high"),
-        ("purged-recent", "violation_high"),
+        ("unpurged-missing", "record_only"),
+        ("purged-recent", "record_only"),
     ],
 )
 async def test_cleanup_markers_do_not_poison_or_bypass_pairing(historical_kind, expected) -> None:

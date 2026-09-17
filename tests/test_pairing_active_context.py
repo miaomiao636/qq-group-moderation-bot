@@ -10,6 +10,7 @@ from datetime import UTC, datetime, timedelta
 import pytest
 from app.core.contracts import Sender, StandardMessage
 from app.db import SessionLocal
+from app.moderation.ai import AIModerationResult
 from app.moderation.decision import ModerationDecision
 from app.runtime import pipeline
 from app.runtime.models import ShadowDecision
@@ -125,11 +126,19 @@ class _HighAI:
         ), []
 
 
-async def test_old_binding_from_other_bot_account_does_not_exempt_new_event(monkeypatch) -> None:
-    """External message IDs are account-scoped, whereas durable event keys include self_id."""
+async def test_wall_source_from_other_bot_account_does_not_exempt_new_event(monkeypatch) -> None:
+    """来源图按 bot 账号作用域隔离：其它账号的历史校园墙确认图不构成豁免。"""
     group = "account-" + uuid.uuid4().hex
     text_msg = _message(group, kind="text")
     image_id = str(1_000_000_000_000 + int(uuid.uuid4().hex[:10], 16))
+    wall = AIModerationResult(
+        category=None,
+        confidence=1.0,
+        source="vision",
+        needs_review=False,
+        model_id="synthetic-vision",
+        evidence="校园墙白名单|文案:合成校园兼职测试文案",
+    )
     async with SessionLocal() as session:
         session.add(
             ShadowDecision(
@@ -144,9 +153,8 @@ async def test_old_binding_from_other_bot_account_does_not_exempt_new_event(monk
                 verdict="allow",
                 detail_json=json.dumps(
                     {
-                        "wall_paired": True,
-                        "wall_paired_message_id": text_msg.message_id,
-                        "sent_at": (datetime.now(UTC) - timedelta(days=1)).isoformat(),
+                        "sent_at": (datetime.now(UTC) - timedelta(seconds=30)).isoformat(),
+                        "ai_results": [wall.model_dump()],
                     }
                 ),
             )

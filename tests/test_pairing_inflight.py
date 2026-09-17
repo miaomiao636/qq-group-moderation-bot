@@ -173,7 +173,8 @@ async def test_queued_image_without_worker_registration_is_accounted_for(
         assert result.verdict == "violation_high"
 
 
-async def test_queued_intervening_text_breaks_older_wall_image_pair(monkeypatch) -> None:
+async def test_queued_intervening_text_does_not_break_wall_window(monkeypatch) -> None:
+    """口径 C（2026-09-17）：中间排队的文字不再阻断豁免窗口（紧邻要求已取消）。"""
     now = datetime.now(UTC)
     group, user = _synthetic_id(), _synthetic_id()
     old_image = _event(group=group, user=user, when=now - timedelta(seconds=4), kind="image")
@@ -217,7 +218,8 @@ async def test_queued_intervening_text_breaks_older_wall_image_pair(monkeypatch)
     monkeypatch.setattr(pipeline, "orchestrate_actions", no_external_actions)
     result = await _run(target_text)
     assert result is not None
-    assert result.verdict == "violation_high"
+    assert result.verdict == "record_only"
+    assert "豁免" in (result.reason or "")
 
 
 async def test_loader_requires_exact_event_account_and_returns_metadata_only() -> None:

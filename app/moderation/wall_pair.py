@@ -1,36 +1,37 @@
-"""校园墙紧邻文字配对豁免（负责人 2026-09-14 口径；R05/R06/R09 加固）。
+"""校园墙图后广告文字豁免（负责人 2026-09-14 口径；2026-09-17 放宽为口径 C）。
 
-场景：成员先发一张带校园墙特征的图片（绝对放行），紧接着发与图内文案相似的
-文字（即使文字命中广告/引流规则）。负责人决定：此类紧邻文字**不自动撤回**。
+场景：成员先发一张带校园墙特征的图片（视觉确认放行），随后（2 分钟内）发送
+广告文字——负责人 2026-09-17 决定（口径 C）：**不再要求文字与图内文案相似**
+（也不再要求「紧邻」与「一图一条」），图后 2 分钟内该成员的任意广告文字都
+不自动撤回。
 
-规则参数：
-- 窗口：图与文字的**消息发送时间**差 <= 120 秒（2 分钟），且图先发（R06：按
-  sent_at 而非落库时间——并发 worker 下处理完成时间会颠倒真实顺序）；
-- 相似度：difflib.SequenceMatcher >= 60%；
-- 配对：每张图只豁免**一条**文字（R05：原子条件领取 + 绑定被豁免消息 ID）；
+规则参数（口径 C）：
+- 窗口：图与文字的**消息发送时间**差 <= 120 秒，且图先发（R06：按 sent_at
+  而非落库时间——并发 worker 下处理完成时间会颠倒真实顺序；同秒无法定序，
+  不授予豁免）；
+- 来源：同 provider/群/成员的**视觉确认**校园墙图（R09 结构化校验保留：
+  全部 vision 结果 category 为空、未降级、不需人工、evidence 以「校园墙白名单」
+  开头且含非空图内文案；带 processing/evidence_vetoes 的行不作来源）；
+- 来源图的判定必须为 allow/record_only；
+- 范围：仅 ad（广告/引流）类 violation_high 触发；fraud/porn 等不豁免；
 - 豁免语义：不撤回、不立案——verdict 降为 record_only 并清空动作建议；
-- 范围：仅 ad（广告/引流）类 violation_high 触发；fraud/porn 等不豁免。
+- 无状态：不写绑定、不消耗来源图、窗口内多条文字可共享同一张图；同事件重试
+  自然幂等（重新计算得到同一豁免）；
+- 图审核未完成时不处罚也不豁免：保守降为 record_only 转人工（R-108 保护保留）。
 
-R05 事务契约：条件 UPDATE 保证单领取，绑定必须在流水线后续提交和图片重试
-中保留。同一事件重试先查已有绑定直接复用豁免，不依赖最后处理标记与判定
-落库恰好位于同一事务（流水线包含多次提交）。
-
-R09 结构化校验：白名单来源必须是 vision 通道的**确认放行**结果（category
-为空、未降级、不需人工），evidence 以「校园墙白名单」**开头**（否定表述如
-「不符合校园墙白名单|文案:…」不构成许可）；「紧邻」要求图与文字之间该成员
-没有其他消息。
+历史兼容：旧版写入的 wall_paired / wall_paired_message_id 绑定字段不再读写；
+历史已绑定过的校园墙图同样是有效来源。
 
 图内文案与 sent_at 由 t204-v11 起的影子判定 detail 提供；缺失时保守不豁免。
 """
 
 from __future__ import annotations
 
-import difflib
 import json
 from datetime import UTC, datetime
 from typing import Any
 
-from sqlalchemy import case, func, or_, select, update
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.contracts import StandardMessage
@@ -38,11 +39,8 @@ from app.moderation.decision import ModerationDecision
 from app.runtime.models import ShadowDecision
 
 WALL_PAIR_WINDOW_SECONDS = 120
-WALL_PAIR_SIMILARITY = 0.60
 WALL_MARK = "校园墙白名单"
 WALL_TEXT_MARK = "文案:"
-PAIRED_KEY = "wall_paired"
-PAIRED_MSG_KEY = "wall_paired_message_id"
 
 
 def extract_wall_text(evidence: str) -> str | None:
@@ -58,17 +56,6 @@ def extract_wall_text(evidence: str) -> str | None:
     return ""
 
 
-def similarity(a: str, b: str) -> float:
-    """归一化相似度（SequenceMatcher，忽略大小写与空白差异）。"""
-    if not a or not b:
-        return 0.0
-
-    def norm(s: str) -> str:
-        return "".join(str(s).lower().split())
-
-    return difflib.SequenceMatcher(None, norm(a), norm(b)).ratio()
-
-
 def _detail_object(detail_json: str) -> dict[str, Any]:
     try:
         detail = json.loads(detail_json)
@@ -80,10 +67,11 @@ def _detail_object(detail_json: str) -> dict[str, Any]:
 def _wall_source_from_detail(detail_json: str) -> tuple[str | None, dict[str, Any]]:
     """R09: 从影子判定 detail 取（结构化校验后的）图内文案与完整 detail。
 
-    返回 (文案或 None, detail)。None=不可作为白名单来源（已消费/非放行/无文案）。
+    返回 (文案或 None, detail)。None=不可作为豁免来源（非放行/无文案/未完成）。
+    口径 C（2026-09-17）起不再有"已消费"概念：历史绑定字段不影响来源复用。
     """
     detail = _detail_object(detail_json)
-    if detail.get(PAIRED_KEY) or detail.get("processing") or detail.get("evidence_vetoes"):
+    if detail.get("processing") or detail.get("evidence_vetoes"):
         return None, detail
     results = detail.get("ai_results")
     if not isinstance(results, list) or any(not isinstance(r, dict) for r in results):
@@ -118,18 +106,14 @@ def _parse_naive_iso(value: object) -> datetime | None:
     return dt.astimezone(UTC).replace(tzinfo=None) if dt.tzinfo else dt
 
 
-def _exempt_decision(decision: ModerationDecision, ratio: float | None) -> ModerationDecision:
-    explanation = (
-        f"与2分钟内同成员校园墙图文案相似度{ratio:.0%}"
-        if ratio is not None
-        else "同事件重试复用已确认配对"
-    )
+def _exempt_decision(decision: ModerationDecision) -> ModerationDecision:
     return decision.model_copy(
         update={
             "verdict": "record_only",
             "recommended_actions": [],
             "reason": (
-                f"校园墙紧邻文字豁免：{explanation}（负责人 2026-09-14 口径），不撤回，转记录"
+                "校园墙图后豁免（负责人 2026-09-17 口径 C）：前 2 分钟内有同成员"
+                "校园墙确认图，不撤回，转记录"
             ),
         }
     )
@@ -143,10 +127,10 @@ async def maybe_wall_text_pairing(
     pending_messages: tuple[StandardMessage, ...] = (),
     event_key: str | None = None,
 ) -> ModerationDecision:
-    """紧邻校园墙图的相似文字豁免（见模块 docstring）。
+    """图后 2 分钟广告文字豁免（口径 C，见模块 docstring）。
 
-    必须在 orchestrate_actions 之前调用；命中时返回 record_only 版本并原子
-    领取配对图名额（与流水线事务同提交/同回滚）。
+    必须在 orchestrate_actions 之前调用；命中时返回 record_only 版本。
+    无状态重算：不写绑定、不消耗来源图，重试幂等。
     """
     if decision.verdict != "violation_high" or decision.category != "ad":
         return decision
@@ -158,7 +142,6 @@ async def maybe_wall_text_pairing(
         ShadowDecision.external_group_id == msg.external_group_id,
         ShadowDecision.external_user_id == msg.external_user_id,
     ]
-    binding_key = event_key or decision.message_id
     if msg.provider == "onebot" and event_key is not None:
         parts = event_key.split(":")
         if (
@@ -173,113 +156,62 @@ async def maybe_wall_text_pairing(
         scope.append(ShadowDecision.message_id.startswith(f"onebot:{parts[1]}:"))
 
     sent_at = _parse_naive_iso(msg.sent_at)
-    bound_message = case(
-        (
-            func.json_valid(ShadowDecision.detail_json),
-            func.json_extract(ShadowDecision.detail_json, f"$.{PAIRED_MSG_KEY}"),
-        ),
-        else_=None,
-    )
-
-    # R05 幂等：同事件重试——已有图绑定本消息则直接复用豁免（不限窗口，绑定即终态）
-    bound_row = (
-        await session.execute(
-            select(ShadowDecision)
-            .where(
-                *scope,
-                ShadowDecision.kind == "image",
-                # 旧 external ID 绑定仅在同账号 source 范围内兼容；新绑定用完整键。
-                or_(bound_message == binding_key, bound_message == decision.message_id),
-            )
-            .limit(1)
-        )
-    ).scalar()
-    if bound_row is not None:
-        return _exempt_decision(decision, None)
     if sent_at is None:
         return decision
 
-    candidates = (await session.execute(select(ShadowDecision).where(*scope))).scalars().all()
-    predecessors: list[tuple[datetime, ShadowDecision | None, dict[str, Any], str]] = []
-    chronology_unknown = False
-    covered_events = {row.message_id for row in candidates}
-    for row in candidates:
+    rows = (await session.execute(select(ShadowDecision).where(*scope))).scalars().all()
+    covered_ids = {row.message_id for row in rows}
+    confirmed_wall: str | None = None
+    processing_in_window = False
+    for row in rows:
         if row.message_id == msg.message_id or row.external_message_id == msg.external_message_id:
-            continue  # 当前消息自己的 processing/重试记录不是中间消息。
+            continue  # 当前消息自己的（重试）记录不是来源。
+        if row.kind != "image":
+            continue
         detail = _detail_object(row.detail_json)
         row_sent = _parse_naive_iso(detail.get("sent_at"))
         if row_sent is None:
-            if detail.get("purged") is True and detail.get("reason") == "raw_retention_expired":
-                # Older cleanup versions removed this timestamp. Their explicitly
-                # expired originals must not poison every future two-minute window.
-                continue
-            chronology_unknown = True
-            continue  # 不猜顺序，也不能在这里旁路已知前图的处理中保护。
+            # 无法定位窗口的历史行（旧格式/清理标记）不作为来源，也不阻断；
+            # 但也不能把它当作"审核中"。
+            continue
         delta = (sent_at - row_sent).total_seconds()
-        if 0 <= delta <= WALL_PAIR_WINDOW_SECONDS:
-            predecessors.append((row_sent, row, detail, row.kind))
-    for pending in pending_messages:
-        if (
-            pending.message_id in covered_events
-            or pending.external_message_id == msg.external_message_id
-            or pending.provider != msg.provider
-            or pending.external_group_id != msg.external_group_id
-            or pending.external_user_id != msg.external_user_id
-        ):
+        if not 0 < delta <= WALL_PAIR_WINDOW_SECONDS:
             continue
-        pending_sent = _parse_naive_iso(pending.sent_at)
-        if pending_sent is None:
-            chronology_unknown = True
+        if detail.get("processing"):
+            processing_in_window = True
             continue
-        if 0 <= (sent_at - pending_sent).total_seconds() <= WALL_PAIR_WINDOW_SECONDS:
-            predecessors.append((pending_sent, None, {"processing": True}, pending.kind))
-    if not predecessors:
-        return decision
-    predecessors.sort(key=lambda item: item[0], reverse=True)
-    image_sent, source_row, detail, kind = predecessors[0]
-    if any(
-        stamp == image_sent and candidate_kind == "image" and candidate_detail.get("processing")
-        for stamp, _, candidate_detail, candidate_kind in predecessors
-    ):
+        if row.verdict not in ("allow", "record_only"):
+            continue
+        wall_text, _ = _wall_source_from_detail(row.detail_json)
+        if wall_text:
+            confirmed_wall = wall_text
+            break
+
+    if confirmed_wall is None:
+        for pending in pending_messages:
+            if (
+                pending.message_id in covered_ids
+                or pending.external_message_id == msg.external_message_id
+                or pending.provider != msg.provider
+                or pending.external_group_id != msg.external_group_id
+                or pending.external_user_id != msg.external_user_id
+                or pending.kind != "image"
+            ):
+                continue
+            pending_sent = _parse_naive_iso(pending.sent_at)
+            if pending_sent is None:
+                continue
+            if 0 < (sent_at - pending_sent).total_seconds() <= WALL_PAIR_WINDOW_SECONDS:
+                processing_in_window = True
+
+    if confirmed_wall is not None:
+        return _exempt_decision(decision)
+    if processing_in_window:
         return decision.model_copy(
             update={
                 "verdict": "record_only",
                 "recommended_actions": [],
-                "reason": "紧邻前图审核未完成，配对资格未知，转人工（未授予白名单豁免）",
+                "reason": "前图审核未完成，配对资格未知，转人工（未授予白名单豁免）",
             }
         )
-    if chronology_unknown:
-        return decision  # 不确定的旧记录仍不能作为白名单授权。
-    if image_sent == sent_at or (len(predecessors) > 1 and predecessors[1][0] == image_sent):
-        return decision  # 同秒且没有可靠序号，不以完成顺序推断先后。
-    if kind != "image":
-        return decision
-    if source_row is None or source_row.verdict not in ("allow", "record_only"):
-        return decision
-    wall_text, _ = _wall_source_from_detail(source_row.detail_json)
-    if not wall_text:
-        return decision
-    ratio = similarity(wall_text, msg.text)
-    if ratio < WALL_PAIR_SIMILARITY:
-        return decision
-    # 同一原件的资格/绑定自读取以来不得改变。仅原子修改绑定字段，不覆写其它元数据。
-    result = await session.execute(
-        update(ShadowDecision)
-        .where(
-            ShadowDecision.id == source_row.id,
-            ShadowDecision.detail_json == source_row.detail_json,
-        )
-        .values(
-            detail_json=func.json_set(
-                ShadowDecision.detail_json,
-                f"$.{PAIRED_KEY}",
-                func.json("true"),
-                f"$.{PAIRED_MSG_KEY}",
-                binding_key,
-            )
-        )
-        .execution_options(synchronize_session=False)
-    )
-    if (getattr(result, "rowcount", 0) or 0) != 1:
-        return decision  # 不越过真正前驱，不能退回更早图片寻找豁免。
-    return _exempt_decision(decision, ratio)
+    return decision

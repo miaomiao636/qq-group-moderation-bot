@@ -1,5 +1,6 @@
-"""R-108: pairing must consume the real pipeline schema and message chronology.
+"""R-108: wall window exemption uses the real pipeline schema; 口径 C（2026-09-17）.
 
+口径 C：图后 2 分钟内同成员任意广告文字豁免（无相似度/紧邻/一图一条）。
 All content is synthetic; the shared pytest fixture supplies an isolated SQLite DB.
 """
 
@@ -140,7 +141,7 @@ async def test_runtime_result_schema_rejects_unconfirmed_wall(result: AIModerati
     assert (await _pair(_message(group, now))).verdict == "violation_high"
 
 
-async def test_intervening_image_also_breaks_adjacency() -> None:
+async def test_intervening_image_does_not_break_wall_window() -> None:
     now = datetime.now(UTC)
     group = "middle-image-" + uuid.uuid4().hex
     await _row(
@@ -154,10 +155,12 @@ async def test_intervening_image_also_breaks_adjacency() -> None:
         sent_at=now - timedelta(seconds=15),
         created_at=now - timedelta(seconds=10),
     )
-    assert (await _pair(_message(group, now))).verdict == "violation_high"
+    result = await _pair(_message(group, now))
+    assert result.verdict == "record_only"
+    assert result.recommended_actions == []
 
 
-async def test_intervening_text_finishing_before_image_still_breaks_adjacency() -> None:
+async def test_intervening_text_does_not_break_wall_window() -> None:
     now = datetime.now(UTC)
     group = "middle-fast-" + uuid.uuid4().hex
     await _row(
@@ -172,10 +175,12 @@ async def test_intervening_text_finishing_before_image_still_breaks_adjacency() 
         created_at=now - timedelta(seconds=10),
         kind="text",
     )
-    assert (await _pair(_message(group, now))).verdict == "violation_high"
+    result = await _pair(_message(group, now))
+    assert result.verdict == "record_only"
+    assert result.recommended_actions == []
 
 
-async def test_earlier_text_finishing_after_image_does_not_break_adjacency() -> None:
+async def test_earlier_text_finishing_after_image_still_exempted() -> None:
     now = datetime.now(UTC)
     group = "earlier-slow-" + uuid.uuid4().hex
     await _row(
@@ -207,7 +212,7 @@ async def test_offset_timestamp_is_compared_as_an_instant() -> None:
     assert (await _pair(_message(group, now))).verdict == "record_only"
 
 
-async def test_concurrent_distinct_messages_cannot_consume_one_image_twice() -> None:
+async def test_concurrent_messages_both_exempted_within_window() -> None:
     now = datetime.now(UTC)
     group = "atomic-" + uuid.uuid4().hex
     await _row(
@@ -219,7 +224,7 @@ async def test_concurrent_distinct_messages_cannot_consume_one_image_twice() -> 
     results = await asyncio.wait_for(
         asyncio.gather(_pair(_message(group, now)), _pair(_message(group, now))), timeout=5
     )
-    assert sorted(result.verdict for result in results) == ["record_only", "violation_high"]
+    assert sorted(result.verdict for result in results) == ["record_only", "record_only"]
 
 
 async def test_same_second_without_ordering_evidence_does_not_grant_exemption() -> None:
@@ -292,8 +297,8 @@ async def test_text_cannot_be_punished_while_preceding_image_is_under_review(mon
     assert decisions[text_msg.message_id].recommended_actions == []
 
 
-async def test_source_image_retry_does_not_erase_existing_pair_binding(monkeypatch):
-    """An image retry must not restore a consumed exemption by overwriting its detail."""
+async def test_source_image_retry_keeps_window_exemption(monkeypatch):
+    """口径 C 无状态重算：图片重试覆盖 detail，也不丢失窗口豁免。"""
     now = datetime.now(UTC)
     group = "image-retry-" + uuid.uuid4().hex
     image_msg = _message(group, now - timedelta(seconds=1)).model_copy(
@@ -329,4 +334,4 @@ async def test_source_image_retry_does_not_erase_existing_pair_binding(monkeypat
     assert await run_image() is None
     assert (await _pair(_message(group, now))).verdict == "record_only"
     assert await run_image() is not None
-    assert (await _pair(_message(group, now))).verdict == "violation_high"
+    assert (await _pair(_message(group, now))).verdict == "record_only"

@@ -13,7 +13,7 @@ from collections.abc import Awaitable, Callable
 from pathlib import Path
 from typing import Any
 
-from sqlalchemy import case, func, select, update
+from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.actions.orchestrator import (
@@ -375,8 +375,9 @@ async def _run_pipeline(
                     "reason": "；".join(dict.fromkeys(evidence_vetoes)) + "，转人工",
                 }
             )
-        # 校园墙紧邻文字配对豁免（负责人 2026-09-14 口径）：2 分钟内同成员
-        # 校园墙图后的相似文字（>=60%）不撤回，降为 record_only 转记录。
+        # 校园墙图后广告文字豁免（负责人 2026-09-17 口径 C）：2 分钟窗口内同成员
+        # 校园墙确认图之后的任意广告文字不撤回，降为 record_only 转记录
+        # （不再要求相似度/紧邻/一图一条）。
         from app.moderation.wall_pair import maybe_wall_text_pairing
         from app.runtime.pairing_context import load_pending_pairing_messages
 
@@ -492,10 +493,10 @@ def _media_decision_from(
 
 
 async def upsert_shadow_decision(session: AsyncSession, **values: Any) -> ShadowDecision:
-    """按内部事件键幂等落库，原子保留源图已消费的配对绑定。
+    """按内部事件键幂等落库（重试直接以最新 detail 覆盖）。
 
-    绑定可能在本会话读取 ORM 对象之后被另一个 worker 写入，因此不能在 Python
-    合并旧 detail；必须在 UPDATE 内读取数据库当前值，避免图片重试恢复豁免名额。
+    口径 C（2026-09-17）起校园墙豁免为无状态重算：旧 wall_paired 绑定字段
+    不再读写，图片重试无需保留任何配对元数据。
     """
     record = await session.scalar(
         select(ShadowDecision).where(ShadowDecision.message_id == values["message_id"])
@@ -504,29 +505,10 @@ async def upsert_shadow_decision(session: AsyncSession, **values: Any) -> Shadow
         record = ShadowDecision(**values)
         session.add(record)
     else:
-        updates = dict(values)
-        if "detail_json" in updates:
-            old_detail = case(
-                (func.json_valid(ShadowDecision.detail_json), ShadowDecision.detail_json),
-                else_="{}",
-            )
-            updates["detail_json"] = case(
-                (
-                    func.json_extract(old_detail, "$.wall_paired") == 1,
-                    func.json_set(
-                        updates["detail_json"],
-                        "$.wall_paired",
-                        func.json("true"),
-                        "$.wall_paired_message_id",
-                        func.json_extract(old_detail, "$.wall_paired_message_id"),
-                    ),
-                ),
-                else_=updates["detail_json"],
-            )
         await session.execute(
             update(ShadowDecision)
             .where(ShadowDecision.id == record.id)
-            .values(**updates)
+            .values(**values)
             .execution_options(synchronize_session=False)
         )
     await session.commit()
