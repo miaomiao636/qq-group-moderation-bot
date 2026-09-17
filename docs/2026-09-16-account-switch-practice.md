@@ -1,4 +1,4 @@
-# QQ 账号切换实操记录（2026-09-16）：3573002001 → 530297362
+# QQ 账号切换实操记录（2026-09-16）：<OLD_BOT_QQ> → <BOT_QQ>
 
 > 配套：事前操作手册见 `docs/switch-qq-account.md`；本文是**本次实际执行的完整记录**——
 > 过程、遇到的问题、解决方法和验证数据，供下次换号或排障时参考。
@@ -6,13 +6,13 @@
 
 ## 一、背景与目标
 
-- **旧号** 3573002001 → **新号** 530297362（NapCat 显示昵称 Dream.）。
+- **旧号** <OLD_BOT_QQ> → **新号** <BOT_QQ>（昵称已隐去）。
 - **目标**：换号后**判定规则、授权群、历史记录、审计全部沿用**；不停机、不重配规则、不重建数据。
 - **结果**：完成。系统管理群 13 个（>500 人）、动作恢复、全程审计留痕。
 
 ## 二、实际操作步骤（按执行顺序）
 
-1. **系统侧准备**：`.env` 中 `ONEBOT_SELF_ID=530297362`（只改这一项；Token 与账号无关，不动）。
+1. **系统侧准备**：`.env` 中 `ONEBOT_SELF_ID=<BOT_QQ>`（只改这一项；Token 与账号无关，不动）。
 2. **NapCat 换号**（WebUI `http://127.0.0.1:6099`）：退出旧号 → 登录新号（快速登录按钮或手机 QQ 扫码）。
 3. **配置反向 WS**（本次核心卡点，详见问题①）：
    - 左侧「网络配置」→ 添加「**WebSocket 客户端**」：
@@ -26,7 +26,7 @@
    | 启用 | 打开 |
 
    - 点「保存」即自动连接（本机回环地址，无需 SSL 证书验证）。
-4. **验证连接**（见问题②的命令清单）：`healthz` → `connected=True`、`login_state=online`；`/onebot/status` → `self_id=530297362`。
+4. **验证连接**（见问题②的命令清单）：`healthz` → `connected=True`、`login_state=online`；`/onebot/status` → `self_id=<BOT_QQ>`。
 5. **群核对与补齐授权**：新号在 140+ 个群；按负责人指令将 **member_count > 500** 的群全部纳入管理：
    - 拉取群列表：NapCat「接口调试」→ `get_group_list` → 执行（见问题④）；
    - 与现有授权差集 → 新增 2 个：**870467278 大学生家教群（635 人）**、**813351595 2026大一新生交流群（557 人）**；
@@ -53,7 +53,7 @@ GET http://127.0.0.1:8001/healthz
 
 # 2) OneBot 状态（需 Bearer Token，值见 .env ONEBOT_ACCESS_TOKEN）
 GET http://127.0.0.1:8001/onebot/status
-# 关注：self_id=530297362（新号）；group_last_event 显示各群最后消息时间
+# 关注：self_id=<BOT_QQ>（新号）；group_last_event 显示各群最后消息时间
 ```
 
 - **注意**：`healthz` 里的 `self_id` 字段可能为空，**以 `/onebot/status` 的 `self_id` 为准**。
@@ -85,7 +85,7 @@ GET http://127.0.0.1:8001/onebot/status
 
 | 项 | 值 |
 | --- | --- |
-| 连接 | `connect_count=1`、`login_state=online`、`self_id=530297362` |
+| 连接 | `connect_count=1`、`login_state=online`、`self_id=<BOT_QQ>` |
 | 链路 | 新号时段消息入库（544140282：17:23、6638171：17:19） |
 | 授权 | 13 群（11+2）；审计 `ops:owner-groups-gt500-2026-09-16`（`admin_audits` 可查） |
 | 急停 | 当日开启 → 验证后解除；审计 `emergency_resume` |
