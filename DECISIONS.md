@@ -899,4 +899,5 @@ ACTION_MODE 切换为 OFFICIAL、ONEBOT_ACTIONS_ENABLED=true、ONEBOT_ACTION_STA
   `test_pairing_retention_metadata.py` 同步更新；全量 **1330 收集 / 0 failed / 1315 passed /
   15 skipped**（15 项为环境依赖跳过）；ruff check / format（228 文件）与 mypy（87 源文件）
   通过。
-- **部署**：需服务重启生效（重启由负责人安排）。
+- **部署**：**已于 09-17 14:29 提权重启生效**（QQBotWeb PID 41448 / QQBotRuntime PID 3164；
+  healthz ok、NapCat online）。

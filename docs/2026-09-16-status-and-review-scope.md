@@ -183,4 +183,30 @@ allow、未进入人工处理（5060361 基线同样复现：2 failed / 2 passed
 - **回归**：相关 6 个测试文件同步更新（含实案回归：改写文案（低相似度）、record_only 来源图、
   中间消息、窗口边界、并发共享均应豁免）；全量 **1330 收集 / 0 failed / 1315 passed /
   15 skipped**；ruff check / format（228 文件）与 mypy（87 源文件）通过。
-- **部署**：需重启生效（负责人安排）。
+- **部署**：**已于 09-17 14:29 提权重启生效**（QQBotWeb PID 41448 / QQBotRuntime PID 3164；
+  healthz ok、NapCat online；口径 C 代码加载已核验）。
+
+**复验要点（建议逐条核对）**：
+
+1. **移除项**：代码中不再出现相似度门槛 /「紧邻」/「一图一条」与 `wall_paired` 绑定
+   （`wall_pair.py` 重算式；`pipeline.py` upsert 已简化）；文档与代码一致。
+2. **实案回归**：`tests/test_wall_pair.py`——改写文案（低相似度）、来源图为 record_only、
+   中间消息、一图豁免多条、并发共享 → 均应 `record_only`（不撤回、不立案）。
+3. **安全边界（必须仍拒绝）**：fraud/violence 不豁免；未含图内文案 / 否定表述 / 未消疑
+   vision 不作来源；窗口外（>120s / 同秒无法定序）不豁免；跨账号/跨群/跨成员不豁免；
+   图片审核中不处罚也不豁免。
+4. **回归不倒退**：原 129 项（R-115 八文件）+ 视觉二审控制组 + 全量 1330 收集 0 failed。
+5. **一键复跑命令**（仓库根）：
+
+   ```powershell
+   .\.venv\Scripts\python.exe -m pytest -c pyproject.toml -p conftest `
+     tests\test_wall_pair.py tests\test_wall_pair_contract.py tests\test_pairing_inflight.py `
+     tests\test_pairing_active_context.py tests\test_shadow_pair_binding.py `
+     tests\test_pairing_retention_metadata.py -q -o addopts=""
+   ```
+
+   （预期 **61 passed**）
+
+> 运行事件注记（与代码无关）：09-17 11:18–14:42 主 AI 供应商账户余额耗尽（HTTP 402），
+> 系统按既定策略将 AI 故障判定保守转人工（record_only、不处罚）；14:42 充值恢复。
+> 该窗口内的 record_only 数据不代表判定口径变化。
