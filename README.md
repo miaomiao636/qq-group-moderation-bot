@@ -190,6 +190,7 @@ uv run mypy app
 | --- | --- |
 | Windows 运行要求与恢复模型 | `docs/windows-operations.md` |
 | 交付与实测清单 | `docs/windows-delivery-checklist.md` |
+| 部署配置对照表（复刻同款效果） | `docs/deploy-config-reference.md` |
 | 更换机器人 QQ 账号 | `docs/switch-qq-account.md`（含实操记录） |
 | 主动通知（QQ 群 / 邮件） | `docs/proactive-notifications.md` |
 | 决策与审计 | `DECISIONS.md` |
