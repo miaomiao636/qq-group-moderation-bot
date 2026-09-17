@@ -833,7 +833,9 @@ ACTION_MODE 切换为 OFFICIAL、ONEBOT_ACTIONS_ENABLED=true、ONEBOT_ACTION_STA
   （修复前 2 failed / 2 passed → **4/4**；needs_review=True 转人工 ×2 与控制组 allow ×2，
   白名单开/关全覆盖，全合成输入固定替身无外呼）；r115 系 **133/133**；全量
   **1329 收集 / 0 failed / 1314 passed / 15 skipped**（15 项为环境依赖跳过）；
-  ruff check / format（228 文件）与 mypy（87 源文件）通过。
+  ruff check / format（228 文件）与 mypy（87 源文件）通过。主审复验确认（2026-09-17）：
+  与代码一致——要求人工不再静默放行、正常控制仍放行；D-031/D-032 与视觉二审逻辑
+  未改变；部署（09-17 13:09 提权重启）后生效。**T1 关闭。**
 
 ---
 
