@@ -524,6 +524,15 @@ async def apply_member_import(
                 created_by=operator[:64],
             )
         )
+    # 主审 Q01：`to_add` 的**同身份并发新增**（唯一约束冲突）是"名单已变化"的一种，
+    # 应当引导重新预览，而不是抛成 HTTP 500 并把计划留在 EXECUTING。只把**该唯一约束**
+    # 映射成并发拒绝；其它数据库异常一律照旧抛出，绝不吞成成功。
+    try:
+        await session.flush()
+    except IntegrityError as exc:
+        if "UNIQUE constraint failed: allowlist_members.provider" not in str(exc.orig):
+            raise
+        raise ConcurrentMemberSetChangeError("文件内成员在确认期间已被其它操作新增") from exc
     # 主审 N-F05-1：同一成员本次批准的全部字段**合并成一次**带原版本条件 UPDATE。
     # 分成多次会让第一次 UPDATE 自己推进 updated_at，第二次仍按旧版本匹配 → 0 行 →
     # 把合法的"启用 + 改备注"组合操作误判为并发冲突并整体回滚。

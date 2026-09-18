@@ -22,7 +22,9 @@ $ErrorActionPreference = 'Stop'
 
 # 主审 F06-B：把检查程序**复制到仓库外**再用——`git switch` 之后目标工作树里没有
 # scripts/rollback_preflight.py（手册目标 68a94b9 的 tree 里确实没有），直接引用仓库内
-# 路径会在降级/切码之后断掉。复制件只做标准库级检查，不依赖目标树的 app 模块。
+# 路径会在降级/切码之后断掉。复制件在**显式传入数据库 URL 与 code head** 时不依赖本版本
+# 新增的名单/备份模块（也不导入 SQLAlchemy）；但**默认入口仍要经目标版本自己的 app.config
+# 读取配置**（主审 Q02 校准：不要把这件事表述成"全程只用标准库"）。
 $preflightCopy = Join-Path $env:TEMP 'qqbot-rollback-preflight.py'
 Copy-Item -LiteralPath 'scripts\rollback_preflight.py' -Destination $preflightCopy -Force
 $py = "uv run python `"$preflightCopy`""

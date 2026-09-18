@@ -1992,6 +1992,27 @@ def _member_notice_redirect(notice: str) -> RedirectResponse:
     return RedirectResponse(f"/admin/allowlist?notice={quote(notice)}", status_code=303)
 
 
+async def _fail_change_plan(plan_id: str) -> None:
+    """把执行失败/被拒的计划收敛到**明确终态**（主审 Q01）：不让它停在 EXECUTING。
+
+    独立短事务；标记失败只记日志，不影响已确定的对外结果（名单已回滚、不会误报 APPLIED）。
+    """
+    import logging
+
+    from app.models import AdminChangePlan
+
+    try:
+        async with SessionLocal() as session:
+            plan = await session.get(AdminChangePlan, plan_id, populate_existing=True)
+            if plan is not None and plan.status not in ("APPLIED", "FAILED"):
+                plan.status = "FAILED"
+                await session.commit()
+    except Exception:  # noqa: BLE001 - 状态收敛失败只影响可读性，不影响安全结论
+        logging.getLogger(__name__).warning(
+            "收敛变更计划终态失败 plan_id=%s", plan_id, exc_info=True
+        )
+
+
 def _decode_member_file(data: bytes) -> str:
     """解码上传的白名单文件：优先 UTF-8（含 BOM），退回 GBK（记事本"ANSI"另存）。
 
@@ -2288,9 +2309,12 @@ async def allowlist_members_import(
                 await executor.commit()
             except ConcurrentMemberChangeError:
                 await executor.rollback()
+                # 主审 Q01：回滚后把失败计划收敛到明确终态，不留 EXECUTING。
+                await _fail_change_plan(plan_id)
                 return _member_notice_redirect("名单在确认期间被其它操作改动，未执行——请重新预览")
             except Exception:
                 await executor.rollback()
+                await _fail_change_plan(plan_id)
                 raise
     return _member_notice_redirect(
         f"已同步：新增 {len(plan.to_add)}，重新启用 {len(plan.to_enable)}，"
