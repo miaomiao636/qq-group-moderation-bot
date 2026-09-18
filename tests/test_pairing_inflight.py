@@ -246,3 +246,90 @@ async def test_loader_requires_exact_event_account_and_returns_metadata_only() -
     assert pending[0].kind == "image" and pending[0].sent_at is not None
     assert pending[0].text == "" and pending[0].attachments == [] and pending[0].segments == []
     assert pending[0].sender.username == ""
+
+
+@pytest.mark.parametrize("offset", [0, 1], ids=["same-second", "one-second-before"])
+@pytest.mark.parametrize("stage", ["queued", "downloading"])
+async def test_pending_image_does_not_enable_text_punishment(monkeypatch, stage, offset):
+    """主审 f08157d P1 回归：未完成前图（含同秒）不得让文字进入处罚（R-108 保护）。
+
+    同秒（offset=0）时豁免仍不授予（无法定序），但"审核中"保护必须生效：
+    只转人工、清空处罚建议。
+    """
+    now = datetime.now(UTC).replace(microsecond=0)
+    group, user = _synthetic_id(), _synthetic_id()
+    image = _event(group=group, user=user, when=now - timedelta(seconds=offset), kind="image")
+    text = _event(group=group, user=user, when=now, kind="text")
+    observed = {}
+
+    async def no_external_actions(session, msg, decision, **kwargs):
+        observed[msg.message_id] = decision
+        return []
+
+    monkeypatch.setattr(pipeline, "orchestrate_actions", no_external_actions)
+    entered = asyncio.Event()
+    release = asyncio.Event()
+
+    async def prepare(payload):
+        entered.set()
+        await release.wait()
+
+    task = None
+    try:
+        if stage == "queued":
+            async with SessionLocal() as session:
+                await enqueue_event(session, image, max_pending=100_000)
+        else:
+            task = asyncio.create_task(_run(image, prepare_payload=prepare))
+            await asyncio.wait_for(entered.wait(), timeout=5)
+        result = await asyncio.wait_for(_run(text), timeout=5)
+    finally:
+        release.set()
+        if task is not None:
+            await asyncio.wait_for(task, timeout=5)
+    assert result is not None
+    actual = observed[str(text["message_id"])]
+    assert result.verdict == "record_only", (result.verdict, actual.recommended_actions)
+    assert actual.recommended_actions == []
+    assert "未完成" in (result.reason or "")
+    assert "未授予" in (result.reason or "")
+
+
+async def test_same_second_db_processing_image_blocks_text_punishment(monkeypatch) -> None:
+    """同秒 + 数据库 processing 标记（视觉审核中）→ 只转人工、不处罚、不授予豁免。"""
+    now = datetime.now(UTC).replace(microsecond=0)
+    group, user = _synthetic_id(), _synthetic_id()
+    image_event = _event(group=group, user=user, when=now, kind="image")
+    text_event = _event(group=group, user=user, when=now, kind="text")
+    parsed_image = OneBotMessageSource().parse_group_message(image_event)
+    async with SessionLocal() as session:
+        session.add(
+            ShadowDecision(
+                message_id=dedup_key_for(image_event, str(image_event["message_id"])),
+                external_message_id=str(image_event["message_id"]),
+                provider="onebot",
+                external_group_id=str(group),
+                external_user_id=str(user),
+                group_openid=str(group),
+                member_openid=str(user),
+                kind="image",
+                verdict="allow",
+                detail_json=json.dumps(
+                    {"sent_at": parsed_image.sent_at.isoformat(), "processing": True}
+                ),
+            )
+        )
+        await session.commit()
+    observed = {}
+
+    async def no_external_actions(session, msg, decision, **kwargs):
+        observed[msg.message_id] = decision
+        return []
+
+    monkeypatch.setattr(pipeline, "orchestrate_actions", no_external_actions)
+    result = await _run(text_event)
+    assert result is not None
+    assert result.verdict == "record_only"
+    assert observed[str(text_event["message_id"])].recommended_actions == []
+    assert "未完成" in (result.reason or "")
+    assert "未授予" in (result.reason or "")

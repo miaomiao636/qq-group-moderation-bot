@@ -205,4 +205,11 @@ allow、未进入人工处理（5060361 基线同样复现：2 failed / 2 passed
      tests\test_pairing_retention_metadata.py -q -o addopts=""
    ```
 
-   （预期 **61 passed**）
+   （预期 **66 passed**）
+
+**补丁（2026-09-18，主审 f08157d 复验 P1）**：同秒 + 前图未完成（inbox 排队 / 下载中 /
+数据库 processing）时，文字仍可能带处罚建议进入动作编排——"图片审核中不处罚"保护未覆盖
+同秒。修复：未完成图片的保护窗口改为 `0 <= delta <= 120`（**含同秒**），只转人工、清空
+处罚建议；**豁免判定仍要求图严格先发（0 < delta）**，已完成图同秒照旧不豁免。主审 4 项
+探针转正式回归 + 补同秒数据库 processing 覆盖（`tests/test_pairing_inflight.py`）；
+主审原始探针修复前 2 failed / 2 passed → **4/4**；相关 6 文件 **66/66**。

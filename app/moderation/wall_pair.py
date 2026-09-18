@@ -8,7 +8,7 @@
 规则参数（口径 C）：
 - 窗口：图与文字的**消息发送时间**差 <= 120 秒，且图先发（R06：按 sent_at
   而非落库时间——并发 worker 下处理完成时间会颠倒真实顺序；同秒无法定序，
-  不授予豁免）；
+  **已完成**图不授予豁免；**未完成**图仍按"审核中"保护，见下）；
 - 来源：同 provider/群/成员的**视觉确认**校园墙图（R09 结构化校验保留：
   全部 vision 结果 category 为空、未降级、不需人工、evidence 以「校园墙白名单」
   开头且含非空图内文案；带 processing/evidence_vetoes 的行不作来源）；
@@ -17,7 +17,8 @@
 - 豁免语义：不撤回、不立案——verdict 降为 record_only 并清空动作建议；
 - 无状态：不写绑定、不消耗来源图、窗口内多条文字可共享同一张图；同事件重试
   自然幂等（重新计算得到同一豁免）；
-- 图审核未完成时不处罚也不豁免：保守降为 record_only 转人工（R-108 保护保留）。
+- 图审核未完成时（含同秒 delta=0）不处罚也不豁免：保守降为 record_only 转人工
+  （R-108 保护保留；P1 修复：主审 f08157d 复验）。
 
 历史兼容：旧版写入的 wall_paired / wall_paired_message_id 绑定字段不再读写；
 历史已绑定过的校园墙图同样是有效来源。
@@ -175,11 +176,15 @@ async def maybe_wall_text_pairing(
             # 但也不能把它当作"审核中"。
             continue
         delta = (sent_at - row_sent).total_seconds()
-        if not 0 < delta <= WALL_PAIR_WINDOW_SECONDS:
+        if not 0 <= delta <= WALL_PAIR_WINDOW_SECONDS:
             continue
         if detail.get("processing"):
+            # P1（主审 f08157d）：未完成图片的"审核中"保护必须覆盖同秒（delta=0）——
+            # 只转人工、清空处罚建议；不授予白名单豁免（豁免仍要求图严格先发）。
             processing_in_window = True
             continue
+        if delta == 0:
+            continue  # 已完成图与文字同秒：无法定序，不授予豁免。
         if row.verdict not in ("allow", "record_only"):
             continue
         wall_text, _ = _wall_source_from_detail(row.detail_json)
@@ -201,7 +206,8 @@ async def maybe_wall_text_pairing(
             pending_sent = _parse_naive_iso(pending.sent_at)
             if pending_sent is None:
                 continue
-            if 0 < (sent_at - pending_sent).total_seconds() <= WALL_PAIR_WINDOW_SECONDS:
+            if 0 <= (sent_at - pending_sent).total_seconds() <= WALL_PAIR_WINDOW_SECONDS:
+                # 同秒（delta=0）同样视为"审核中"——只保护、不授予豁免。
                 processing_in_window = True
 
     if confirmed_wall is not None:
