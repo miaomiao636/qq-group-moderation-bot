@@ -7,6 +7,13 @@
   整改前同一目录 **4 failed / 19 passed**（失败项名称与主审报告逐字一致）。
 - **本机全量**：`uv run pytest` **1509 passed / 15 skipped / 0 failed**（junit 收集 **1524**）；
   `ruff check` + `ruff format --check` 通过；`mypy app` 通过（88 源文件）。
+- **同 head 远程 CI**：[run 35343211214](https://github.com/miaomiao636/qq-group-moderation-bot/actions/runs/35343211214)
+  （head `70c4422a99afe98d09584f84d369406c12707233`）三个 job **全部 success**——
+  `Lint, Type-check & Test (ubuntu-latest)`、`Lint, Type-check & Test (windows-latest)`、
+  `Runtime deps regression (clean install)`；job 日志 URL 分别为
+  [.../job/105593676906](https://github.com/miaomiao636/qq-group-moderation-bot/actions/runs/35343211214/job/105593676906)、
+  [.../job/105593677070](https://github.com/miaomiao636/qq-group-moderation-bot/actions/runs/35343211214/job/105593677070)、
+  [.../job/105593676741](https://github.com/miaomiao636/qq-group-moderation-bot/actions/runs/35343211214/job/105593676741)。
 - **未部署**：生产仍是 2026-09-18 17:18 加载的版本（`t204-v15` 提示词 + 当时的 `wall_pair`），
   本次整改**未重启、未加载**；是否部署由负责人决定。
 
