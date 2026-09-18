@@ -122,12 +122,12 @@
 
 | 项 | 值 |
 | --- | --- |
-| Git SHA | 待本次整改提交后填写（提交时写入） |
+| Git SHA | **`0a6c92d`**（整改提交；其上 `a1514db` 为合并 `origin/main` 的合并提交，已解除 PR 的 CONFLICTING 状态） |
 | 比较基线 | `main@68a94b9`（r127 P1 关闭） |
-| schema head | `c9a1f4d27e30`（未新增迁移） |
-| 提示词版本 | `t204-v16` |
-| 提示词摘要 | 提交后以 `Get-FileHash config/ai_prompt_rules.txt -Algorithm SHA256` 记录 |
-| 门禁 | 全量 1418 passed / 15 skipped / 0 failed；ruff check+format；mypy |
+| schema head | `c9a1f4d27e30`（**未新增迁移**） |
+| 提示词版本 | `t204-v16`（`.env` / `app/config.py` 默认值 / `.env.example` 三处对齐） |
+| 提示词摘要 | `config/ai_prompt_rules.txt` SHA256（**工作副本 CRLF 形态**）= `21984EFF4F1A1AFFF8B175E0FE60D1733A0CDAC7362C38409751AC78F2F5F167`。按主审 F09d：仓库 LF 形态摘要不同，**不据此判定内容不一致** |
+| 门禁 | 全量 **1418 passed / 15 skipped / 0 failed**；`ruff check` + `ruff format --check`（238 文件）；`mypy`（88 源文件） |
 | 部署状态 | **未部署**（生产仍为 `t204-v15` + 受审代码；待负责人授权重启） |
 
 ## 4. 负责人决策项（主审 §5，本报告不代决策）
