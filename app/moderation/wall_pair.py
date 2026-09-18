@@ -149,24 +149,26 @@ def _source_mark(evidence: str) -> str | None:
     return None
 
 
-def _confirmed_source(detail: dict[str, Any]) -> tuple[str | None, str | None, bool]:
-    """结构化校验后的（图内文案, 来源标记, 结构化小程序码标记）。
+def _confirmed_sources(detail: dict[str, Any]) -> list[tuple[str, str, bool]]:
+    """结构化校验后的**全部**合格来源：[(图内文案, 来源标记, 结构化小程序码布尔)]。
 
-    不可作为来源时返回 (None, None, False)。R09 校验：全部 vision 结果 category 为空、
-    未降级、不需人工，且 evidence 以「校园墙白名单」或「小程序码通过」开头并含非空图内文案。
+    R09 校验（保持不变）：全部 vision 结果 category 为空、未降级、不需人工，且 evidence
+    以「校园墙白名单」或「小程序码通过」开头并含非空图内文案；任一视觉结果仍有疑问时
+    整条消息都不作来源（不能挑出另一条白名单证据消掉尚未解决的矛盾）。
 
-    第三个返回值取**同一条**视觉结果的 `has_miniprogram_code` 布尔——主审二轮指出：
-    "来源只信文字前缀"会被合成样本绕过（前缀为「小程序码通过」而结构化字段为 false），
-    因此诈骗豁免必须前缀与布尔**同时**成立。
+    每条来源的标记与 `has_miniprogram_code` 都取自**同一条**视觉结果：
+    主审二轮要求"前缀与布尔不能跨结果拼接"；主审 N01-R 进一步要求**同一条消息内的多个
+    合格来源必须全部保留**——旧实现只返回第一条命中的 vision 结果，于是"校园墙图排在带码图
+    前面"会把后面的合格带码来源丢掉，判定结果依赖附件顺序。
     """
     if detail.get("processing") or detail.get("evidence_vetoes"):
-        return None, None, False
+        return []
     results = detail.get("ai_results")
     if not isinstance(results, list) or any(not isinstance(r, dict) for r in results):
-        return None, None, False
+        return []
     visions = [r for r in results if r.get("source") == "vision"]
     if not visions:
-        return None, None, False
+        return []
     # 使用 pipeline 的 AIModerationResult.model_dump 契约。缺字段不是确认正常，
     # 任一视觉结果仍有疑问时，不能挑出另一条白名单证据消掉尚未解决的矛盾。
     if any(
@@ -176,16 +178,23 @@ def _confirmed_source(detail: dict[str, Any]) -> tuple[str | None, str | None, b
         or r.get("degraded_reason") != ""
         for r in visions
     ):
-        return None, None, False
+        return []
+    sources: list[tuple[str, str, bool]] = []
     for result in visions:
         evidence = result.get("evidence")
-        if isinstance(evidence, str) and (wall_text := extract_wall_text(evidence)):
-            return (
-                wall_text,
-                _source_mark(evidence),
-                result.get("has_miniprogram_code") is True,
-            )
-    return None, None, False
+        if not isinstance(evidence, str):
+            continue
+        wall_text = extract_wall_text(evidence)
+        mark = _source_mark(evidence)
+        if wall_text and mark is not None:
+            sources.append((wall_text, mark, result.get("has_miniprogram_code") is True))
+    return sources
+
+
+def _confirmed_source(detail: dict[str, Any]) -> tuple[str | None, str | None, bool]:
+    """单来源视图（兼容既有调用方）：取第一条合格来源；无来源时 (None, None, False)。"""
+    sources = _confirmed_sources(detail)
+    return sources[0] if sources else (None, None, False)
 
 
 def _wall_source_from_detail(detail_json: str) -> tuple[str | None, dict[str, Any]]:
@@ -287,11 +296,10 @@ async def maybe_wall_text_pairing(
             continue  # 已完成图与文字同秒：无法定序，不授予豁免。
         if row.verdict not in ("allow", "record_only"):
             continue
-        wall_text, source_mark, qr_flag = _confirmed_source(_detail_object(row.detail_json))
-        if wall_text:
-            # 主审 N01：**收集全部合格来源**，不在第一个来源就 break——
-            # "先遇到一个对诈骗不合格的校园墙图"不等于"没有合格的小程序码来源"。
-            eligible_sources.append((wall_text, source_mark, qr_flag))
+        # 主审 N01 / N01-R：**跨消息行与单条消息内都收集全部合格来源**——
+        # "先遇到一个对诈骗不合格的校园墙图"不等于"没有合格的小程序码来源"；
+        # 同一条消息里有多张图（校园墙图 + 带码图）时同理，判定不得依赖附件顺序。
+        eligible_sources.extend(_confirmed_sources(_detail_object(row.detail_json)))
 
     # 主审 N01：在途（已入队但未处理完）图片的保护与"是否存在合格来源"**无关**，
     # 必须独立计算——否则"先有一张校园墙图"就会把待审图保护旁路掉。

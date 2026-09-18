@@ -927,7 +927,12 @@ def _attachment_reviews_unresolved(
 
 
 def _miniprogram_qr_allow(
-    local: ModerationDecision, ai_results: list[AIModerationResult]
+    local: ModerationDecision,
+    ai_results: list[AIModerationResult],
+    *,
+    primary_direct_threshold: float = 0.90,
+    secondary_review_low: float = 0.60,
+    secondary_review_high: float = 0.90,
 ) -> RuleHit | None:
     """D-039：图片含微信小程序二维码 → 放行标记；不该放行时返回 ``None``。
 
@@ -936,6 +941,10 @@ def _miniprogram_qr_allow(
        结果给出 porn/violence 时不放行；**诈骗不再例外**；
     2. **本地硬证据**：命中 R001 黑名单词 / R003 联系方式 / R006 分享卡片 / DR_ 动态
        规则时不放行。
+
+    三个阈值必须由调用方传入**本服务实际配置值**（主审 F02-R-2）：QR 入口与主路径
+    必须只有**一套**阈值，否则把二审通过线配成 0.95 时，QR 入口仍按隐式默认 0.90
+    收尾"未决复核"，等于支持的配置被旁路。
     """
     if not any(result.source == "vision" and result.has_miniprogram_code for result in ai_results):
         return None
@@ -951,7 +960,13 @@ def _miniprogram_qr_allow(
         return None
     # 主审 F02-R：**任何附件的复核对未形成结论**（缺二审/异类/低置信/非独立模型/孤儿二审）
     # 时同样不授予放行——否则"另一张图上的码"会替这张图的未决复核收尾。
-    if _attachment_reviews_unresolved(ai_results, local):
+    if _attachment_reviews_unresolved(
+        ai_results,
+        local,
+        primary_direct_threshold=primary_direct_threshold,
+        secondary_review_low=secondary_review_low,
+        secondary_review_high=secondary_review_high,
+    ):
         return None
     if local.category in _MINIPROGRAM_QR_BLOCKED_CATEGORIES:
         return None
@@ -1004,7 +1019,13 @@ def merge_ai_evidence(
     # D-039（负责人 2026-09-18）：图片含微信小程序二维码 → 一律通过。
     # 放在"本地已违规"分支之前，因为它要能压过仅由广告软信号构成的本地高置信；
     # 例外（严重类别、本地硬证据）在 helper 内判断。
-    qr_allow = _miniprogram_qr_allow(local, ai_results)
+    qr_allow = _miniprogram_qr_allow(
+        local,
+        ai_results,
+        primary_direct_threshold=primary_direct_threshold,
+        secondary_review_low=secondary_review_low,
+        secondary_review_high=secondary_review_high,
+    )
     if qr_allow is not None:
         return local.model_copy(
             update={

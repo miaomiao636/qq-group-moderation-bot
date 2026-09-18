@@ -20,6 +20,7 @@ import json
 from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from typing import Any
 
 from sqlalchemy import select, update
 from sqlalchemy.exc import IntegrityError
@@ -443,8 +444,26 @@ class ConcurrentMemberChangeError(RuntimeError):
         self.user_id = user_id
 
 
+class ConcurrentMemberSetChangeError(ConcurrentMemberChangeError):
+    """整表目标集合在执行期间漂移（主审 N-F05-2）——不是某一行，而是"全量集合"不一致。
+
+    场景：预览批准了文件 A/B，执行前另一名管理员**合法新增**了文件外的成员 C。旧的
+    行级版本条件只看"被改动行"（`row_versions` 只含 touched 行），因此 C 漂移不可见，
+    计划仍报 APPLIED，最终集合变成 A/B/C，与"整表同步"的承诺不符。
+    """
+
+    def __init__(self, summary: str) -> None:
+        RuntimeError.__init__(self, f"全量集合在确认期间被其它操作改动（{summary}）")
+        self.user_id = ""
+
+
 async def apply_member_import(
-    session: AsyncSession, plan: MemberSyncPlan, *, operator: str, commit: bool = True
+    session: AsyncSession,
+    plan: MemberSyncPlan,
+    *,
+    operator: str,
+    commit: bool = True,
+    sync_file_text: str | None = None,
 ) -> None:
     """执行全量同步（新增/启用/停用/改备注）并审计；默认单事务提交，失败整体回滚。
 
@@ -453,7 +472,26 @@ async def apply_member_import(
     `ConcurrentMemberChangeError`，绝不覆盖他人的显式撤权。
     `commit=False` 供调用方把"名单写入 + 导入审计 + 计划终态"放进**同一事务**
     （主审要求：终态与名单原子）。
+
+    **全量集合复核**（主审 N-F05-2，`sync_file_text` 为被批准的文件原文）：行级版本条件
+    只看"被改动行"，无法发现"别人新增了文件外成员"这种集合漂移。传入文件原文后，写入前
+    会在**同一事务/写锁内**核对该集合——发现启用中的成员既不在文件里、也不在本次停用名单里
+    → 抛 `ConcurrentMemberSetChangeError` 整体回滚并重新预览（**不擅自停用**本次未批准的成员）。
     """
+    if sync_file_text is not None:
+        parsed = parse_member_list(sync_file_text)
+        if not parsed.valid:
+            raise ValueError("文件中没有有效的QQ号，已拒绝导入（防止误传空文件清空白名单）")
+        file_ids = {member.user_id for member in parsed.valid}
+        still_enabled = {user_id for _id, user_id in plan.to_disable}
+        rows = await list_members(session, provider=plan.provider)
+        drifted = sorted(
+            row.external_user_id
+            for row in rows
+            if row.enabled and row.external_user_id not in file_ids | still_enabled
+        )
+        if drifted:
+            raise ConcurrentMemberSetChangeError("文件外成员当前为启用状态: " + ",".join(drifted))
     expected = {(member_id, user_id): updated for member_id, user_id, updated in plan.row_versions}
     now = datetime.now(UTC)
 
@@ -471,34 +509,30 @@ async def apply_member_import(
                 created_by=operator[:64],
             )
         )
+    # 主审 N-F05-1：同一成员本次批准的全部字段**合并成一次**带原版本条件 UPDATE。
+    # 分成多次会让第一次 UPDATE 自己推进 updated_at，第二次仍按旧版本匹配 → 0 行 →
+    # 把合法的"启用 + 改备注"组合操作误判为并发冲突并整体回滚。
+    staged: dict[int, tuple[str, dict[str, Any]]] = {}
+
+    def _stage(member_id: int, user_id: str, **values: Any) -> None:
+        if member_id not in staged:
+            staged[member_id] = (user_id, {})
+        staged[member_id][1].update(values)
+
     for member_id, user_id in plan.to_enable:
-        result = await session.execute(
-            update(AllowlistMember)
-            .where(
-                AllowlistMember.id == member_id,
-                AllowlistMember.updated_at == expected.get((member_id, user_id)),
-            )
-            .values(enabled=True, updated_at=now)
-        )
-        _guard(user_id, result.rowcount)  # type: ignore[attr-defined]
+        _stage(member_id, user_id, enabled=True)
     for member_id, user_id in plan.to_disable:
-        result = await session.execute(
-            update(AllowlistMember)
-            .where(
-                AllowlistMember.id == member_id,
-                AllowlistMember.updated_at == expected.get((member_id, user_id)),
-            )
-            .values(enabled=False, updated_at=now)
-        )
-        _guard(user_id, result.rowcount)  # type: ignore[attr-defined]
+        _stage(member_id, user_id, enabled=False)
     for member_id, user_id, note in plan.to_update_note:
+        _stage(member_id, user_id, note=note)
+    for member_id, (user_id, values) in staged.items():
         result = await session.execute(
             update(AllowlistMember)
             .where(
                 AllowlistMember.id == member_id,
                 AllowlistMember.updated_at == expected.get((member_id, user_id)),
             )
-            .values(note=note, updated_at=now)
+            .values(**values, updated_at=now)
         )
         _guard(user_id, result.rowcount)  # type: ignore[attr-defined]
     session.add(

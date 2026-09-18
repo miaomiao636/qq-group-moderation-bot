@@ -1128,3 +1128,45 @@ ACTION_MODE 切换为 OFFICIAL、ONEBOT_ACTIONS_ENABLED=true、ONEBOT_ACTION_STA
 - **部署**：**未部署**——生产仍是 17:18 加载的 `t204-v15` 与受审代码；待负责人授权后重启加载新 SHA 与 `t204-v16`。
 - **待办（主审要求，重新送审前）**：以新 SHA 送审 + 同一 SHA 的三 job CI（Ubuntu / Windows / clean runtime-deps）
   + 固定 UTC 半开窗口、绑定账号/群集合/部署 SHA 的动作统计导出。
+- **三轮整改（2026-09-18 深夜，主审 r132 复验 `7ec5553`：一轮 42 项 + 二轮 40 项全过，但新增 23 项
+  4 failed / 19 passed）**——四项代码/手册问题全部按主审判据修掉，**整改后主审 23 项 23/23 通过**
+  （本机 Windows 独立复现：整改前 4 failed / 19 passed、整改后 23 passed）：
+  - **F02-R-2（P1）QR 入口未用实际配置阈值**：`_miniprogram_qr_allow` 调 `_attachment_reviews_unresolved`
+    时未传阈值、固定回落 0.90/0.60/0.90，导致把二审通过线配成 0.95 时 QR 仍按 0.90 收尾未决复核
+    （支持的配置被旁路）。**修复**：`_miniprogram_qr_allow` 增加
+    `primary_direct_threshold/secondary_review_low/secondary_review_high` 三个关键字参数并向下透传，
+    `merge_ai_evidence` 调用处传入本服务实际配置值 → **全链路只有一套阈值**。
+  - **N01-R（P1）同条消息来源顺序**：`_confirmed_source` 在**同一条消息内**遇到第一条命中前缀的
+    vision 结果就 return，一条消息里"校园墙图（qr=false）排在带码图（qr=true）前面"时会丢掉带码来源
+    → 窗口内诈骗判定依赖附件顺序。**修复**：新增 `_confirmed_sources(detail)` 返回**全部**合格来源
+    （每条来源的标记与 `has_miniprogram_code` 仍取自**同一条**视觉结果，不跨结果拼接），配对循环
+    改为 `extend` 全部来源；`_confirmed_source` 保留为"取第一条"的兼容视图。
+  - **N-F05-1（P2）组合字段自冲突**（上一轮整改引入的正常路径回归）：同一成员的"启用 + 改备注"
+    被拆成两次带原版本条件的 `UPDATE`——第一次自己推进 `updated_at`，第二次按旧版本匹配 0 行 →
+    合法组合操作被误判并发冲突并整体回滚。**修复**：同一成员本次批准的全部字段**合并成一次**
+    `UPDATE`（`staged` 字典聚合 enabled/note），仍保留对真实外部撤权/删除的拒绝。
+  - **N-F05-2（P2）执行期集合漂移**：`row_versions` 只含被改动行，别的管理员在"确认后、写入前"
+    **合法新增文件外成员 C** 时集合已漂移却仍报 APPLIED（最终集合 A/B/C）。**修复**：
+    `apply_member_import` 新增 `sync_file_text`（被批准的文件原文），在**同一事务/写锁内**核对全量集合
+    ——启用中且既不在文件里也不在本次停用名单里的成员 → 抛新增的
+    `ConcurrentMemberSetChangeError`（`ConcurrentMemberChangeError` 子类，同一用户提示）整体回滚
+    并要求重新预览；**不擅自停用**本次未批准的 C。由路由在执行事务内传入文件原文。
+  - **F06-R（P1，部署/恢复门禁）Windows 回滚手册不可照跑**：`@(Get-Service …).State` 属性错误
+    （`Get-Service` 返回对象只有 **`Status`**，`.State` 实测返回空数组 → 等于没有停服门禁）；备份/导出
+    只是注释与一条 `select count(*)`（没有真正备份、没有产出可再导入的文件）；关键命令未检查退出码。
+    **修复**：新增 `scripts/rollback_preflight.py`（`services` 停服轮询 / `backup-export` 一致性备份 +
+    可再导入名单导出 + 回读校验 / `check-version` 数据库与代码版本一致性，**全部以退出码表达结论**）
+    与 `scripts/rollback_d037_d038.ps1`（失败即停的命令链：Status 属性核对服务存在 → 精确 STOPPED →
+    备份/导出 → 降级 → 切码 → 版本核对 → 启动，每步 `Assert-ExitCode`）；`docs/deploy-runbook-d037-d038.md`
+    改指向脚本并写清内部顺序与失败边界。**仍未具备**：Windows 实机全链演练证据（未停生产服务、
+    未在生产库演练）——该项**如实登记为待补**，不得以静态/逻辑测试替代。
+  - **回归与门禁**：主审三轮 3 个探针文件**原样入库**（`tests/test_r132_qr_configured_thresholds.py`、
+    `test_r132_source_message_order.py`、`test_r132_f05_round2_edges.py`；仅加文件级 lint 豁免头，
+    **未改动任何断言**）+ 新增 `tests/test_r132_rollback_preflight.py`（25 项：服务状态三条中止路径、
+    备份/导出/回读、版本不一致、`.ps1` 静态门禁与步骤顺序）；本机全量
+    **1509 passed / 15 skipped / 0 failed**（junit 收集 1524）；ruff check+format、mypy（88 源文件）通过。
+  - **证据表述更正（主审要求）**：二轮整改文档中"Ubuntu CI 将按原样跑主审版本"的说法**不成立**——
+    入库探针的 loopback 兼容守卫在 Ubuntu 上也生效，正确表述为"**断言相同、使用同一 loopback 兼容守卫**"；
+    已在 `docs/2026-09-18-r132-round2-remediation.md` 更正。
+  - **部署状态**：**未部署**——生产仍是 2026-09-18 17:18 加载的版本（`t204-v15` + 当时的 `wall_pair`），
+    本次三轮整改**未重启、未加载**；是否部署待负责人授权。

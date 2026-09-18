@@ -182,32 +182,35 @@ sc.exe start QQBotWeb ; sc.exe start QQBotRuntime
 2. 从**降级前的一致性备份**（`data/backups/…`，见下方第 2 步）导出 `allowlist_members` 表内容。
    ⚠️ **不要用升级前的备份**：`allowlist_members` 正是本次迁移新建的表，旧备份里没有它。
 
+**本节已落成可执行脚本（主审 F06-R 整改）**——此前把关键步骤写在注释里（没有真正备份、
+没有产出可再导入的名单）、并用错了服务状态属性。现在整条链是一个脚本，**失败即停**：
+
 ```powershell
-sc.exe stop QQBotWeb ; sc.exe stop QQBotRuntime
-sc.exe stop QQBotWeb ; sc.exe stop QQBotRuntime
-# 第 1 步：**确认两个服务已 STOPPED**（STOP_PENDING ≠ STOPPED；NSSM 允许 15 秒退出）
-$deadline = (Get-Date).AddSeconds(60)
-do { Start-Sleep -Seconds 2 ; $states = @(Get-Service QQBotWeb, QQBotRuntime).State }
-while (($states -contains 'StopPending') -and ((Get-Date) -lt $deadline))
-if ($states[0] -ne 'Stopped' -or $states[1] -ne 'Stopped') { throw "服务未在 60 秒内停止，中止回滚" }
-
-# 第 2 步：用**项目的一致性备份入口**留证（不要只 copy 主库文件）
-#   后台「设置 → 备份数据库」(POST /admin/settings/backup) 或等价 CLI；数据库为 WAL，
-#   只复制 moderation.db 会漏掉尚在 -wal 中的已提交数据。
-#   备份后校验 quick_check 与文件存在；失败即中止。
-
-# 第 3 步：从**降级前的当前库**导出成员名单并核对（不要用升级前的备份：
-#   allowlist_members 正是本次迁移新建的表，旧备份里没有它）
-uv run python -c "import sqlite3;c=sqlite3.connect(r'data\backups\<刚做的备份>.db');print('enabled=',c.execute('select count(*) from allowlist_members where enabled=1').fetchone()[0])"
-#   导出失败或启用数为 0 → 停止，不要降级（否则丢失全部名单）
-
-# 第 4 步：降级 + 切代码（每条命令检查退出码，失败即停）
-uv run alembic downgrade b8d4f2a05e31 ; if ($LASTEXITCODE -ne 0) { throw "降级失败，中止" }
-uv run alembic current                       # 期望 b8d4f2a05e31
-git switch --detach <上一个已验收 SHA> ; if ($LASTEXITCODE -ne 0) { throw "切版本失败，中止" }
-uv run python -c "from app.db import get_head_revision; print(get_head_revision())"   # 期望 b8d4f2a05e31
-sc.exe start QQBotWeb ; sc.exe start QQBotRuntime
+# 管理员 PowerShell，工作目录 = 仓库根
+powershell -ExecutionPolicy Bypass -File scripts\rollback_d037_d038.ps1 `
+    -ExpectedRevision b8d4f2a05e31 -TargetSha 68a94b9 `
+    -StopTimeoutSeconds 60 -OutDir data\rollback-evidence
 ```
+
+脚本内部顺序（每一步都用退出码兜底，前一步失败**不会**到达后面的 downgrade / start）：
+
+1. **服务存在性**：`Get-Service` 取 **`Status`** 属性核对（该对象**没有** `State` 属性）——
+   服务缺失立即 `exit 1`；
+2. **精确停服**：`sc.exe stop` 后由 `scripts/rollback_preflight.py services` 轮询到
+   **两个服务都 `Stopped`**（`StopPending` ≠ `Stopped`；超时或查询失败 → 非 0 → 中止）；
+3. **一致性备份 + 名单导出**：`… backup-export` 调用项目入口
+   `app.reports.backup.backup_sqlite`（SQLite `Connection.backup` + `quick_check`，WAL 下
+   不会漏已提交数据）留备份，再**从该备份**导出 `allowlist-*.txt` 并**回读校验**
+   （文件存在非空、能再解析导入、与库内启用集合一致）——启用成员为 0 或用了升级前的
+   旧备份（没有 `allowlist_members` 表）都直接非 0 中止；
+4. **降级 + 切码 + 版本核对**：`alembic downgrade` → `git switch --detach` → `… check-version`：
+   数据库 `alembic_version` 与代码 `get_head_revision()` **都**等于目标 revision 才允许启动；
+5. **启动两个服务**。
+
+脚本自身的逻辑回归（`tests/test_r132_rollback_preflight.py`，25 项）：服务状态解析与
+`STOP_PENDING`/超时/缺服务三条中止路径、备份+导出+回读校验（含"空名单/旧备份"两处拒绝）、
+版本不一致拒绝，以及对本 `.ps1` 的静态门禁（必须用 `Status`、不得出现 `State`、每个关键
+步骤后必须有 `Assert-ExitCode`、步骤顺序不可颠倒）。
 
 > **数据影响（主审 F06 明确要求写清）**：`downgrade` 会 **`DROP` 整张 `allowlist_members` 表**
 > ——这是**可逆 schema，不是无损恢复**：再升级回来是**空表**，必须用第 1 步导出的文件重新导入。
@@ -221,7 +224,14 @@ sc.exe start QQBotWeb ; sc.exe start QQBotRuntime
 **回滚演练证据（回滚前必须已通过）**：迁移"升 → `alembic check` → 降 → 再升"往返已在
 **独立临时库**验证——`tests/test_r132_member_import_review.py::test_member_migration_downgrade_preserves_existing_tables`
 （断言：旧表哨兵数据保留、降级后新表消失、再升级为空表）。
-生产演练须负责人授权并安排在维护窗口，**不得在业务时段直接降库**。
+
+**前置检查演练证据（主审 F06-R 要求"失败不得到达 downgrade/start"）**：
+`tests/test_r132_rollback_preflight.py`（25 项）用**隔离库 + 可注入的服务状态**覆盖了
+`StopPending` 轮询、超时中止、服务缺失中止、备份/导出失败（空名单、旧备份无表）、
+版本不一致中止，并静态断言 `.ps1` 的步骤顺序与退出码检查——即"这些失败路径都不会
+走到降级或启动"。
+⚠️ **仍未具备的证据**：本机（Windows）**没有实跑过完整回滚链**（未停生产服务、未在
+生产库演练）。生产演练须负责人授权并在维护窗口执行，**不得在业务时段直接降库**。
 
 ### C. 数据异常
 

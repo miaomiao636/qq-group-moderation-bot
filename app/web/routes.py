@@ -2270,7 +2270,18 @@ async def allowlist_members_import(
         async with SessionLocal() as executor:
             await executor.execute(sql_text("BEGIN IMMEDIATE"))
             try:
-                await apply_member_import(executor, locked_plan, operator=actor, commit=False)
+                # 主审 N-F05-2：**执行写锁内重新核对全量集合**（`sync_file_text` = 被批准
+                # 的文件原文）。行级版本条件只看"被改动行"，无法发现"别的管理员合法新增了
+                # 文件外成员 C"这种集合漂移——那会让计划仍报 APPLIED、最终集合变成 A/B/C。
+                # 漂移在 apply 内部抛同一族异常 → 整体回滚并要求重新预览；
+                # **不得为了匹配文件擅自停用本次未批准的 C**。
+                await apply_member_import(
+                    executor,
+                    locked_plan,
+                    operator=actor,
+                    commit=False,
+                    sync_file_text=raw_text,
+                )
                 final_plan = await executor.get(AdminChangePlan, plan_id, populate_existing=True)
                 if final_plan is not None:
                     final_plan.status = "APPLIED"
