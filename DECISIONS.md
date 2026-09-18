@@ -901,3 +901,7 @@ ACTION_MODE 切换为 OFFICIAL、ONEBOT_ACTIONS_ENABLED=true、ONEBOT_ACTION_STA
   通过。
 - **部署**：**已于 09-17 14:29 提权重启生效**（QQBotWeb PID 41448 / QQBotRuntime PID 3164；
   healthz ok、NapCat online）。
+- **补丁（2026-09-18，主审 f08157d 复验 P1）**：同秒 + 前图未完成时"审核中不处罚"保护
+  未覆盖——未完成图片的保护窗口改为 `0 <= delta <= 120`（含同秒；只转人工、清空处罚
+  建议）；豁免判定仍要求图严格先发（已完成图同秒不豁免）。主审 4 项探针入库
+  （`tests/test_pairing_inflight.py`）并补同秒数据库 processing 覆盖。
