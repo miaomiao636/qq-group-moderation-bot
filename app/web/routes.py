@@ -13,10 +13,10 @@ import re
 import secrets
 from datetime import timedelta
 from hashlib import sha256
-from typing import Any
+from typing import Annotated, Any
 from urllib.parse import quote
 
-from fastapi import APIRouter, Form, HTTPException, Request, Response
+from fastapi import APIRouter, File, Form, HTTPException, Request, Response, UploadFile
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse
 from sqlalchemy import func, select, text, update
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -1830,15 +1830,21 @@ async def _ensure_action_routes(
 
 @router.get("/allowlist", response_class=HTMLResponse)
 async def allowlist_page(request: Request, notice: str = "") -> Response:
-    """全局白名单（负责人 2026-09-16）：登录管理员可改，保存即生效（逐消息直读）。"""
+    """白名单设置：词语白名单 + 成员白名单（QQ号）。
+
+    登录管理员可改，保存即生效（运行时逐消息直读，无需重启）。
+    """
     token = await _require_login(request)
     if not token:
         return _login_redirect()
     csrf = _csrf_field(token)
-    from app.models import AllowlistTerm
+    from app.models import AllowlistMember, AllowlistTerm
 
     async with SessionLocal() as session:
         terms = (await session.scalars(select(AllowlistTerm).order_by(AllowlistTerm.id))).all()
+        members = (
+            await session.scalars(select(AllowlistMember).order_by(AllowlistMember.id))
+        ).all()
     rows = "".join(
         "<tr>"
         f"<td><code>{_esc(t.term)}</code></td><td>{_esc(t.normalized)}</td>"
@@ -1853,9 +1859,58 @@ async def allowlist_page(request: Request, notice: str = "") -> Response:
         "<button class=btn>删除</button></form></td></tr>"
         for t in terms
     )
+    member_rows = "".join(
+        "<tr>"
+        f"<td><code>{_esc(m.external_user_id)}</code></td>"
+        f"<td>{_esc(m.note)}</td>"
+        f"<td>{_esc(m.provider)}</td>"
+        f"<td>{'启用' if m.enabled else '<span class=warn>停用</span>'}</td>"
+        f"<td>{_esc(m.created_by)}</td>"
+        f"<td>{m.created_at.strftime('%m-%d %H:%M') if m.created_at else ''}</td>"
+        f'<td><form method=post style=display:inline action="/admin/allowlist/members/{m.id}/toggle">'
+        f'{csrf}<input type=hidden name=target_enabled value="{"false" if m.enabled else "true"}">'
+        f"<button class=btn>{'停用' if m.enabled else '启用'}</button></form> "
+        f'<form method=post style=display:inline action="/admin/allowlist/members/{m.id}/delete" '
+        f"onsubmit=\"return confirm('删除该成员白名单？')\">{csrf}"
+        "<button class=btn>删除</button></form></td></tr>"
+        for m in members
+    )
+    member_section = (
+        "<div class=card><h3>成员白名单（按QQ号，优先级最高）</h3>"
+        "<p class=muted>命中成员的全部消息<b>完全放行</b>（含诈骗/色情/暴力/刷屏，"
+        "负责人 2026-09-18 明确口径）：不撤回、不处罚、不转人工；合并转发与群名片"
+        "的撤回规则同样不作用于名单内成员。仅对 NapCat/OneBot 主通道（数字QQ号）生效，"
+        "官方通道 openid 不适用。<b>保存后下一条消息立即生效，无需重启。</b></p>"
+        "<div class=card><h3>单条添加</h3>"
+        '<form method=post action="/admin/allowlist/members/add" '
+        'style="display:flex;gap:8px;flex-wrap:wrap">'
+        f"{csrf}"
+        '<input name=member_id maxlength=12 placeholder="QQ号，例如 123456789" '
+        'style="width:220px" required>'
+        '<input name=note maxlength=64 placeholder="备注（可选）" style="width:220px">'
+        "<button class=btn>添加（立即生效）</button></form></div>"
+        "<div class=card><h3>用文件批量设置（推荐）</h3>"
+        "<p class=muted>每行一个 QQ 号，<code>#</code> 开头为注释，也支持 "
+        "<code>123456789,备注</code>。整表同步：文件里没有而当前启用的成员会被"
+        "<b>停用</b>（不删除，可再启用）。上传后先显示变更预览，确认后才写入；"
+        "<b>空文件一律拒绝</b>；单次停用超过 5 条且超过当前启用数的 30% 时，"
+        "预览页需要额外勾选才能执行。</p>"
+        '<form method=post action="/admin/allowlist/members/import" '
+        'enctype="multipart/form-data" style="display:flex;gap:8px;flex-wrap:wrap">'
+        f"{csrf}"
+        '<input type=file name=file accept=".txt,.csv,text/plain" required>'
+        "<button class=btn>解析并预览</button></form>"
+        '<p style="margin-top:8px">'
+        '<a href="/admin/allowlist/members/export">导出当前成员白名单</a>'
+        "（改完再上传即可，格式完全一致）</p></div>"
+        "<table><tr><th>QQ号</th><th>备注</th><th>通道</th><th>状态</th><th>添加人</th>"
+        "<th>时间</th><th>操作</th></tr>"
+        f"{member_rows or '<tr><td colspan=7>暂无成员白名单。可用文件批量设置。</td></tr>'}"
+        "</table></div>"
+    )
     body = (
         "<h2>白名单设置</h2>"
-        "<p class=muted>全局生效：消息内容包含白名单词（自动识别谐音/大小写变体）且"
+        "<p class=muted>词语白名单：消息内容包含白名单词（自动识别谐音/大小写变体）且"
         "不属于严重类别（诈骗/色情/暴力）时，<b>完全放行</b>（不处罚、不转人工）；"
         "刷屏等其余规则照常处理。词越短影响面越大，请按需添加。"
         "<b>保存后下一条消息立即生效，无需重启。</b></p>"
@@ -1868,6 +1923,7 @@ async def allowlist_page(request: Request, notice: str = "") -> Response:
         "<table><tr><th>词</th><th>匹配形式（归一化）</th><th>状态</th><th>添加人</th><th>时间</th>"
         "<th>操作</th></tr>"
         f"{rows or '<tr><td colspan=6>暂无白名单词。添加后立即生效。</td></tr>'}</table>"
+        f"{member_section}"
     )
     return _page("白名单设置", body)
 
@@ -1924,6 +1980,202 @@ async def allowlist_delete(request: Request, term_id: int, csrf: str = Form(""))
         except ValueError as exc:
             return _allowlist_notice_redirect(str(exc))
     return _allowlist_notice_redirect(f"已删除「{term}」——下一条消息立即生效")
+
+
+# ---------------- 成员白名单（按QQ号；负责人 2026-09-18） ----------------
+
+# 上传白名单文件大小上限（正常名单几十行，1MB 足够；防止误传大文件）
+_MAX_MEMBER_FILE_BYTES = 1024 * 1024
+
+
+def _member_notice_redirect(notice: str) -> RedirectResponse:
+    return RedirectResponse(f"/admin/allowlist?notice={quote(notice)}", status_code=303)
+
+
+def _decode_member_file(data: bytes) -> str:
+    """解码上传的白名单文件：优先 UTF-8（含 BOM），退回 GBK（记事本"ANSI"另存）。
+
+    只做解码，不执行任何文件内容；解码失败宁可报错也不猜。
+    """
+    for encoding in ("utf-8-sig", "gbk"):
+        try:
+            return data.decode(encoding)
+        except UnicodeDecodeError:
+            continue
+    raise ValueError("文件编码无法识别：请另存为 UTF-8 或 GBK 文本后重试")
+
+
+def _member_import_preview(plan: Any, text: str, csrf_field: str) -> Response:
+    """导入预览页：展示新增/启用/停用/改备注/非法行，确认后才写入。
+
+    ``plan.needs_confirm`` 为真时（停用幅度大）**必须额外勾选**才能执行——
+    这是 D-3 的"二次确认"，防止误传残缺文件一次性清掉白名单。
+    """
+
+    def _block(title: str, items: list[str]) -> str:
+        listed = (
+            "".join(f"<li>{_esc(item)}</li>" for item in items[:200]) or "<li class=muted>无</li>"
+        )
+        return f"<div class=card><h3>{_esc(title)}（{len(items)}）</h3><ul>{listed}</ul></div>"
+
+    invalid = [f"第 {line.line_no} 行：{line.raw} → {line.reason}" for line in plan.invalid]
+    ack = ""
+    if plan.needs_confirm:
+        ack = (
+            '<label style="display:block;margin:10px 0">'
+            "<input type=checkbox name=ack value=1 required> "
+            f"我已核对停用清单（{len(plan.to_disable)} 条），确认执行"
+            "（停用幅度较大，需二次确认）</label>"
+        )
+    body = (
+        "<h2>成员白名单导入预览</h2>"
+        f"<div role=status>文件有效 QQ 数 {plan.total_valid}："
+        f"新增 {len(plan.to_add)}，重新启用 {len(plan.to_enable)}，"
+        f"停用 {len(plan.to_disable)}，改备注 {len(plan.to_update_note)}，"
+        f"不变 {plan.unchanged}，非法行 {len(plan.invalid)}</div>"
+        "<p class=muted>确认后立即生效（下一条消息），并写入审计。停用不等于删除："
+        "记录仍在列表中，可用「启用」恢复。<b>此刻还没有任何改动被写入。</b></p>"
+        + _block("新增", [m.user_id + (f"（{m.note}）" if m.note else "") for m in plan.to_add])
+        + _block("重新启用", [uid for _id, uid in plan.to_enable])
+        + _block("停用", [uid for _id, uid in plan.to_disable])
+        + _block("更新备注", [f"{uid} → {note}" for _id, uid, note in plan.to_update_note])
+        + _block("非法行（将被忽略，未参与同步）", invalid)
+        + "<div class=card>"
+        '<form method=post action="/admin/allowlist/members/import">'
+        f"{csrf_field}"
+        "<input type=hidden name=confirmed value=1>"
+        f'<textarea name=text style="display:none">{_esc(text)}</textarea>'
+        f"{ack}"
+        "<button class=btn ok>确认执行</button> "
+        '<a class=btn href="/admin/allowlist">取消</a></form></div>'
+    )
+    return _page("成员白名单导入预览", body)
+
+
+@router.post("/allowlist/members/add")
+async def allowlist_members_add(
+    request: Request,
+    member_id: str = Form(""),
+    note: str = Form(""),
+    csrf: str = Form(""),
+) -> Response:
+    await _require_admin_post(request, csrf)
+    operator = await _operator(request)
+    from app.moderation.allowlist import add_member
+
+    async with SessionLocal() as session:
+        try:
+            row, created = await add_member(session, member_id, operator=operator, note=note)
+        except ValueError as exc:
+            return _member_notice_redirect(str(exc))
+    if not created:
+        return _member_notice_redirect(f"QQ号 {row.external_user_id} 已在名单中，未重复添加")
+    return _member_notice_redirect(f"已添加 {row.external_user_id}——下一条消息立即生效")
+
+
+@router.post("/allowlist/members/{member_id}/toggle")
+async def allowlist_members_toggle(
+    request: Request, member_id: int, target_enabled: str = Form(""), csrf: str = Form("")
+) -> Response:
+    await _require_admin_post(request, csrf)
+    operator = await _operator(request)
+    from app.models import AllowlistMember
+    from app.moderation.allowlist import set_member_enabled
+
+    # 与词语白名单一致：服务端不猜目标状态，表单必须显式携带目标（幂等 set）
+    raw = target_enabled.strip().lower()
+    if raw not in ("true", "false"):
+        return _member_notice_redirect("请求缺少目标状态，未执行——请刷新页面后重试")
+    target = raw == "true"
+    async with SessionLocal() as session:
+        row = await session.get(AllowlistMember, member_id)
+        if row is None:
+            return _member_notice_redirect("成员白名单不存在")
+        updated = await set_member_enabled(session, member_id, target, operator=operator)
+    state = "启用" if updated.enabled else "停用"
+    return _member_notice_redirect(f"{updated.external_user_id} 已{state}——下一条消息立即生效")
+
+
+@router.post("/allowlist/members/{member_id}/delete")
+async def allowlist_members_delete(
+    request: Request, member_id: int, csrf: str = Form("")
+) -> Response:
+    await _require_admin_post(request, csrf)
+    operator = await _operator(request)
+    from app.moderation.allowlist import delete_member
+
+    async with SessionLocal() as session:
+        try:
+            user_id = await delete_member(session, member_id, operator=operator)
+        except ValueError as exc:
+            return _member_notice_redirect(str(exc))
+    return _member_notice_redirect(f"已删除 {user_id}——下一条消息立即生效")
+
+
+@router.post("/allowlist/members/import")
+async def allowlist_members_import(
+    request: Request,
+    file: Annotated[UploadFile | None, File()] = None,
+    text: str = Form(""),
+    confirmed: str = Form(""),
+    ack: str = Form(""),
+    csrf: str = Form(""),
+) -> Response:
+    """整份文件全量同步：先预览，确认后写入（空文件拒绝；大幅停用需二次确认）。"""
+    token = await _require_login(request)
+    if not token:
+        return _login_redirect()
+    await _require_admin_post(request, csrf)
+    operator = await _operator(request)
+    from app.moderation.allowlist import apply_member_import, plan_member_import
+
+    raw_text = text
+    if not raw_text.strip():
+        if file is None:
+            return _member_notice_redirect("未收到文件内容，未执行——请重新选择文件")
+        data = await file.read()
+        if len(data) > _MAX_MEMBER_FILE_BYTES:
+            return _member_notice_redirect("文件过大，已拒绝导入（上限 1MB）")
+        try:
+            raw_text = _decode_member_file(data)
+        except ValueError as exc:
+            return _member_notice_redirect(str(exc))
+    async with SessionLocal() as session:
+        try:
+            plan = await plan_member_import(session, raw_text)
+        except ValueError as exc:
+            return _member_notice_redirect(str(exc))
+        # 预览确认是必经步骤（D-3）；大幅停用时还需勾选 ack（二次确认）
+        if confirmed != "1" or (plan.needs_confirm and ack != "1"):
+            return _member_import_preview(plan, raw_text, _csrf_field(token))
+        if not plan.has_changes and not plan.invalid:
+            return _member_notice_redirect("文件与当前名单完全一致，未做任何变更")
+        await apply_member_import(session, plan, operator=operator)
+    return _member_notice_redirect(
+        f"已同步：新增 {len(plan.to_add)}，重新启用 {len(plan.to_enable)}，"
+        f"停用 {len(plan.to_disable)}，改备注 {len(plan.to_update_note)}，"
+        f"非法行 {len(plan.invalid)}——下一条消息立即生效"
+    )
+
+
+@router.get("/allowlist/members/export")
+async def allowlist_members_export(request: Request) -> Response:
+    """导出当前**启用中**的成员白名单（格式与导入完全一致，改完可再上传）。"""
+    token = await _require_login(request)
+    if not token:
+        return _login_redirect()
+    from app.moderation.allowlist import list_members
+    from app.moderation.allowlist_members_io import format_member_list
+
+    async with SessionLocal() as session:
+        members = await list_members(session)
+    content = format_member_list((row.external_user_id, row.note) for row in members if row.enabled)
+    # 前置 BOM：Windows 记事本据此识别 UTF-8（解析端会剥掉 BOM）
+    return Response(
+        content="\ufeff" + content,
+        media_type="text/plain; charset=utf-8",
+        headers={"Content-Disposition": 'attachment; filename="allowlist_members.txt"'},
+    )
 
 
 @router.get("/groups", response_class=HTMLResponse)

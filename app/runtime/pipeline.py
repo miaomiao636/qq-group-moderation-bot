@@ -24,8 +24,12 @@ from app.actions.orchestrator import (
 from app.core.contracts import MessageParseError, MessageSource, StandardMessage
 from app.core.dedup import begin_processing, mark_failed, mark_processed
 from app.moderation.ai import AIReviewService
-from app.moderation.allowlist import load_allowlist_terms
-from app.moderation.decision import POLICY_ALLOW_RULE_IDS, ModerationDecision
+from app.moderation.allowlist import load_allowlist_members, load_allowlist_terms
+from app.moderation.decision import (
+    ALLOWLIST_MEMBER_ALLOW_RULE_ID,
+    POLICY_ALLOW_RULE_IDS,
+    ModerationDecision,
+)
 from app.moderation.dynamic_rules import load_cached_active_snapshot
 from app.moderation.image_engine import ImageModerationEngine, MediaAnalysis, merge_decisions
 from app.moderation.media_engine import evaluate_file, evaluate_video, evaluate_voice
@@ -240,23 +244,27 @@ async def _run_pipeline(
         rule_version_ids = rule_snapshot.version_ids
         # 全局白名单每消息直读（跨进程即时生效；读取失败 fail-closed 为空集）。
         allow_terms = await load_allowlist_terms(session)
+        # 成员白名单（负责人 2026-09-18，按 QQ 号）：同样每消息直读、fail-closed。
+        allow_members = await load_allowlist_members(session)
         if text_engine is None:
-            text_engine = TextRuleEngine(rule_snapshot=rule_snapshot)
+            text_engine = TextRuleEngine(rule_snapshot=rule_snapshot, allow_members=allow_members)
         else:
             text_engine.set_rule_snapshot(rule_snapshot)
         text_engine.set_allowlist(allow_terms)
+        text_engine.set_allowlist_members(allow_members)
         decision: ModerationDecision = text_engine.evaluate(msg)
         decision = gate.review(msg, decision)
 
-        # T-306：无法解析的内容（未知消息段/合并转发骨架）绝不判正常，
-        # 也绝不作为处罚依据——强制降级人工复核。
+        # T-306：无法解析的内容（未知消息段）绝不判正常，也绝不作为处罚依据——
+        # 强制降级人工复核。2026-09-18：**合并转发不再走此兜底**——负责人明确
+        # 口径为"合并转发一律撤回"，由规则引擎 R_FORWARD_RECORD 直接给出 violation_high。
         if _contains_unreviewable_content(msg):
-            evidence_vetoes.append("包含无法解析的内容（未知消息段/合并转发）")
+            evidence_vetoes.append("包含无法解析的内容（未知消息段）")
             decision = decision.model_copy(
                 update={
                     "verdict": "record_only",
                     "reason": (decision.reason + "；" if decision.reason else "")
-                    + "包含无法解析的内容（未知消息段/合并转发），转人工",
+                    + "包含无法解析的内容（未知消息段），转人工",
                 }
             )
 
@@ -314,11 +322,27 @@ async def _run_pipeline(
             if media_missing:
                 evidence_vetoes.append("媒体缺失/下载失败")
 
+            member_policy_allow = decision.verdict == "allow" and any(
+                h.rule_id == ALLOWLIST_MEMBER_ALLOW_RULE_ID for h in decision.rule_hits
+            )
             if any(d.verdict == "violation_high" for d in media_decisions):
-                decision = merge_decisions(
-                    decision,
-                    MediaAnalysis("violation_high", 0.95, reason="媒体违规"),
-                )
+                if member_policy_allow:
+                    # D-037（负责人 2026-09-18："名单内成员发的所有信息都通过"）：
+                    # 成员白名单为**全类别完全放行**，媒体层独立违规信号只作证据，
+                    # 不升级、不处罚。若不拦截，merge_decisions 会把 allow 直接改成
+                    # violation_high，编排层随即产生真实撤回/禁言——等于白名单被旁路
+                    # （与保护角色同样免罚的待遇一致）。
+                    decision = decision.model_copy(
+                        update={
+                            "reason": (decision.reason + "；" if decision.reason else "")
+                            + "媒体层检出违规信号，按成员白名单完全放行（D-037）仅记录",
+                        }
+                    )
+                else:
+                    decision = merge_decisions(
+                        decision,
+                        MediaAnalysis("violation_high", 0.95, reason="媒体违规"),
+                    )
             elif media_missing:
                 # R-102-3 任意媒体缺失/下载失败 → 不放行
                 decision = decision.model_copy(
@@ -375,18 +399,15 @@ async def _run_pipeline(
                     "reason": "；".join(dict.fromkeys(evidence_vetoes)) + "，转人工",
                 }
             )
-        # 校园墙图后广告文字豁免（负责人 2026-09-17 口径 C）：2 分钟窗口内同成员
-        # 校园墙确认图之后的任意广告文字不撤回，降为 record_only 转记录
-        # （不再要求相似度/紧邻/一图一条）。
-        from app.moderation.wall_pair import maybe_wall_text_pairing
+        # 图后窗口豁免（负责人 2026-09-17 口径 C；2026-09-18 晚扩展为"文字与图片"）：
+        # 2 分钟窗口内同成员在"视觉确认放行图"之后发的内容不撤回，降为 record_only
+        # 转记录（不再要求相似度/紧邻/一图一条）；色情/暴力/刷屏不豁免。
+        # 前置过滤与豁免函数共用 is_pairing_candidate，避免两处条件漂移。
+        from app.moderation.wall_pair import is_pairing_candidate, maybe_wall_text_pairing
         from app.runtime.pairing_context import load_pending_pairing_messages
 
         pending_messages: tuple[StandardMessage, ...] = ()
-        if (
-            msg.kind == "text"
-            and decision.verdict == "violation_high"
-            and decision.category == "ad"
-        ):
+        if is_pairing_candidate(msg, decision):
             pending_messages = await load_pending_pairing_messages(
                 session, msg, event_key=claim_key
             )
@@ -450,10 +471,15 @@ async def _run_pipeline(
 
 
 def _contains_unreviewable_content(msg: StandardMessage) -> bool:
-    """消息是否包含无法自动判定的内容（T-306：未知段/合并转发）。"""
-    if msg.kind in ("unknown", "forward_record"):
+    """消息是否包含无法自动判定的内容（T-306：未知消息段）。
+
+    2026-09-18（负责人口径）：``forward_record`` **不再**列入本兜底——合并转发由
+    规则引擎 `R_FORWARD_RECORD` 判定为"一律撤回"，若在此强制 record_only 会把撤回
+    降级掉。未知消息段仍然强制转人工（未被识别的结构不得作为处罚依据）。
+    """
+    if msg.kind == "unknown":
         return True
-    return any(s.kind in ("unknown", "forward_record") for s in msg.segments)
+    return any(s.kind == "unknown" for s in msg.segments)
 
 
 def _media_decision_from(

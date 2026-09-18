@@ -19,8 +19,12 @@ from typing import TYPE_CHECKING, Any
 from app.core.contracts import StandardMessage
 from app.moderation.decision import (
     ALLOWLIST_ALLOW_RULE_ID,
+    ALLOWLIST_MEMBER_ALLOW_RULE_ID,
     ALLOWLIST_NON_EXEMPT_CATEGORIES,
     CERTIFICATE_AD_ALLOW_RULE_ID,
+    FORWARD_RECORD_RECALL_RULE_ID,
+    FULL_ALLOW_NO_UPGRADE_RULE_IDS,
+    GROUP_CARD_RECALL_RULE_ID,
     PROTECTED_CARD_ALLOW_RULE_ID,
     ModerationDecision,
     RuleHit,
@@ -378,6 +382,21 @@ def _has_ad_intent(text: str) -> bool:
     return any(marker in text for marker in AD_INTENT_MARKERS)
 
 
+def _match_allow_member(
+    provider: str, external_user_id: str, members: frozenset[tuple[str, str]]
+) -> str | None:
+    """成员白名单精确匹配 ``(provider, QQ号)``：命中返回 QQ 号，未命中返回 None。
+
+    纯函数、零 DB 依赖。**绝不做归一化**——QQ 号是精确身份，与关键词白名单的
+    谐音/大小写变体匹配语义完全不同（权威实现同语义见
+    ``app.moderation.allowlist.match_allowlist_member``）。
+    """
+    user_id = str(external_user_id).strip()
+    if not user_id or not members:
+        return None
+    return user_id if (str(provider), user_id) in members else None
+
+
 def _is_share_source_allowed(msg: StandardMessage) -> bool:
     if msg.kind != "share_card":
         return False
@@ -442,12 +461,14 @@ class TextRuleEngine:
         extra_blacklist: tuple[str, ...] = (),
         rule_snapshot: RuleSnapshot | None = None,
         allow_terms: frozenset[str] | None = None,
+        allow_members: frozenset[tuple[str, str]] | None = None,
     ) -> None:
         self._high_threshold = high_threshold
         self._blacklist = BLACKLIST_EXPLICIT + tuple(extra_blacklist)
         self.frequency = frequency_tracker or FrequencyTracker()
         self._rule_snapshot = rule_snapshot
         self._allow_terms: frozenset[str] = allow_terms or frozenset()
+        self._allow_members: frozenset[tuple[str, str]] = allow_members or frozenset()
 
     def set_rule_snapshot(self, rule_snapshot: RuleSnapshot | None) -> None:
         """替换运行时动态规则快照，同时保留刷屏等进程内状态。"""
@@ -456,6 +477,10 @@ class TextRuleEngine:
     def set_allowlist(self, allow_terms: frozenset[str]) -> None:
         """替换运行时全局白名单（每消息从库直读；其他进程内状态保留）。"""
         self._allow_terms = allow_terms
+
+    def set_allowlist_members(self, allow_members: frozenset[tuple[str, str]]) -> None:
+        """替换运行时成员白名单（(provider, QQ号) 精确集合；每消息从库直读）。"""
+        self._allow_members = allow_members
 
     def evaluate(
         self,
@@ -503,7 +528,32 @@ class TextRuleEngine:
         has_hard_blacklist = any(h.rule_id == "R001" for h in hits)
 
         allowlist_hit = _match_allowlist(msg.text, self._allow_terms)
-        if protected and share_card:
+        member_hit = _match_allow_member(msg.provider, msg.external_user_id, self._allow_members)
+        forward_record = msg.kind == "forward_record" or any(
+            seg.kind == "forward_record" for seg in msg.segments
+        )
+        group_card = share_card and msg.share_card is not None and msg.share_card.is_group_card
+        if member_hit:
+            # 负责人 2026-09-18（成员白名单）：优先级最高（高于关键词白名单与保护角色
+            # 分支），**全类别完全放行**——负责人明确选择"不守 B-2 底线"（诈骗/色情/
+            # 暴力/刷屏同样放行）。已纳入 POLICY_ALLOW_RULE_IDS：AI/动态规则/媒体层
+            # 一律不得升级或转人工（防 R-113 式事故复发）。
+            verdict = "allow"
+            confidence = 0.0
+            actions = []
+            reason = "成员白名单命中，全部放行"
+            hits.append(
+                RuleHit(
+                    rule_id=ALLOWLIST_MEMBER_ALLOW_RULE_ID,
+                    rule_name="allowlist_member",
+                    category="ad",
+                    confidence_delta=0.0,
+                    evidence_masked=(
+                        f"成员白名单命中：{member_hit}（全类别完全放行，负责人 2026-09-18）"
+                    ),
+                )
+            )
+        elif protected and share_card:
             # 负责人 2026-09-16 口径：群主/管理员分享的卡片**完全放行**
             # （不处罚、不转人工）。AI/动态规则/媒体层据此标记不得升级。
             verdict = "allow"
@@ -522,6 +572,46 @@ class TextRuleEngine:
         elif protected:
             verdict = "record_only"
             reason = "保护角色（群主/管理员）：命中信号仅记录，不处罚"
+        elif forward_record:
+            # 负责人 2026-09-18：合并转发（聊天记录）**一律撤回**——无需展开内容
+            # （不调用 get_forward_msg），纯本地确定性规则。保护角色与成员白名单已在
+            # 上面分支排除。动作沿用标准高置信违规集（与处罚阶梯 record_violation
+            # 实际规划的动作保持一致，避免"记录建议"与"实际动作"不符）：
+            # 当前 OneBot 处于 recall_only 阶段时只会执行 recall。
+            verdict = "violation_high"
+            confidence = max(confidence, 0.95)
+            actions = list(_HIGH_ACTIONS)
+            reason = "合并转发（聊天记录）一律撤回"
+            hits.append(
+                RuleHit(
+                    rule_id=FORWARD_RECORD_RECALL_RULE_ID,
+                    rule_name="forward_record",
+                    category="ad",
+                    confidence_delta=0.0,
+                    evidence_masked=(
+                        "合并转发一律撤回（负责人 2026-09-18）；群主/管理员与成员白名单成员不撤回"
+                    ),
+                )
+            )
+        elif group_card:
+            # 负责人 2026-09-18：群名片（分享群卡片）**一律撤回**。识别不出来为群
+            # 名片的卡片仍走下方既有分支（允许来源放行 / 未知来源转人工），避免把
+            # 音乐、新闻、小程序卡片误撤；真实样本到位后可收窄识别条件。
+            verdict = "violation_high"
+            confidence = max(confidence, 0.95)
+            actions = list(_HIGH_ACTIONS)
+            reason = "群名片（分享群卡片）一律撤回"
+            hits.append(
+                RuleHit(
+                    rule_id=GROUP_CARD_RECALL_RULE_ID,
+                    rule_name="group_card",
+                    category="ad",
+                    confidence_delta=0.0,
+                    evidence_masked=(
+                        "群名片一律撤回（负责人 2026-09-18）；群主/管理员与成员白名单成员不撤回"
+                    ),
+                )
+            )
         elif (
             allowlist_hit
             and (category is None or category == "ad")
@@ -639,9 +729,10 @@ class TextRuleEngine:
             return base
         # 2026-09-16 口径 A：办证豁免（allow）时，办证类动态规则只记录——
         # 不得升级为违规或转人工（R-113 事故防再犯；非办证类显式 DR 照常生效）。
-        # D-032 群主/管理员卡片：全类别不升级（负责人确认的完全放行）。
+        # D-032 群主/管理员卡片 + D-037 成员白名单：全类别完全放行，
+        # 任何动态规则（含显式 DR）都不得升级或转人工，仅并入证据。
         if base.verdict == "allow" and any(
-            h.rule_id == PROTECTED_CARD_ALLOW_RULE_ID for h in base.rule_hits
+            h.rule_id in FULL_ALLOW_NO_UPGRADE_RULE_IDS for h in base.rule_hits
         ):
             return base.model_copy(
                 update={

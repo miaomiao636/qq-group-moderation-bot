@@ -25,6 +25,7 @@ from app.moderation.decision import (
     ALLOWLIST_ALLOW_RULE_ID,
     ALLOWLIST_NON_EXEMPT_CATEGORIES,
     CERTIFICATE_AD_ALLOW_RULE_ID,
+    MINIPROGRAM_QR_ALLOW_RULE_ID,
     POLICY_ALLOW_RULE_IDS,
     Category,
     ModerationDecision,
@@ -44,7 +45,7 @@ AIContentKind = Literal[
 AIResultSource = Literal["text", "vision", "degraded", "cache"]
 AIReviewRole = Literal["auxiliary", "primary", "secondary"]
 
-PROMPT_VERSION = "t204-v6"
+PROMPT_VERSION = "t204-v15"
 AI_POLICY_VERSION = "conditional-review-v1"
 MAX_AI_TEXT_CHARS = 4_000
 MAX_AI_MEDIA_BYTES = 5 * 1024 * 1024
@@ -131,6 +132,10 @@ class AIModerationResult(BaseModel):
     provider: str = Field(default="unknown", max_length=64)
     source: AIResultSource = "text"
     needs_review: bool = True
+    # 负责人 2026-09-18：视觉模型的结构化判定——图中是否含**微信小程序二维码**。
+    # 命中即"一律通过"（严重类别与本地硬证据例外见 merge_ai_evidence）。
+    # 只有视觉通道有意义；文字通道恒为 False。
+    has_miniprogram_code: bool = False
     latency_ms: int = Field(default=0, ge=0)
     cost_cents: int = Field(default=0, ge=0)
     degraded_reason: str = Field(default="", max_length=200)
@@ -272,6 +277,11 @@ def provider_payload_to_result(
     if not isinstance(needs_review_raw, bool):
         raise AIProviderError("provider_invalid_needs_review")
     needs_review = needs_review_raw or unknown_category
+    # 小程序码标记：严格布尔（供应商给字符串一律拒收，不猜），且只有视觉通道有意义。
+    miniprogram_raw = payload.get("has_miniprogram_code", False)
+    if not isinstance(miniprogram_raw, bool):
+        raise AIProviderError("provider_invalid_has_miniprogram_code")
+    has_miniprogram_code = bool(miniprogram_raw) and source == "vision"
     try:
         return AIModerationResult(
             category=category,
@@ -282,6 +292,7 @@ def provider_payload_to_result(
             provider=provider,
             source=source,
             needs_review=needs_review,
+            has_miniprogram_code=has_miniprogram_code,
             latency_ms=latency_ms,
             cost_cents=int(payload.get("cost_cents") or 0),
             raw_response_sha256=raw_hash,
@@ -840,6 +851,49 @@ def _cross_modal_veto(opposite: list[AIModerationResult], low_threshold: float) 
     )
 
 
+# D-039 的例外集合：**只有色情与暴力/违禁品**不因小程序码放行。
+# 负责人 2026-09-18 晚修订：**诈骗不再例外**——图含小程序码时，诈骗内容同样放行
+# （此前沿用 B-2 把 fraud 也列为例外，导致"支付宝亲密号"这类图被撤回）。
+_MINIPROGRAM_QR_BLOCKED_CATEGORIES = frozenset({"porn", "violence"})
+# 本地硬证据：图片外观不得覆盖这些本地判定（防"配一张带码图就绕过黑名单/联系方式/卡片规则"）。
+_LOCAL_HARD_EVIDENCE_RULES = frozenset({"R001", "R003", "R006"})
+
+
+def _miniprogram_qr_allow(
+    local: ModerationDecision, ai_results: list[AIModerationResult]
+) -> RuleHit | None:
+    """D-039：图片含微信小程序二维码 → 放行标记；不该放行时返回 ``None``。
+
+    保留两个例外：
+    1. **色情 / 暴力违禁品**（负责人 2026-09-18 晚修订：仅此两类）：本地或任一 AI
+       结果给出 porn/violence 时不放行；**诈骗不再例外**；
+    2. **本地硬证据**：命中 R001 黑名单词 / R003 联系方式 / R006 分享卡片 / DR_ 动态
+       规则时不放行。
+    """
+    if not any(result.source == "vision" and result.has_miniprogram_code for result in ai_results):
+        return None
+    if local.category in _MINIPROGRAM_QR_BLOCKED_CATEGORIES:
+        return None
+    if any(
+        result.category in _MINIPROGRAM_QR_BLOCKED_CATEGORIES
+        for result in ai_results
+        if not result.degraded_reason
+    ):
+        return None
+    if any(
+        hit.rule_id in _LOCAL_HARD_EVIDENCE_RULES or hit.rule_id.startswith("DR_")
+        for hit in local.rule_hits
+    ):
+        return None
+    return RuleHit(
+        rule_id=MINIPROGRAM_QR_ALLOW_RULE_ID,
+        rule_name="miniprogram_qr",
+        category="ad",
+        confidence_delta=0.0,
+        evidence_masked="图片含小程序二维码，按负责人口径放行（严重类别与本地硬证据除外，2026-09-18）",
+    )
+
+
 def merge_ai_evidence(
     local: ModerationDecision,
     ai_results: list[AIModerationResult],
@@ -866,6 +920,21 @@ def merge_ai_evidence(
         )
         for result in usable
     ]
+    # D-039（负责人 2026-09-18）：图片含微信小程序二维码 → 一律通过。
+    # 放在"本地已违规"分支之前，因为它要能压过仅由广告软信号构成的本地高置信；
+    # 例外（严重类别、本地硬证据）在 helper 内判断。
+    qr_allow = _miniprogram_qr_allow(local, ai_results)
+    if qr_allow is not None:
+        return local.model_copy(
+            update={
+                "verdict": "allow",
+                "category": None,
+                "confidence": 0.0,
+                "recommended_actions": [],
+                "rule_hits": local.rule_hits + hits + [qr_allow],
+                "reason": "图片含小程序二维码，按负责人口径放行（D-039）",
+            }
+        )
     if local.verdict == "violation_high":
         return local.model_copy(update={"rule_hits": local.rule_hits + hits})
     # 负责人 2026-09-16 政策放行：D-031 办证 / D-032 卡片为全类别完全放行——

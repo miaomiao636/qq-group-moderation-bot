@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 
-from sqlalchemy import Boolean, DateTime, Integer, String, Text
+from sqlalchemy import Boolean, DateTime, Integer, String, Text, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db import Base
@@ -143,6 +143,38 @@ class AllowlistTerm(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     term: Mapped[str] = mapped_column(String(64), unique=True)
     normalized: Mapped[str] = mapped_column(String(64), unique=True)
+    enabled: Mapped[bool] = mapped_column(Boolean, default=True)
+    created_by: Mapped[str] = mapped_column(String(64), default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=_utcnow, onupdate=_utcnow
+    )
+
+
+class AllowlistMember(Base):
+    """成员白名单（负责人 2026-09-18）：命中成员的全部消息放行，优先级最高。
+
+    - 身份：``provider + external_user_id``。NapCat 主通道的 ``external_user_id``
+      就是 OneBot 数字 QQ 号，本表按**精确相等**匹配，绝不做归一化（数字与关键词
+      的变体归一化语义完全不同）；官方通道用 openid，不匹配 QQ 号，两通道隔离。
+    - 政策：负责人 2026-09-18 明确选择"不守 B-2 底线"——成员白名单为**全类别完全
+      放行**（诈骗/色情/暴力/刷屏同样放行）。开关语义由规则引擎与
+      ``POLICY_ALLOW_RULE_IDS`` 全链路保护共同保证，AI/动态规则/媒体层不得升级。
+    - 生效：运行时每条消息直读本表（跨进程立即生效，参照 ``AllowlistTerm``）。
+    ``sqlite_autoincrement``：删除后 ID 不复用（旧表单不能操作替代对象）；
+    ``(provider, external_user_id)`` 唯一约束防止并发重复写入。
+    """
+
+    __tablename__ = "allowlist_members"
+    __table_args__ = (
+        UniqueConstraint("provider", "external_user_id", name="uq_allowlist_member_identity"),
+        {"sqlite_autoincrement": True},
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    provider: Mapped[str] = mapped_column(String(16), default="onebot", server_default="onebot")
+    external_user_id: Mapped[str] = mapped_column(String(32))
+    note: Mapped[str] = mapped_column(String(128), default="")
     enabled: Mapped[bool] = mapped_column(Boolean, default=True)
     created_by: Mapped[str] = mapped_column(String(64), default="")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)

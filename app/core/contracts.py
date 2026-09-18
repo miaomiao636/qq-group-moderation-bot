@@ -76,7 +76,12 @@ class Attachment(BaseModel):
 
 
 class ShareCardInfo(BaseModel):
-    """分享卡片摘要。"""
+    """分享卡片摘要。
+
+    ``is_group_card``（负责人 2026-09-18）：该卡片是否为 QQ **群名片**（分享群卡片）。
+    规则引擎据此执行"群名片一律撤回"的结构性确定性规则；无法识别时保持 False，
+    按普通卡片走既有分支，避免误伤音乐/新闻/小程序卡片。
+    """
 
     source: str = ""
     title: str = ""
@@ -84,6 +89,7 @@ class ShareCardInfo(BaseModel):
     tag: str = ""
     preview_url: str = ""
     source_logo_url: str = ""
+    is_group_card: bool = False
 
 
 class MessageSegment(BaseModel):

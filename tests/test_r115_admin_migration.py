@@ -16,11 +16,15 @@ import subprocess
 
 import pytest
 from app.config import PROJECT_ROOT
+from app.db import get_head_revision
 from app.moderation.allowlist import load_allowlist_terms
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
 
 OLD = "a7c3e91f0b24"
-NEW = "b8d4f2a05e31"
+# 不在探针里硬编码 head：R-115 之后的每个迁移都会改变 head，硬编码会让
+# `alembic check`（要求"数据库 == 代码 head"）随新迁移必然失败。这里改为
+# 从迁移脚本目录读取当前 head，保持探针意图（升级到最新并校验一致性）不变。
+NEW = get_head_revision()
 COLUMNS = "id,term,normalized,enabled,created_by,created_at,updated_at"
 
 

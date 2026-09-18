@@ -1,19 +1,29 @@
-"""校园墙图后广告文字豁免（负责人 2026-09-14 口径；2026-09-17 放宽为口径 C）。
+"""图后窗口豁免（负责人 2026-09-14 口径 → 2026-09-17 口径 C → 2026-09-18 晚扩展）。
 
-场景：成员先发一张带校园墙特征的图片（视觉确认放行），随后（2 分钟内）发送
-广告文字——负责人 2026-09-17 决定（口径 C）：**不再要求文字与图内文案相似**
-（也不再要求「紧邻」与「一图一条」），图后 2 分钟内该成员的任意广告文字都
-不自动撤回。
+场景：成员先发一张**视觉确认放行**的图，随后（2 分钟内）发送的内容——负责人
+2026-09-17 决定（口径 C）**不再要求文字与图内文案相似**（也不再要求「紧邻」与
+「一图一条」）；**2026-09-18 晚再扩展：窗口内该成员的「文字与图片」都不撤回**，
+不豁免的只有**色情 / 暴力违禁品**（`porn`/`violence`）与**刷屏**（`flood`，属行为
+规则，豁免它等于关掉刷屏防护；如需一并豁免须负责人明确）。诈骗（`fraud`）按负责人
+两次口径（"严重类别改为色情暴力"）不再列入不豁免集合——**仍只降为记录/转人工，不是
+静默放行**；若不希望窗口内豁免诈骗，改 `PAIR_BLOCKED_CATEGORIES` 一处即可。
+结构性规则不受影响：合并转发（`R_FORWARD_RECORD`）与群名片（`R_GROUP_CARD`）不在
+`PAIR_EXEMPT_KINDS` 内，仍"一律撤回"。
 
-规则参数（口径 C）：
-- 窗口：图与文字的**消息发送时间**差 <= 120 秒，且图先发（R06：按 sent_at
+规则参数（口径 C + 2026-09-18 晚扩展）：
+- 窗口：来源图与当前消息的**消息发送时间**差 <= 120 秒，且图先发（R06：按 sent_at
   而非落库时间——并发 worker 下处理完成时间会颠倒真实顺序；同秒无法定序，
   **已完成**图不授予豁免；**未完成**图仍按"审核中"保护，见下）；
-- 来源：同 provider/群/成员的**视觉确认**校园墙图（R09 结构化校验保留：
+- 来源：同 provider/群/成员的**视觉确认放行图**（R09 结构化校验保留：
   全部 vision 结果 category 为空、未降级、不需人工、evidence 以「校园墙白名单」
-  开头且含非空图内文案；带 processing/evidence_vetoes 的行不作来源）；
+  或「小程序码通过」开头且含非空图内文案；带 processing/evidence_vetoes 的行不作来源）。
+  **2026-09-18（D-039）起「小程序码通过」的图同样是有效来源**：D-039 规定带微信
+  小程序码的图"一律通过"，其视觉证据以「小程序码通过」开头——若只认「校园墙白名单」
+  前缀，同一成员先发带码图、再发文案时文案仍会被撤回（实测 2026-09-18 16:55–16:58
+  有 3 条因此被撤）。两种前缀都必须是**开头**（R09 前缀语义不变）；
 - 来源图的判定必须为 allow/record_only；
-- 范围：仅 ad（广告/引流）类 violation_high 触发；fraud/porn 等不豁免；
+- 范围（2026-09-18 晚）：**文字与图片**两类 violation_high 触发；不豁免
+  `porn`/`violence`（色情/暴力违禁品）与 `flood`（刷屏）；
 - 豁免语义：不撤回、不立案——verdict 降为 record_only 并清空动作建议；
 - 无状态：不写绑定、不消耗来源图、窗口内多条文字可共享同一张图；同事件重试
   自然幂等（重新计算得到同一豁免）；
@@ -42,18 +52,56 @@ from app.runtime.models import ShadowDecision
 WALL_PAIR_WINDOW_SECONDS = 120
 WALL_MARK = "校园墙白名单"
 WALL_TEXT_MARK = "文案:"
+# D-039（负责人 2026-09-18）：带微信小程序码的图"一律通过"，其视觉证据以
+# 「小程序码通过」开头；这种图在业务上同样是"已放行的图"，必须与校园墙图一样
+# 构成"图后文字豁免"（口径 C）的来源。两个前缀都要求出现在**开头**（R09 语义）。
+MINIPROGRAM_MARK = "小程序码通过"
+SOURCE_MARKS = (WALL_MARK, MINIPROGRAM_MARK)
+
+# 窗口豁免的适用范围（负责人 2026-09-18 晚："2 分钟内发的文字和图片都不撤回，
+# 色情/暴力的文字不豁免"）：
+# - 可豁免的消息类型：文字与图片。合并转发/群名片等**结构性规则**刻意不在此列，
+#   它们仍"一律撤回"（2026-09-18 D-038 口径），窗口豁免不得覆盖；
+# - 不豁免的类别：色情（porn）/ 暴力违禁品（violence）/ 刷屏（flood）。刷屏是行为
+#   规则，豁免它等于关掉刷屏防护；若要一并豁免须负责人明确（改这一处即可）；
+#   诈骗（fraud）按负责人两次口径（"严重类别改为色情暴力"）不再列入。
+PAIR_EXEMPT_KINDS = frozenset({"text", "image"})
+PAIR_BLOCKED_CATEGORIES = frozenset({"porn", "violence", "flood"})
+
+
+def is_pairing_candidate(msg: Any, decision: ModerationDecision) -> bool:
+    """当前消息是否值得去查"前图豁免来源"（前置过滤，避免为不可能豁免的消息查库）。
+
+    与 `maybe_wall_text_pairing` 的判定条件保持**同一处定义**，避免 pipeline 的前置
+    过滤与豁免函数漂移（历史上两者分别写在两处）。
+    """
+    if decision.verdict != "violation_high":
+        return False
+    if not decision.category or decision.category in PAIR_BLOCKED_CATEGORIES:
+        return False
+    if msg.kind not in PAIR_EXEMPT_KINDS:
+        return False
+    # 图片消息的 text 常为空（只有 [图片] 占位或无文字），不得据此排除
+    if msg.kind == "text":
+        return bool(msg.text.strip())
+    return True
 
 
 def extract_wall_text(evidence: str) -> str | None:
-    """R09: 仅接受以「校园墙白名单」**开头**的 evidence；返回文案（空串=图无文案）。
+    """R09 + D-039: 仅接受以「校园墙白名单」或「小程序码通过」**开头**的 evidence。
 
+    返回图内文案（空串=图无文案；空串不构成豁免来源，见调用方 `if wall_text:`）。
     否定表述（如「不符合校园墙白名单|文案:…」）与其它位置出现的子串均不构成许可。
     """
     evidence = evidence.strip()
-    if evidence != WALL_MARK and not evidence.startswith(WALL_MARK + "|"):
+    mark = next((m for m in SOURCE_MARKS if evidence == m or evidence.startswith(m + "|")), None)
+    if mark is None:
         return None
     if WALL_TEXT_MARK in evidence:
         return evidence.split(WALL_TEXT_MARK, 1)[1].strip()
+    if mark == MINIPROGRAM_MARK:
+        # D-039 未强制「文案:」标记：取首个分隔符之后的整段作为图内文案
+        return evidence.split("|", 1)[1].strip() if "|" in evidence else ""
     return ""
 
 
@@ -128,14 +176,12 @@ async def maybe_wall_text_pairing(
     pending_messages: tuple[StandardMessage, ...] = (),
     event_key: str | None = None,
 ) -> ModerationDecision:
-    """图后 2 分钟广告文字豁免（口径 C，见模块 docstring）。
+    """图后 2 分钟窗口豁免（口径 C；2026-09-18 晚扩展为文字与图片，见模块 docstring）。
 
     必须在 orchestrate_actions 之前调用；命中时返回 record_only 版本。
     无状态重算：不写绑定、不消耗来源图，重试幂等。
     """
-    if decision.verdict != "violation_high" or decision.category != "ad":
-        return decision
-    if msg.kind != "text" or not msg.text.strip():
+    if not is_pairing_candidate(msg, decision):
         return decision
 
     scope = [
