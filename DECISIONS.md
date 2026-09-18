@@ -904,4 +904,7 @@ ACTION_MODE 切换为 OFFICIAL、ONEBOT_ACTIONS_ENABLED=true、ONEBOT_ACTION_STA
 - **补丁（2026-09-18，主审 f08157d 复验 P1）**：同秒 + 前图未完成时"审核中不处罚"保护
   未覆盖——未完成图片的保护窗口改为 `0 <= delta <= 120`（含同秒；只转人工、清空处罚
   建议）；豁免判定仍要求图严格先发（已完成图同秒不豁免）。主审 4 项探针入库
-  （`tests/test_pairing_inflight.py`）并补同秒数据库 processing 覆盖。
+  （`tests/test_pairing_inflight.py`）并补同秒数据库 processing 覆盖。主审复验确认
+  （2026-09-18，main@fb7817d）：原始探针 4 passed、相关 6 文件 66/66、折叠相关 46 passed、
+  同 SHA CI 三 job 通过；边界正确（未完成图片含同秒转人工无处罚建议、已完成图片同秒
+  不豁免）、未扩大口径 C。部署（09-18 12:01 提权重启）后生效。**P1 关闭。**
