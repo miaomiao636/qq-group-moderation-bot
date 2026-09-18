@@ -463,8 +463,14 @@ async def dashboard(
         "<p class=muted>已关闭案件满 15 天自动归档；归档满 90 天且关联安全时清除非必要内容，"
         "保留编号、最小违规记录与处理审计。未关闭案件不归档；原文仍单独按 15 天上限清理。</p>"
     )
+    # 负责人 2026-09-18：待人工清单默认折叠（条目多时页面过长；证据与操作在下方案件列表/详情页）。
+    pending_block = (
+        '<details><summary style="cursor:pointer"><h2 style="display:inline">'
+        f"待人工处理（{len(pending)}）</h2> <span class=muted>（点击展开清单）</span></summary>"
+        f"<ul>{pending_rows}</ul></details>"
+    )
     body = (
-        f"{notice_html}<h2>待人工处理（{len(pending)}）</h2><ul>{pending_rows}</ul>"
+        f"{notice_html}{pending_block}"
         f"<h2>{'已归档案件' if show_archived else '案件'}</h2>{archive_note}{archive_toggle}"
         f"{filter_form}{batch_form}{pager}"
     )
