@@ -116,7 +116,9 @@ def test_backup_export_writes_reimportable_file(tmp_path: Path) -> None:
     assert backup.is_file() and backup.stat().st_size > 0
     assert export_path.is_file() and export_path.stat().st_size > 0
     # 导出的文件必须**能再导入**，且只含启用成员（与库内一致）
-    parsed = preflight.parse_member_list(export_path.read_text(encoding="utf-8"))
+    from app.moderation.allowlist_members_io import parse_member_list
+
+    parsed = parse_member_list(export_path.read_text(encoding="utf-8"))
     assert {member.user_id for member in parsed.valid} == {"920000001", "920000002"}
     assert not parsed.invalid
 
@@ -239,10 +241,70 @@ def test_rollback_script_order_prevents_reaching_downgrade_on_failure() -> None:
         "$py backup-export",
         "uv run alembic downgrade",
         "$py check-version",
-        "sc.exe start QQBotWeb",
+        "sc.exe start $name",
+        "ROLLBACK_DONE",
     ]
     positions = [text.index(item) for item in order]
     assert positions == sorted(positions), (
-        "步骤顺序必须：停服确认 → 备份/导出 → 降级 → 版本核对 → 启动"
+        "步骤顺序必须：停服确认 → 备份/导出 → 降级 → 版本核对 → 启动 → 完成"
     )
     assert "exit 1" in text and "ROLLBACK_ABORT" in text, "失败必须以非 0 退出码中止脚本"
+
+
+def test_rollback_script_checks_each_service_start_individually() -> None:
+    """主审 F06-C：每个服务的启动都要单独查退出码，且 DONE 必须晚于"实际 Running"判定。"""
+    lines = _ps1_lines()
+    index = next(i for i, line in enumerate(lines) if "sc.exe start $name" in line)
+    assert "Assert-ExitCode" in "\n".join(lines[index : index + 3]), "启动后必须单独检查退出码"
+    text = "\n".join(lines)
+    assert text.index("-ne 'Running'") < text.index("ROLLBACK_DONE"), (
+        "未确认 Running 前不得报告完成"
+    )
+
+
+def test_rollback_script_uses_out_of_repo_checker_copy() -> None:
+    """主审 F06-B：检查程序必须复制到仓库外，否则 `git switch` 之后就不存在了。"""
+    text = PS1_PATH.read_text(encoding="utf-8")
+    assert "$env:TEMP" in text and "Copy-Item" in text
+    assert text.index("Copy-Item") < text.index("git switch --detach"), "复制必须发生在切换版本之前"
+    assert "check-version --expected $ExpectedRevision --code-head" in text, (
+        "版本核对要显式传代码 head"
+    )
+
+
+def test_version_checker_runs_outside_the_repository(tmp_path: Path) -> None:
+    """主审 F06-B：把检查程序拷出仓库后 `check-version` 仍可用（只依赖标准库）。"""
+    import shutil
+    import subprocess
+
+    outside = tmp_path / "near-old-tree"
+    outside.mkdir()
+    copied = outside / "rollback_preflight.py"
+    shutil.copy2(SCRIPT_PATH, copied)
+    db = tmp_path / "old.db"
+    connection = sqlite3.connect(db)
+    connection.execute("create table alembic_version (version_num varchar(32) not null)")
+    connection.execute("insert into alembic_version values ('b8d4f2a05e31')")
+    connection.commit()
+    connection.close()
+    base = [
+        sys.executable,
+        str(copied),
+        "check-version",
+        "--expected",
+        "b8d4f2a05e31",
+        "--database-url",
+        f"sqlite+aiosqlite:///{db.as_posix()}",
+    ]
+    ok = subprocess.run([*base, "--code-head", "b8d4f2a05e31"], capture_output=True, text=True)
+    assert ok.returncode == 0, ok.stdout + ok.stderr
+    bad = subprocess.run([*base, "--code-head", "c9a1f4d27e30"], capture_output=True, text=True)
+    assert bad.returncode != 0, "代码 head 与期望不一致时必须非 0"
+
+
+def test_default_entry_uses_the_existing_config_module() -> None:
+    """主审 F06-A：默认入口（不传 --database-url）必须走仓库真实的配置模块。"""
+    assert (ROOT / "app" / "config.py").is_file()
+    assert not (ROOT / "app" / "core" / "config.py").exists()
+    url = preflight._configured_database_url()
+    assert url.startswith("sqlite"), url

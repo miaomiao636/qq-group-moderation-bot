@@ -19,7 +19,13 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
-$py = 'uv run python scripts/rollback_preflight.py'
+
+# 主审 F06-B：把检查程序**复制到仓库外**再用——`git switch` 之后目标工作树里没有
+# scripts/rollback_preflight.py（手册目标 68a94b9 的 tree 里确实没有），直接引用仓库内
+# 路径会在降级/切码之后断掉。复制件只做标准库级检查，不依赖目标树的 app 模块。
+$preflightCopy = Join-Path $env:TEMP 'qqbot-rollback-preflight.py'
+Copy-Item -LiteralPath 'scripts\rollback_preflight.py' -Destination $preflightCopy -Force
+$py = "uv run python `"$preflightCopy`""
 
 function Fail([string]$message) {
     Write-Host "ROLLBACK_ABORT: $message" -ForegroundColor Red
@@ -56,10 +62,34 @@ uv run alembic downgrade $ExpectedRevision
 Assert-ExitCode "降级"
 git switch --detach $TargetSha
 Assert-ExitCode "切换代码版本"
-Invoke-Expression "$py check-version --expected $ExpectedRevision"
+# 版本核对不依赖目标树里的脚本：先在**切换后的工作树**里取代码 head，再用仓库外的复制件
+# 比对"数据库 revision + 代码 head"是否都等于目标 revision（主审 F06-B）。
+$codeHead = (uv run python -c 'from app.db import get_head_revision; print(get_head_revision())').Trim()
+Assert-ExitCode "读取切换后工作树的代码 head"
+Invoke-Expression "$py check-version --expected $ExpectedRevision --code-head $codeHead"
 Assert-ExitCode "版本一致性核对（数据库 revision 与代码 head 必须都等于 $ExpectedRevision）"
 
-Write-Host "== 第 5 步：启动两个服务 =="
-sc.exe start QQBotWeb | Out-Null
-sc.exe start QQBotRuntime | Out-Null
-Write-Host "ROLLBACK_DONE：降级到 $ExpectedRevision / $TargetSha，名单文件在 $OutDir（降级后需按需重新导入）"
+Write-Host "== 第 5 步：逐个启动服务并分别检查退出码，以实际状态判定完成（主审 F06-C）=="
+foreach ($name in @('QQBotWeb', 'QQBotRuntime')) {
+    sc.exe start $name | Out-Null
+    Assert-ExitCode "启动服务 $name"
+}
+$startDeadline = (Get-Date).AddSeconds(60)
+do {
+    Start-Sleep -Seconds 2
+    $states = @{}
+    foreach ($name in @('QQBotWeb', 'QQBotRuntime')) {
+        $svc = Get-Service -Name $name -ErrorAction SilentlyContinue
+        if ($null -eq $svc) { Fail "服务 $name 启动后不可查询，不报告完成" }
+        $states[$name] = $svc.Status
+    }
+} while (
+    (($states.Values -contains 'Stopped') -or ($states.Values -contains 'StartPending')) -and
+    ((Get-Date) -lt $startDeadline)
+)
+foreach ($name in @('QQBotWeb', 'QQBotRuntime')) {
+    if ($states[$name] -ne 'Running') {
+        Fail "服务 $name 未在 60 秒内进入 Running（当前 $($states[$name])），不报告完成"
+    }
+}
+Write-Host "ROLLBACK_DONE：降级到 $ExpectedRevision / $TargetSha，两服务 Running；名单文件在 $OutDir（降级后需按需重新导入）"

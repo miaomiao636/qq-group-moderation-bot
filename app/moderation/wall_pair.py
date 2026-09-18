@@ -166,21 +166,27 @@ def _confirmed_sources(detail: dict[str, Any]) -> list[tuple[str, str, bool]]:
     results = detail.get("ai_results")
     if not isinstance(results, list) or any(not isinstance(r, dict) for r in results):
         return []
-    visions = [r for r in results if r.get("source") == "vision"]
-    if not visions:
+    # 主审 R09-D：来源资格必须基于**完整附件证据**。降级的附件（模型超时/限流/媒体
+    # 读取失败 → `source="degraded"`）同样是"尚未定论的复核"，此前先按 `vision` 过滤
+    # 会把它整个丢掉，于是"一张未决附件 + 一张带码图"的消息被当成**已确认来源**，
+    # 进而在窗口内豁免后续诈骗文字——与"未决附件不处罚也不豁免"的既有边界相反。
+    attachments = [r for r in results if r.get("source") in ("vision", "degraded")]
+    if not attachments:
         return []
     # 使用 pipeline 的 AIModerationResult.model_dump 契约。缺字段不是确认正常，
-    # 任一视觉结果仍有疑问时，不能挑出另一条白名单证据消掉尚未解决的矛盾。
+    # 任一附件仍有疑问（降级通道 / 需人工 / 类别非空 / 降级原因非空）时，
+    # 不能挑出另一条白名单证据消掉尚未解决的矛盾。
     if any(
         "category" not in r
         or r["category"] is not None
+        or r.get("source") == "degraded"
         or r.get("needs_review") is not False
         or r.get("degraded_reason") != ""
-        for r in visions
+        for r in attachments
     ):
         return []
     sources: list[tuple[str, str, bool]] = []
-    for result in visions:
+    for result in attachments:
         evidence = result.get("evidence")
         if not isinstance(evidence, str):
             continue

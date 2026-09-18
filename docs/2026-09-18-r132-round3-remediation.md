@@ -14,6 +14,9 @@
   [.../job/105593676906](https://github.com/miaomiao636/qq-group-moderation-bot/actions/runs/35343211214/job/105593676906)、
   [.../job/105593677070](https://github.com/miaomiao636/qq-group-moderation-bot/actions/runs/35343211214/job/105593677070)、
   [.../job/105593676741](https://github.com/miaomiao636/qq-group-moderation-bot/actions/runs/35343211214/job/105593676741)。
+  ⚠️ **引用更正（主审 r132 指出）**：`35343211214` 的 head 是 `70c4422`，**不是** `97d68d1`；
+  与 `97d68d1` 精确一致的是 [run 35344025260](https://github.com/miaomiao636/qq-group-moderation-bot/actions/runs/35344025260)
+  （Ubuntu / Windows / clean runtime-deps 三 job 同样 success，两平台日志各 1521 passed / 3 skipped）。
 - **未部署**：生产仍是 2026-09-18 17:18 加载的版本（`t204-v15` 提示词 + 当时的 `wall_pair`），
   本次整改**未重启、未加载**；是否部署由负责人决定。
 

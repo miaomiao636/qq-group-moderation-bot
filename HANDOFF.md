@@ -20,13 +20,13 @@
 **验证（本机，未部署）**：`uv run pytest` → **1350 passed / 15 skipped / 0 failed**（新增 `tests/test_r116_member_allowlist.py` 30 项）；`uv run ruff check app tests alembic`、`uv run ruff format --check app tests alembic`（231 文件）、`uv run mypy app`（88 源文件）全部通过。为对齐负责人口径，同步更新 `tests/test_moderation_rules.py`（合并转发由"不误判"改为"一律撤回"）与 `tests/test_onebot_ws.py`（合并转发由"降级人工"改为"一律撤回"），并把 `tests/test_r115_admin_migration.py` 的 `NEW` 由硬编码改为 `get_head_revision()`（否则新增迁移必然让 `alembic check` 失败）。
 
 **未验证 / 遗留（不得宣称已通过）**：
-1. **已部署并取生效证据（2026-09-18 14:36）**，但本决策**不构成实机验收**：W2/W3/W4/W5 与 24×7 整机验收仍按 `docs/windows-delivery-checklist.md`；急停仍开启，真实动作处于暂停状态（待负责人解除）。
+1. **已部署并取生效证据（2026-09-18 14:36）**，但本决策**不构成实机验收**：W2/W3/W4/W5 与 24×7 整机验收仍按 `docs/windows-delivery-checklist.md`；**急停状态（本句为当时记录，已被后续事实覆盖）**：14:34 开启 → **2026-09-18 14:49 已由负责人解除**（见下方"负责人解除急停与真实动作复核"），当前真实动作（撤回）按原配置生效。
 2. **群名片识别未用真实样本验证**：当前判定基于工程推断的 `com.tencent.qun.share` / `meta.group` 等信号；需抓一条真实群名片（脱敏）确认字段，必要时收窄，并确认是否要覆盖"万能校园墙"等允许来源。
 3. **合并转发/群名片的处罚档次**：走标准高置信阶梯（`record_violation` 规划 recall+mute+warn，当前 `recall_only` 阶段线上只撤回）；负责人只要求"撤回"，若要永久"只撤回不入违规阶梯"，需另立政策改处罚阶梯。
 4. **初始名单已导入（5 条）**：由负责人 Desktop 的 `白名单.txt` 经"与后台导入同一代码路径"写入并留审计；真实 QQ 号只落在数据库，**未写入仓库任何文件**。后续加减人员仍在同一个文件里改，再由后台「白名单」页上传（预览→确认）。
 5. **主审复验未做**：D-037 的"不守 B-2 底线"是高风险政策，建议送主审复验全链路不可升级与审计/回滚边界。
 
-**下一步建议**：①观察影子判定后按需**解除急停**（见上，唯一遗留动作）；②抓真实样本（群名片/合并转发/撤回通知各一条，脱敏）→ 收窄群名片识别；③送主审复验 D-037/D-038；④后续加减白名单人员继续用同一份文本文件、经后台「白名单」页上传核对。
+**下一步建议**：①~~观察影子判定后按需解除急停~~（**已于 2026-09-18 14:49 完成**，本条为历史记录，不再是遗留动作）；②抓真实样本（群名片/合并转发/撤回通知各一条，脱敏）→ 收窄群名片识别；③送主审复验 D-037/D-038；④后续加减白名单人员继续用同一份文本文件、经后台「白名单」页上传核对。
 
 **✅ 已于 2026-09-18 14:36 部署生效（负责人授权"直接执行"）**：按 `docs/deploy-runbook-d037-d038.md` 执行——急停开启（审计 `emergency_stop`，UTC 06:34:05）→ 在线备份 `data/backups/moderation-20260918T063411Z-sb9t2a82.db`（50,860,032 字节，`quick_check=ok`，异地副本 `E:\qqbot-backups\`）→ 提权停服 → `alembic upgrade head`（`b8d4f2a05e31 → c9a1f4d27e30`，`alembic check` 零漂移）→ 新表校验（AUTOINCREMENT + 唯一约束）→ 提权启服（两服务 Running）→ healthz `status=ok / onebot=ready / connected=true / queue_backlog=0`、`processed_total=1`（新代码已处理真实消息）→ 导入成员白名单 5 条（`provider=onebot`，审计 `allowlist_members_import`，UTC 06:37:02）→ 引擎级功能校验（白名单成员诈骗文本 `allow`+政策标记、白名单成员合并不撤回、非白名单合并转发 `violation_high + ['recall','mute','warn']`）。完整原始输出见 `docs/evidence/2026-09-18-deploy-d037-d038.md`。
 

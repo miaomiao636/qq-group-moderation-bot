@@ -26,13 +26,13 @@ from contextlib import closing
 from datetime import UTC, datetime
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+# 让"仓库内直接运行"和"拷到仓库外运行"（PS1 为跨 `git switch` 而复制到 TEMP）都能找到 app 包。
+for _candidate in (Path(__file__).resolve().parents[1], Path.cwd()):
+    if (_candidate / "app").is_dir() and str(_candidate) not in sys.path:
+        sys.path.insert(0, str(_candidate))
 
-from app.moderation.allowlist_members_io import (  # noqa: E402
-    format_member_list,
-    parse_member_list,
-)
-from app.reports.backup import backup_sqlite  # noqa: E402
+# 应用侧依赖一律**延迟导入**（主审 F06-B）：`check-version` 必须能在"目标工作树不含本脚本、
+# 也不含 app.moderation.allowlist_members_io / app.reports.backup"的旧版本里照跑。
 
 # sc.exe query 的 STATE 数值 → 可读状态（1 STOPPED / 2 START_PENDING / 3 STOP_PENDING / 4 RUNNING）
 _SC_STATE_NAMES = {
@@ -137,6 +137,9 @@ def _backup_database_rows(backup: Path) -> list[tuple[str, str]]:
 
 def backup_and_export(*, database_url: str, out_dir: Path) -> tuple[Path, Path, int]:
     """一致性备份 → 从备份导出可再导入名单 → 回读校验；返回（备份, 导出文件, 条数）。"""
+    from app.moderation.allowlist_members_io import format_member_list, parse_member_list
+    from app.reports.backup import backup_sqlite
+
     backup = backup_sqlite(database_url)
     if not backup.is_file() or backup.stat().st_size == 0:
         raise PreflightError(f"备份文件缺失或为空：{backup}")
@@ -165,20 +168,33 @@ def check_version(*, expected: str, db_revision: str | None, code_head: str) -> 
         raise PreflightError(f"代码 head={code_head!r}，期望 {expected!r}")
 
 
-def read_db_revision(database_url: str) -> str | None:
-    """读 ``alembic_version.version_num``（表不存在时返回 ``None``）。"""
-    from sqlalchemy.engine import make_url
+def _sqlite_file_path(database_url: str) -> Path:
+    """从 SQLite URL 取文件路径——**只用标准库**（不放 SQLAlchemy，旧目标树里也能跑）。"""
+    _, separator, tail = database_url.partition(":///")
+    if not separator or not tail:
+        raise PreflightError(f"无法从 DATABASE_URL 解析 SQLite 文件路径：{database_url!r}")
+    return Path(tail).resolve()
 
-    path = Path(make_url(database_url).database or "").resolve()
+
+def read_db_revision(database_url: str) -> str | None:
+    """读 ``alembic_version.version_num``（表不存在时返回 ``None``）；只依赖标准库。"""
+    path = _sqlite_file_path(database_url)
     with closing(sqlite3.connect(path.as_uri() + "?mode=ro", uri=True, timeout=5)) as connection:
         row = connection.execute("select version_num from alembic_version").fetchone()
     return None if row is None else str(row[0])
 
 
 def _code_head_revision() -> str:
-    from app.db import get_head_revision
+    """当前工作树声明的 head（延迟导入）。旧目标树里 app.db 仍应有此函数；失败要显式报错。"""
+    try:
+        from app.db import get_head_revision
 
-    return str(get_head_revision())
+        return str(get_head_revision())
+    except Exception as exc:  # noqa: BLE001
+        raise PreflightError(
+            f"无法从当前工作树读取代码 head（{type(exc).__name__}: {exc}）——"
+            "请显式传 --code-head（切换版本后建议由调用方内联 python 取值）"
+        ) from exc
 
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -228,7 +244,7 @@ def main(argv: Sequence[str] | None = None) -> int:
 
 
 def _configured_database_url() -> str:
-    from app.core.config import get_settings
+    from app.config import get_settings
 
     return str(get_settings().database_url)
 

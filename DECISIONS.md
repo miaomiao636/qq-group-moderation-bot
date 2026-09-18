@@ -1170,3 +1170,35 @@ ACTION_MODE 切换为 OFFICIAL、ONEBOT_ACTIONS_ENABLED=true、ONEBOT_ACTION_STA
     已在 `docs/2026-09-18-r132-round2-remediation.md` 更正。
   - **部署状态**：**未部署**——生产仍是 2026-09-18 17:18 加载的版本（`t204-v15` + 当时的 `wall_pair`），
     本次三轮整改**未重启、未加载**；是否部署待负责人授权。
+- **四轮整改（2026-09-19 凌晨，主审 r132 复验 `97d68d1`）**：上轮 4 项失败**全部通过**（阈值透传、
+  来源顺序、组合字段、原 F05 撤权/ABA 均可关闭），主审新提 3 项（其中 1 项为**既有漏洞**）——
+  全部修复、并**新增 3 个探针文件原样入库**，整改后其 61 项应用探针**全过**（整改前 4 failed / 57 passed）：
+  - **R09-D（P1，既有漏洞，非本轮回归）**：`_confirmed_sources` 先按 `source == "vision"` 过滤，
+    而真实 `AIReviewService` 在图片超时/限流时写入 `source="degraded"`——未定论附件被整个丢掉，
+    于是"**一张超时附件 + 一张带码图**"的消息被当作**已确认来源**，进而在 2 分钟窗口内把该成员的
+    诈骗文字降为 `record_only`（不撤回），与"未决附件不处罚也不豁免"的既有边界相反。
+    **修复**：来源资格改为基于**完整附件证据**——`attachments = vision ∪ degraded`，其中任一
+    degraded / 需人工 / 类别非空 / 降级原因非空，则整条消息**不作来源**；正常 QR、前缀与布尔同源、
+    在途保护边界不变。
+  - **N-F05-2-R（P2）**：上轮的集合核对只找"文件外多出来的启用成员"，而 `row_versions` 仍只含
+    touched 行——**文件内预览时 unchanged 的成员**被删除/停用/改备注后，计划照旧执行并报 APPLIED。
+    **修复**：`plan_member_import` 的 `row_versions` 扩展到**文件内全部成员**（并入预览指纹），
+    `apply_member_import` 在写锁内**逐行复核批准时的行版本**（SQL 条件比对），任一漂移即
+    `ConcurrentMemberChangeError` 整体回滚、要求重新预览；不用"重新启用"去凑齐，也不停用文件外成员。
+  - **F06-R 三处执行断点**：①默认入口写成 `app.core.config`，而仓库实际是 **`app.config`**
+    （`backup-export` 不传 `--database-url` 时必经此路 → `ModuleNotFoundError`，此时服务已停）；
+    ②`git switch` 之后仍调用**仓库内**的检查程序，而目标树 `68a94b9` 里既没有该脚本也没有
+    `app/moderation/allowlist_members_io.py` → 降库/切码后必然中止；③两次 `sc.exe start` 都不查
+    退出码就打印 `ROLLBACK_DONE`。**修复**：①修正模块名；②检查程序**复制到仓库外**（`$env:TEMP`）
+    再用，且 `check-version` 改为**只依赖标准库**（不用 SQLAlchemy、延迟导入一切应用模块）、
+    由调用方在切换后的工作树内联取代码 head 显式传入；③每个服务启动单独查退出码，并以
+    `Get-Service … .Status` 实际进入 `Running` 才报告完成。
+  - **回归**：主审四轮 3 个探针文件**原样入库**（`tests/test_r132_threshold_matrix.py`、
+    `test_r132_source_collection_contract.py`、`test_r132_f05_round3_state_drift.py`；仅加文件级
+    lint 豁免头，未改断言）+ `tests/test_r132_rollback_preflight.py` 扩充 4 项（默认入口走
+    `app.config`、拷贝到仓库外仍可执行、复制先于切码、每个服务启动单独查退出码且 DONE 晚于
+    Running 判定）。本机全量 **1574 passed / 15 skipped / 0 failed**（收集 1589）；ruff/mypy 通过。
+  - **文档**：HANDOFF `:23`/`:29` 两处过期的"急停仍开启/待解除"改为带截至时间的**历史记录**；
+    更正 CI 引用（`97d68d1` 对应 run `35344025260`，`35343211214` 的 head 是 `70c4422`）。
+  - **仍未具备（不得以测试替代）**：Windows 实机全链回滚演练（未停生产服务、未在生产库演练）、
+    固定 UTC 半开窗口的动作统计原件。**部署**：仍未部署。

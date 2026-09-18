@@ -1,0 +1,18 @@
+r132 四轮整改：R09 全附件来源资格、文件内成员漂移、回滚链三断点
+
+主审四轮（97d68d1）：上轮 4 项可关闭；新提 3 项 + 61 项应用探针 4 failed / 57 passed。
+本提交修完全部三项，整改后主审探针 61/61 通过（本机复现同前同后）。
+
+- R09-D（既有漏洞）：_confirmed_sources 改为基于完整附件证据（vision ∪ degraded），
+  模型超时/限流/媒体读取失败的附件一律使整条消息失去窗口来源资格（此前被 vision 过滤丢掉）。
+- N-F05-2-R：row_versions 扩展到文件内全部成员（并入预览指纹），apply_member_import 在写锁内
+  逐行复核批准时的行版本；文件内 unchanged 成员被删除/停用/改备注即整体回滚并重新预览。
+- F06-A：默认入口 app.core.config -> app.config。
+- F06-B：检查程序复制到仓库外再用；check-version 只依赖标准库、app.* 延迟导入；
+  版本核对的代码 head 由调用方在切换后的工作树内联取值显式传入。
+- F06-C：每个 sc.exe start 单独查退出码，并以 Get-Service .Status 判定 Running 后才报完成。
+- 回归：主审四轮 3 个探针文件原样入库（未改断言）+ 回滚检查测试扩充 4 项。
+- 文档：HANDOFF 两处过期急停改为历史记录；更正 CI 引用（97d68d1 -> run 35344025260）。
+
+全量 1574 passed / 15 skipped / 0 failed（收集 1589）；ruff check+format、mypy 通过。
+未部署；Windows 实机回滚全链演练与固定 UTC 窗口统计仍待补。

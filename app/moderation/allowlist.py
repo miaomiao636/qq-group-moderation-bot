@@ -417,10 +417,13 @@ async def plan_member_import(
         | {member_id for member_id, _user_id in to_disable}
         | {member_id for member_id, _user_id, _note in to_update_note}
     )
+    # 主审 N-F05-2-R：版本集合必须覆盖**文件内全部成员**（含预览时 unchanged 的成员），
+    # 不能只记录"被改动行"——否则"文件内的 A 在确认后被删除/停用/改备注"这种漂移
+    # 不可见，计划会带着旧差异继续执行并报 APPLIED。
     row_versions = tuple(
         (row.id, row.external_user_id, row.updated_at)
         for row in rows
-        if row.id in touched and row.updated_at is not None
+        if (row.external_user_id in file_ids or row.id in touched) and row.updated_at is not None
     )
     return MemberSyncPlan(
         provider=provider,
@@ -492,6 +495,18 @@ async def apply_member_import(
         )
         if drifted:
             raise ConcurrentMemberSetChangeError("文件外成员当前为启用状态: " + ",".join(drifted))
+    # 主审 N-F05-2-R：逐行复核**批准时的行版本**（现已覆盖文件内全部成员，含 unchanged）——
+    # 期间被删除 / 停用 / 改备注 / ABA 的行都在这里拦下，绝不带着旧差异继续写入并报 APPLIED。
+    # 用 SQL 条件比对而不是 Python 侧比对象，避免时区/精度差异造成假拒绝。
+    for member_id, user_id, updated in plan.row_versions:
+        still_current = await session.execute(
+            select(AllowlistMember.id).where(
+                AllowlistMember.id == member_id,
+                AllowlistMember.updated_at == updated,
+            )
+        )
+        if still_current.first() is None:
+            raise ConcurrentMemberChangeError(user_id)
     expected = {(member_id, user_id): updated for member_id, user_id, updated in plan.row_versions}
     now = datetime.now(UTC)
 
