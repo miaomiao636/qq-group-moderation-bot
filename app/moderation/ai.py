@@ -45,7 +45,7 @@ AIContentKind = Literal[
 AIResultSource = Literal["text", "vision", "degraded", "cache"]
 AIReviewRole = Literal["auxiliary", "primary", "secondary"]
 
-PROMPT_VERSION = "t204-v15"
+PROMPT_VERSION = "t204-v16"
 AI_POLICY_VERSION = "conditional-review-v1"
 MAX_AI_TEXT_CHARS = 4_000
 MAX_AI_MEDIA_BYTES = 5 * 1024 * 1024
@@ -871,6 +871,16 @@ def _miniprogram_qr_allow(
        规则时不放行。
     """
     if not any(result.source == "vision" and result.has_miniprogram_code for result in ai_results):
+        return None
+    # 主审 F02（R-108）：**任一附件尚未定论**（需人工 / 降级超时 / 结论缺失）时，
+    # 不得用"另一张图上的码"替它完成审核——落回既有 record_only 转人工路径。
+    # 只约束附件通道（vision/degraded），不牵连文字通道：否则"图带码 + 有文字"
+    # 的普通消息会被无谓拦下。
+    if any(
+        result.degraded_reason or result.needs_review
+        for result in ai_results
+        if result.source in ("vision", "degraded")
+    ):
         return None
     if local.category in _MINIPROGRAM_QR_BLOCKED_CATEGORIES:
         return None

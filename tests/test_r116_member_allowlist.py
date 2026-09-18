@@ -13,6 +13,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import re
 import uuid
@@ -474,10 +475,25 @@ def test_admin_member_import_preview_then_confirm_and_export() -> None:
         assert preview.status_code == 200
         assert "导入预览" in preview.text
         assert qq_a in preview.text or qq_b in preview.text
+        # 主审 F05：预览必须携带服务端计划 ID，确认时必须回传（否则拒绝执行）
+        plan_match = re.search(r'name=["\']?plan_id["\']? value="([^"]+)"', preview.text)
+        assert plan_match, "预览页必须包含服务端计划 ID"
+        plan_id = plan_match.group(1)
+
+        # 未携带计划 ID（未预览/页面过期）一律拒绝：不得凭 confirmed=1 直接写库
+        unpreviewed = client.post(
+            "/admin/allowlist/members/import",
+            data={"csrf": csrf, "confirmed": "1", "ack": "1"},
+            files={"file": ("白名单.txt", content.encode("utf-8"), "text/plain")},
+            follow_redirects=False,
+        )
+        assert unpreviewed.status_code == 303
+        assert "缺少预览计划" in unquote(str(unpreviewed.headers.get("location", "")))
+        assert qq_a not in client.get("/admin/allowlist").text, "未预览不得写入白名单"
 
         confirmed = client.post(
             "/admin/allowlist/members/import",
-            data={"csrf": csrf, "confirmed": "1", "ack": "1"},
+            data={"csrf": csrf, "confirmed": "1", "ack": "1", "plan_id": plan_id},
             files={"file": ("白名单.txt", content.encode("utf-8"), "text/plain")},
             follow_redirects=False,
         )
@@ -492,6 +508,31 @@ def test_admin_member_import_preview_then_confirm_and_export() -> None:
         assert exported.status_code == 200
         assert qq_a in exported.text
         assert "attachment" in exported.headers.get("content-disposition", "")
+
+        # 计划一次性 + 旧预览不复权（主审 F05）：删掉一个成员后，用**同一个旧 plan_id**
+        # 重放旧预览，必须被拒绝；被删除的成员不得被旧预览悄悄恢复。
+
+        async def _member_row_id() -> int:
+            async with SessionLocal() as session:
+                rows = await list_members(session)
+            return next(row.id for row in rows if row.external_user_id == qq_b)
+
+        member_id = asyncio.run(_member_row_id())
+        client.post(
+            f"/admin/allowlist/members/{member_id}/delete",
+            data={"csrf": csrf},
+            follow_redirects=False,
+        )
+        assert qq_b not in client.get("/admin/allowlist").text
+        replay = client.post(
+            "/admin/allowlist/members/import",
+            data={"csrf": csrf, "confirmed": "1", "ack": "1", "plan_id": plan_id},
+            files={"file": ("白名单.txt", content.encode("utf-8"), "text/plain")},
+            follow_redirects=False,
+        )
+        assert replay.status_code == 303
+        assert "预览已过期或已被使用" in unquote(str(replay.headers.get("location", "")))
+        assert qq_b not in client.get("/admin/allowlist").text, "旧预览不得恢复已删除成员"
 
         # 空文件必须被拒绝：不会清空既有白名单
         empty = client.post(

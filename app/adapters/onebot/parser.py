@@ -62,24 +62,22 @@ def _gif_content_type(data: Mapping[str, Any]) -> str:
 
 
 def _is_group_card(card: Mapping[str, Any]) -> bool:
-    """是否 QQ 群名片（分享群卡片）。
+    """是否 QQ 群名片（分享群卡片）——**只认结构化信号**。
 
-    不同 QQ 版本的卡片 JSON 结构不一致，这里采用多信号宽容判定；任一命中即视为
-    群名片。识别不出来时保持 False，落回既有"未知来源卡片"分支——宁可少撤一张
-    群名片，也不把音乐/新闻/小程序卡片误判成群名片。
-    真实样本到位后应收窄为精确字段（见 docs/plan-allowlist-members-and-recall.md）。
+    主审 F03（2026-09-18）：早期实现还用「desc/prompt 里出现"群名片"/"推荐群"」做
+    兜底子串判定，结果普通**新闻卡**（"新版 QQ 群名片设置使用教程"）和**音乐卡**
+    （"推荐群友听一首好歌"）会被判成群名片并触发"一律撤回"（R_GROUP_CARD 是硬证据）。
+    结构化信号不足时**保持 False**（宁少撤一张群名片，也不误撤普通卡片）；
+    真实 NapCat 群名片样本到位后按 schema 收窄/扩充（见 NEXT_TASKS）。
     """
     app = str(card.get("app") or card.get("appName") or "").lower()
     view = str(card.get("view") or "").strip().lower()
-    desc = f"{card.get('desc') or ''}{card.get('prompt') or ''}"
     meta = card.get("meta")
     if isinstance(meta, dict) and isinstance(meta.get("group"), dict):
         return True
     if "group" in app or "qun" in app:
         return True
-    if view == "group":
-        return True
-    return "群名片" in desc or "推荐群" in desc
+    return view == "group"
 
 
 def _group_card_name(card: Mapping[str, Any]) -> str:

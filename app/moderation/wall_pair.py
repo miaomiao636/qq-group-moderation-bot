@@ -69,15 +69,31 @@ PAIR_EXEMPT_KINDS = frozenset({"text", "image"})
 PAIR_BLOCKED_CATEGORIES = frozenset({"porn", "violence", "flood"})
 
 
+def effective_categories(decision: ModerationDecision) -> frozenset[str]:
+    """决策里**仍有效的全部类别证据**（主类别 + 规则命中类别）。
+
+    主审 F01/F08：只读 `decision.category` 会漏判——多图消息的主类别取置信度最高者
+    （`ai.py::merge_ai_evidence` 用 `max(confidence)`），其余命中（例如 porn/violence）
+    只留在 `rule_hits`；刷屏同理（`rules.py` 的 `category = category or "flood"` 会被
+    广告主类别抢先）。因此豁免判据必须看**全部有效证据**，而不是单一主类别。
+    """
+    categories = {decision.category} if decision.category else set()
+    categories.update(hit.category for hit in decision.rule_hits if hit.category)
+    return frozenset(categories)
+
+
 def is_pairing_candidate(msg: Any, decision: ModerationDecision) -> bool:
     """当前消息是否值得去查"前图豁免来源"（前置过滤，避免为不可能豁免的消息查库）。
 
     与 `maybe_wall_text_pairing` 的判定条件保持**同一处定义**，避免 pipeline 的前置
-    过滤与豁免函数漂移（历史上两者分别写在两处）。
+    过滤与豁免函数漂移（历史上两者分别写在两处）。诈骗只有在来源图为小程序码放行图时
+    才豁免，故此处不排除诈骗（由豁免函数按来源标记判定）。
     """
     if decision.verdict != "violation_high":
         return False
-    if not decision.category or decision.category in PAIR_BLOCKED_CATEGORIES:
+    if not decision.category:
+        return False
+    if effective_categories(decision) & PAIR_BLOCKED_CATEGORIES:
         return False
     if msg.kind not in PAIR_EXEMPT_KINDS:
         return False
@@ -113,21 +129,29 @@ def _detail_object(detail_json: str) -> dict[str, Any]:
     return detail if isinstance(detail, dict) else {}
 
 
-def _wall_source_from_detail(detail_json: str) -> tuple[str | None, dict[str, Any]]:
-    """R09: 从影子判定 detail 取（结构化校验后的）图内文案与完整 detail。
+def _source_mark(evidence: str) -> str | None:
+    """证据**开头**的来源标记（校园墙 / 小程序码）；子串出现不算（R09 语义保留）。"""
+    evidence = evidence.strip()
+    for mark in SOURCE_MARKS:
+        if evidence == mark or evidence.startswith(mark + "|"):
+            return mark
+    return None
 
-    返回 (文案或 None, detail)。None=不可作为豁免来源（非放行/无文案/未完成）。
-    口径 C（2026-09-17）起不再有"已消费"概念：历史绑定字段不影响来源复用。
+
+def _confirmed_source(detail: dict[str, Any]) -> tuple[str | None, str | None]:
+    """结构化校验后的（图内文案, 来源标记）；不可作为来源时返回 (None, None)。
+
+    R09 校验：全部 vision 结果 category 为空、未降级、不需人工，且 evidence 以
+    「校园墙白名单」或「小程序码通过」开头并含非空图内文案。
     """
-    detail = _detail_object(detail_json)
     if detail.get("processing") or detail.get("evidence_vetoes"):
-        return None, detail
+        return None, None
     results = detail.get("ai_results")
     if not isinstance(results, list) or any(not isinstance(r, dict) for r in results):
-        return None, detail
+        return None, None
     visions = [r for r in results if r.get("source") == "vision"]
     if not visions:
-        return None, detail
+        return None, None
     # 使用 pipeline 的 AIModerationResult.model_dump 契约。缺字段不是确认正常，
     # 任一视觉结果仍有疑问时，不能挑出另一条白名单证据消掉尚未解决的矛盾。
     if any(
@@ -137,12 +161,23 @@ def _wall_source_from_detail(detail_json: str) -> tuple[str | None, dict[str, An
         or r.get("degraded_reason") != ""
         for r in visions
     ):
-        return None, detail
+        return None, None
     for result in visions:
         evidence = result.get("evidence")
         if isinstance(evidence, str) and (wall_text := extract_wall_text(evidence)):
-            return wall_text, detail
-    return None, detail
+            return wall_text, _source_mark(evidence)
+    return None, None
+
+
+def _wall_source_from_detail(detail_json: str) -> tuple[str | None, dict[str, Any]]:
+    """R09: 从影子判定 detail 取（结构化校验后的）图内文案与完整 detail。
+
+    返回 (文案或 None, detail)。None=不可作为豁免来源（非放行/无文案/未完成）。
+    口径 C（2026-09-17）起不再有"已消费"概念：历史绑定字段不影响来源复用。
+    """
+    detail = _detail_object(detail_json)
+    wall_text, _mark = _confirmed_source(detail)
+    return wall_text, detail
 
 
 def _parse_naive_iso(value: object) -> datetime | None:
@@ -209,6 +244,7 @@ async def maybe_wall_text_pairing(
     rows = (await session.execute(select(ShadowDecision).where(*scope))).scalars().all()
     covered_ids = {row.message_id for row in rows}
     confirmed_wall: str | None = None
+    confirmed_mark: str | None = None
     processing_in_window = False
     for row in rows:
         if row.message_id == msg.message_id or row.external_message_id == msg.external_message_id:
@@ -233,9 +269,10 @@ async def maybe_wall_text_pairing(
             continue  # 已完成图与文字同秒：无法定序，不授予豁免。
         if row.verdict not in ("allow", "record_only"):
             continue
-        wall_text, _ = _wall_source_from_detail(row.detail_json)
+        wall_text, source_mark = _confirmed_source(_detail_object(row.detail_json))
         if wall_text:
             confirmed_wall = wall_text
+            confirmed_mark = source_mark
             break
 
     if confirmed_wall is None:
@@ -257,6 +294,10 @@ async def maybe_wall_text_pairing(
                 processing_in_window = True
 
     if confirmed_wall is not None:
+        # 负责人 2026-09-18（第三条口径）：窗口内**诈骗豁免仅限"带小程序码"的来源图**；
+        # 校园墙来源图之后的诈骗照常处理（保持 violation_high，不降级为记录）。
+        if "fraud" in effective_categories(decision) and confirmed_mark != MINIPROGRAM_MARK:
+            return decision
         return _exempt_decision(decision)
     if processing_in_window:
         return decision.model_copy(

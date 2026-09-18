@@ -1,22 +1,28 @@
 # 部署与回滚手册：D-037 成员白名单 + D-038 合并转发/群名片撤回
 
-日期：2026-09-18
+日期：2026-09-18（**2026-09-18 晚修订：已提交/已部署版本的回滚流程**）
 适用环境：本机 Windows + NSSM 服务方式（`QQBotWeb` / `QQBotRuntime`）
-目标版本：当前工作树（含 `c9a1f4d27e30` 迁移，**尚未提交/尚未部署**）
-状态：**待负责人授权执行**。本手册是操作步骤，不代表已经部署，也不构成任何验收结论。
+目标版本：**`84a8b47`（已提交、已部署）**；数据库迁移 `c9a1f4d27e30`（已应用）
+状态：**已部署**。本手册是操作步骤与回滚细则，不构成任何验收结论。
+
+> **主审 F06 修订说明**：本手册初版写于"改动仍未提交"时，其回滚章节使用的
+> `git stash push -u` / `git checkout -- <paths>` **对已提交内容无效**（stash 不会撤销已提交的
+> 代码，`checkout --` 不带旧 ref 只会恢复当前版本），会留下"代码 head ≠ 数据库版本"。
+> §3 已按**已提交/已部署版本**重写；下文若仍提到"未提交/未跟踪文件"字样，均属**历史记录**，
+> 不再作为操作依据。
 
 ---
 
-## 0. 当前实测基线（2026-09-18 只读核对，非推断）
+## 0. 部署前基线（2026-09-18 只读核对；当前值见括号）
 
 | 项目 | 实测值 | 说明 |
 | --- | --- | --- |
-| 工作树 HEAD | `756e4d2`（2026-09-18） | 另有 **未提交改动** = D-037/D-038 全部实现 |
+| Git 版本 | `84a8b47`（已提交） | 部署前为 `756e4d2` + 未提交改动；现全部入库 |
 | 服务 `QQBotWeb` | `STATE : 4 RUNNING` | NSSM 注册；`python -m app`（后台 + OneBot 反向 WS + 通知） |
 | 服务 `QQBotRuntime` | `STATE : 4 RUNNING` | `python -m app.runtime`（常驻影子 runner） |
-| 服务的 AppDirectory | 本仓库目录 | **服务直接跑在工作树上**，磁盘一改，重启即生效 |
-| 数据库 | `data/moderation.db` | `alembic current` = `b8d4f2a05e31` |
-| 代码迁移 head | `c9a1f4d27e30` | **比数据库新一个版本** |
+| 服务的 AppDirectory | 本仓库目录 | **服务直接跑在工作树上**，切版本/重启即生效 |
+| 数据库 | `data/moderation.db` | 部署前 `alembic current` = `b8d4f2a05e31`；**现为 `c9a1f4d27e30`（已迁移）** |
+| 代码迁移 head | `c9a1f4d27e30` | 部署前比数据库新一个版本；**现两者相等** |
 | `ACTION_MODE` | `OFFICIAL` | 全局真实动作门禁名称（D-022） |
 | `ONEBOT_ACTIONS_ENABLED` | `true` | NapCat 独立开关**已开启** |
 | `EMERGENCY_STOP` | `false` | 环境级急停未开启 |
@@ -149,49 +155,55 @@ Invoke-WebRequest http://127.0.0.1:8001/healthz -UseBasicParsing | Select-Object
 
 ---
 
-## 3. 回滚方案（按情形选择）
+## 3. 回滚方案（按情形选择；**已按"已提交/已部署版本"重写**）
 
-### A. 迁移前中止（最安全，零数据影响）
+**通用铁律**：无论哪种回滚，结束后必须核对
+`alembic current` == `get_head_revision()`（否则 `app/main.py` 启动校验直接失败）。
+切版本一律用 **`git switch --detach <已验收 SHA>`**，不用 `stash` / `checkout --`。
 
-数据库未改动 → 只需把改动移出工作目录，回到 HEAD 状态：
+### A. 数据库未迁移前的中止（零数据影响）
+
+数据库仍是 `b8d4f2a05e31`，只需把**代码**切回上一个已验收版本并重启：
 
 ```powershell
-git stash push -u -m "d037-d038-pending"     # -u 必须带（含未跟踪的新迁移脚本）
+git rev-parse HEAD                                   # 记录当前 SHA，便于再前进
+sc.exe stop QQBotWeb ; sc.exe stop QQBotRuntime
+git switch --detach <上一个已验收 SHA>                 # 例：本轮之前 main 的 68a94b9
 uv run python -c "from app.db import get_head_revision; print(get_head_revision())"   # 期望 b8d4f2a05e31
-sc.exe start QQBotWeb
-sc.exe start QQBotRuntime
+uv run alembic current                                                                 # 必须与之相等
+sc.exe start QQBotWeb ; sc.exe start QQBotRuntime
 ```
 
-（若服务未停，`git stash push -u` 后直接重启一次即可。）部署时用 `git stash pop` 取回改动。
+### B. 迁移成功后的回退（数据库已是 `c9a1f4d27e30`）
 
-### B. 迁移成功后要回退
+**先备份名单**（决定"能否重新导入"，无论走哪个方案都先做）：
 
-**方案 B1（完全回滚，最干净）** —— 代码与数据库一起回到旧版本：
+1. 后台「白名单设置 → 导出当前成员白名单」（`GET /admin/allowlist/members/export`），或
+2. 直接从**升级前的数据库备份**（`data/backups/…`）导出 `allowlist_members` 表内容。
 
 ```powershell
 sc.exe stop QQBotWeb ; sc.exe stop QQBotRuntime
-uv run alembic downgrade b8d4f2a05e31
-uv run alembic current                   # 期望 b8d4f2a05e31
-git stash push -u -m "d037-d038-rollback"
+copy data\moderation.db data\backups\pre-rollback-<时间戳>.db     # 回滚前留证，不覆盖丢弃
+uv run alembic downgrade b8d4f2a05e31        # ⚠ 见下方数据影响
+uv run alembic current                       # 期望 b8d4f2a05e31
+git switch --detach <上一个已验收 SHA>
 uv run python -c "from app.db import get_head_revision; print(get_head_revision())"   # 期望 b8d4f2a05e31
 sc.exe start QQBotWeb ; sc.exe start QQBotRuntime
 ```
 
-> 该方案会 `DROP` 新表 → **已导入的成员白名单全部丢失**，重新部署后必须再次导入。
+> **数据影响（主审 F06 明确要求写清）**：`downgrade` 会 **`DROP` 整张 `allowlist_members` 表**
+> ——这是**可逆 schema，不是无损恢复**：再升级回来是**空表**，必须用第 1 步导出的文件重新导入。
+>
+> **"保留名单"与"回退到旧代码"无法同时满足**：旧代码的启动校验同样要求 head 相等，而 head 相等
+> 就意味着新表已被 DROP。要保留名单只能：① 先导出名单 → ② 按本节回滚 → ③ 重新部署新版 → ④ 重新导入。
+>
+> **只想关闭个别行为**（例如群名片撤回、成员白名单放行）时，**不要回滚版本**：用后台群动作开关 /
+> 运行期急停 / 白名单一键停用即可，风险远小于版本回退（这些开关都是运行期生效，无需迁移）。
 
-**方案 B2（只回退行为、保留已迁移的表）** —— 适用于"新规则行为要撤回、但不想丢名单"：
-
-```powershell
-sc.exe stop QQBotWeb ; sc.exe stop QQBotRuntime
-git checkout -- app tests docs AGENTS.md DECISIONS.md HANDOFF.md NEXT_TASKS.md PROGRESS.md PROJECT_CONTEXT.md MEMORY_INDEX.md
-# ↑ 只回退**已跟踪**的代码与文档；**保留**未跟踪的 alembic/versions/c9a1f4d27e30_*.py
-uv run alembic current                                                               # 仍是 c9a1f4d27e30
-uv run python -c "from app.db import get_head_revision; print(get_head_revision())"   # 也应仍是 c9a1f4d27e30（必须相等）
-sc.exe start QQBotWeb ; sc.exe start QQBotRuntime
-```
-
-> **禁止**：`git checkout -- .` 之后又 `alembic downgrade`，或只 `git stash push`（不带 `-u`）——
-> 两种都会让"数据库版本"与"代码 head"不相等，服务直接起不来。回滚后**务必**用上面两条命令核对相等。
+**回滚演练证据（回滚前必须已通过）**：迁移"升 → `alembic check` → 降 → 再升"往返已在
+**独立临时库**验证——`tests/test_r132_member_import_review.py::test_member_migration_downgrade_preserves_existing_tables`
+（断言：旧表哨兵数据保留、降级后新表消失、再升级为空表）。
+生产演练须负责人授权并安排在维护窗口，**不得在业务时段直接降库**。
 
 ### C. 数据异常
 

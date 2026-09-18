@@ -15,7 +15,7 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 from app.db import SessionLocal
-from app.moderation.decision import ModerationDecision
+from app.moderation.decision import ModerationDecision, RuleHit
 from app.moderation.wall_pair import (
     extract_wall_text,
     maybe_wall_text_pairing,
@@ -310,15 +310,16 @@ async def test_r06_missing_sent_at_conservative() -> None:
 
 
 @pytest.mark.asyncio
-async def test_pairing_exempts_fraud_within_window() -> None:
-    """2026-09-18 晚口径：不豁免集合只含色情/暴力/刷屏——诈骗在窗口内降为记录（不撤回）。
+async def test_pairing_exempts_fraud_only_after_miniprogram_source() -> None:
+    """负责人 2026-09-18 第三条口径：窗口内**诈骗豁免仅限"带小程序码"的来源图**。
 
-    负责人口径依据："2 分钟内发的文字和图片都不撤回，色情/暴力的文字不豁免"；且
-    同日晚 D-039 已把"严重类别"收窄为色情/暴力。**仍降为 record_only（转人工记录），
-    不是静默放行。**
+    - 来源图是「小程序码通过」的放行图 → 窗口内诈骗降为 record_only（转人工记录，非静默放行）；
+    - 来源图只是校园墙图 → 诈骗照常处理（violation_high）。
     """
     g = _new_group()
-    await _insert_wall_image(group=g, wall_text=WALL_TEXT)
+    await _insert_wall_image(
+        group=g, vision_evidence="小程序码通过|文案:#兼职赚钱# 支付宝亲密号拉新"
+    )
     async with SessionLocal() as session:
         result = await maybe_wall_text_pairing(
             session,
@@ -329,6 +330,45 @@ async def test_pairing_exempts_fraud_within_window() -> None:
     assert result.verdict == "record_only"
     assert result.recommended_actions == []
     assert "豁免" in result.reason
+
+
+@pytest.mark.asyncio
+async def test_pairing_does_not_exempt_fraud_after_campus_wall_source() -> None:
+    """校园墙来源图之后的诈骗**不豁免**（只有小程序码来源才给诈骗豁免）。"""
+    g = _new_group()
+    await _insert_wall_image(group=g, wall_text=WALL_TEXT)
+    async with SessionLocal() as session:
+        result = await maybe_wall_text_pairing(
+            session,
+            _msg(WALL_TEXT, group=g, sent_at=datetime.now(UTC)),
+            _decision(category="fraud"),
+        )
+        await session.commit()
+    assert result.verdict == "violation_high"
+    assert result.recommended_actions == ["recall", "mute", "warn"]
+
+
+@pytest.mark.asyncio
+async def test_pairing_blocked_when_secondary_evidence_is_severe() -> None:
+    """主审 F01/F08：主类别是广告、但同条消息另有色情/暴力/刷屏命中时**不豁免**。"""
+    g = _new_group()
+    await _insert_wall_image(group=g, wall_text=WALL_TEXT)
+    for secondary in ("porn", "violence", "flood"):
+        decision = _decision(category="ad")
+        decision = decision.model_copy(
+            update={
+                "rule_hits": [
+                    RuleHit(rule_id="AI_VISION", rule_name="synthetic", category=secondary)
+                ]
+            }
+        )
+        async with SessionLocal() as session:
+            result = await maybe_wall_text_pairing(
+                session, _msg(WALL_TEXT, group=g, sent_at=datetime.now(UTC)), decision
+            )
+            await session.commit()
+        assert result.verdict == "violation_high", secondary
+        assert result.recommended_actions == ["recall", "mute", "warn"]
 
 
 @pytest.mark.parametrize("category", ["porn", "violence", "flood"])

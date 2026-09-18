@@ -2005,7 +2005,28 @@ def _decode_member_file(data: bytes) -> str:
     raise ValueError("文件编码无法识别：请另存为 UTF-8 或 GBK 文本后重试")
 
 
-def _member_import_preview(plan: Any, text: str, csrf_field: str) -> Response:
+def _member_import_params(plan: Any, text: str) -> dict[str, Any]:
+    """导入计划的**服务端指纹**：文件摘要 + 完整差异（含涉及行的 ID 与状态）。
+
+    差异由**当前数据库状态**重算得到，因此"预览之后名单被别人改动"会让指纹变化 →
+    认领失败并要求重新预览（主审 F05：确认必须绑定被批准的差异，而不是"确认的是旧
+    差异、执行的是新差异"）。
+    """
+    return {
+        "provider": plan.provider,
+        "file_sha256": sha256(text.encode("utf-8")).hexdigest(),
+        "to_add": sorted(f"{m.user_id}={m.note}" for m in plan.to_add),
+        "to_enable": sorted(f"{mid}:{uid}" for mid, uid in plan.to_enable),
+        "to_disable": sorted(f"{mid}:{uid}" for mid, uid in plan.to_disable),
+        "note_updates": sorted(f"{mid}:{uid}={note}" for mid, uid, note in plan.to_update_note),
+        "unchanged": plan.unchanged,
+        "enabled_before": plan.enabled_before,
+        "valid_in_file": plan.total_valid,
+        "invalid_lines": len(plan.invalid),
+    }
+
+
+def _member_import_preview(plan: Any, text: str, csrf_field: str, plan_id: str) -> Response:
     """导入预览页：展示新增/启用/停用/改备注/非法行，确认后才写入。
 
     ``plan.needs_confirm`` 为真时（停用幅度大）**必须额外勾选**才能执行——
@@ -2034,7 +2055,9 @@ def _member_import_preview(plan: Any, text: str, csrf_field: str) -> Response:
         f"停用 {len(plan.to_disable)}，改备注 {len(plan.to_update_note)}，"
         f"不变 {plan.unchanged}，非法行 {len(plan.invalid)}</div>"
         "<p class=muted>确认后立即生效（下一条消息），并写入审计。停用不等于删除："
-        "记录仍在列表中，可用「启用」恢复。<b>此刻还没有任何改动被写入。</b></p>"
+        "记录仍在列表中，可用「启用」恢复。<b>此刻还没有任何改动被写入。</b>"
+        "预览计划 <b>5 分钟内有效且只执行一次</b>；期间若名单被其它操作改动，"
+        "本次确认会被拒绝并要求重新预览。</p>"
         + _block("新增", [m.user_id + (f"（{m.note}）" if m.note else "") for m in plan.to_add])
         + _block("重新启用", [uid for _id, uid in plan.to_enable])
         + _block("停用", [uid for _id, uid in plan.to_disable])
@@ -2044,6 +2067,8 @@ def _member_import_preview(plan: Any, text: str, csrf_field: str) -> Response:
         '<form method=post action="/admin/allowlist/members/import">'
         f"{csrf_field}"
         "<input type=hidden name=confirmed value=1>"
+        # 主审 F05：确认必须携带服务端计划 ID；没有它（未预览/页面过期）一律拒绝执行。
+        f'<input type=hidden name="plan_id" value="{_esc(plan_id)}">'
         f'<textarea name=text style="display:none">{_esc(text)}</textarea>'
         f"{ack}"
         "<button class=btn ok>确认执行</button> "
@@ -2119,15 +2144,26 @@ async def allowlist_members_import(
     text: str = Form(""),
     confirmed: str = Form(""),
     ack: str = Form(""),
+    plan_id: str = Form(""),
     csrf: str = Form(""),
 ) -> Response:
-    """整份文件全量同步：先预览，确认后写入（空文件拒绝；大幅停用需二次确认）。"""
+    """整份文件全量同步：预览（生成服务端计划）→ 确认（校验计划未变）→ 写入。
+
+    主审 F05：确认必须绑定**服务端计划**——未预览、换文件、旧预览（期间名单已变）、
+    重复确认都不得产生未批准的变更。计划复用 `agent_confirm` 的既有设施：5 分钟 TTL、
+    绑定发起者、一次性认领、审批链留审计。
+    """
     token = await _require_login(request)
     if not token:
         return _login_redirect()
     await _require_admin_post(request, csrf)
-    operator = await _operator(request)
+    actor = _human_actor(token)
     from app.moderation.allowlist import apply_member_import, plan_member_import
+    from app.web.agent_confirm import (
+        approve_confirmation,
+        claim_confirmation,
+        create_confirmation,
+    )
 
     raw_text = text
     if not raw_text.strip():
@@ -2145,12 +2181,49 @@ async def allowlist_members_import(
             plan = await plan_member_import(session, raw_text)
         except ValueError as exc:
             return _member_notice_redirect(str(exc))
-        # 预览确认是必经步骤（D-3）；大幅停用时还需勾选 ack（二次确认）
-        if confirmed != "1" or (plan.needs_confirm and ack != "1"):
-            return _member_import_preview(plan, raw_text, _csrf_field(token))
+        params = _member_import_params(plan, raw_text)
+        if confirmed != "1":
+            # 第一步：生成服务端计划（PENDING）+ 展示差异预览；此刻仍未写入任何改动。
+            confirmation = await create_confirmation(
+                session,
+                action="allowlist_members_sync",
+                params=params,
+                expected_state={
+                    "provider": plan.provider,
+                    "enabled_before": plan.enabled_before,
+                    "valid_in_file": plan.total_valid,
+                    "needs_confirm": plan.needs_confirm,
+                },
+                requestor=actor,
+            )
+            return _member_import_preview(plan, raw_text, _csrf_field(token), confirmation.id)
+        if not plan_id:
+            return _member_notice_redirect(
+                "缺少预览计划（未预览或页面已过期），未执行——请重新上传并预览"
+            )
+        if plan.needs_confirm and ack != "1":
+            # 大幅停用仍需二次勾选；勾选与执行必须绑定**同一个计划**。
+            return _member_import_preview(plan, raw_text, _csrf_field(token), plan_id)
         if not plan.has_changes and not plan.invalid:
             return _member_notice_redirect("文件与当前名单完全一致，未做任何变更")
-        await apply_member_import(session, plan, operator=operator)
+        # 第二步：人工确认。批准与一次性认领都用**服务端重算**的差异做绑定校验：
+        # 计划过期/已用过，或期间名单/文件发生变化 → 认领失败 → 拒绝执行并提示重新预览。
+        if not await approve_confirmation(session, plan_id, human=actor):
+            return _member_notice_redirect("预览已过期或已被使用，未执行——请重新预览")
+        claimed = await claim_confirmation(
+            session,
+            plan_id,
+            requestor=actor,
+            action="allowlist_members_sync",
+            params=params,
+        )
+        if claimed is None:
+            return _member_notice_redirect(
+                "预览与当前名单/文件不一致（可能已有其它变更），未执行——请重新预览"
+            )
+        await apply_member_import(session, plan, operator=actor)
+        claimed.status = "APPLIED"
+        await session.commit()
     return _member_notice_redirect(
         f"已同步：新增 {len(plan.to_add)}，重新启用 {len(plan.to_enable)}，"
         f"停用 {len(plan.to_disable)}，改备注 {len(plan.to_update_note)}，"

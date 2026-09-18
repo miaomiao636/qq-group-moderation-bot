@@ -13,7 +13,15 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.models import AdminAudit, AdminChangePlan
 
 CONFIRM_TTL_SECONDS = 300
-HIGH_RISK_ACTIONS = {"group_settings", "rule_publish", "rule_rollback", "emergency_resume"}
+HIGH_RISK_ACTIONS = {
+    "group_settings",
+    "rule_publish",
+    "rule_rollback",
+    "emergency_resume",
+    # 主审 F05（2026-09-18）：成员白名单是"全类别完全放行"的高风险授权变更，
+    # 整份文件同步必须像其它高风险动作一样走"预览 → 绑定计划 → 确认执行"。
+    "allowlist_members_sync",
+}
 
 
 def canonical(value: dict[str, Any]) -> str:

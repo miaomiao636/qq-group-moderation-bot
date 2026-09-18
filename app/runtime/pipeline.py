@@ -254,11 +254,18 @@ async def _run_pipeline(
         text_engine.set_allowlist_members(allow_members)
         decision: ModerationDecision = text_engine.evaluate(msg)
         decision = gate.review(msg, decision)
+        # 成员白名单身份（D-037，负责人"名单内成员发的所有信息都通过"）：
+        # "内容不可判定"类健康信号**不得**把它降级为转人工（主审 F07）。
+        # 只抑制"我们看不懂这条内容"类 veto；配置/一致性异常（如同群多 provider 歧义）
+        # 仍照常记录——不能把全部 evidence_veto 一概关闭（那会扩大到非名单成员）。
+        member_policy_allow = decision.verdict == "allow" and any(
+            h.rule_id == ALLOWLIST_MEMBER_ALLOW_RULE_ID for h in decision.rule_hits
+        )
 
         # T-306：无法解析的内容（未知消息段）绝不判正常，也绝不作为处罚依据——
         # 强制降级人工复核。2026-09-18：**合并转发不再走此兜底**——负责人明确
         # 口径为"合并转发一律撤回"，由规则引擎 R_FORWARD_RECORD 直接给出 violation_high。
-        if _contains_unreviewable_content(msg):
+        if _contains_unreviewable_content(msg) and not member_policy_allow:
             evidence_vetoes.append("包含无法解析的内容（未知消息段）")
             decision = decision.model_copy(
                 update={
@@ -314,17 +321,17 @@ async def _run_pipeline(
                     # image/gif/其他 → 图片引擎
                     m = image_engine.analyze(local)
                     media_decisions.append(_media_decision_from(m, message_id, msg))
-                if not _is_image(att.content_type) and media_decisions[-1].verdict == "record_only":
+                if (
+                    not member_policy_allow
+                    and not _is_image(att.content_type)
+                    and media_decisions[-1].verdict == "record_only"
+                ):
                     # A vision call on another image cannot review this voice,
                     # video or document. Preserve the incomplete-evidence gate.
                     evidence_vetoes.append("包含尚未完成审核的语音/视频/文件")
 
-            if media_missing:
+            if media_missing and not member_policy_allow:
                 evidence_vetoes.append("媒体缺失/下载失败")
-
-            member_policy_allow = decision.verdict == "allow" and any(
-                h.rule_id == ALLOWLIST_MEMBER_ALLOW_RULE_ID for h in decision.rule_hits
-            )
             if any(d.verdict == "violation_high" for d in media_decisions):
                 if member_policy_allow:
                     # D-037（负责人 2026-09-18："名单内成员发的所有信息都通过"）：
@@ -343,8 +350,9 @@ async def _run_pipeline(
                         decision,
                         MediaAnalysis("violation_high", 0.95, reason="媒体违规"),
                     )
-            elif media_missing:
+            elif media_missing and not member_policy_allow:
                 # R-102-3 任意媒体缺失/下载失败 → 不放行
+                # （成员白名单身份 D-037 例外：身份确定即可放行，主审 F07）
                 decision = decision.model_copy(
                     update={
                         "verdict": "record_only",

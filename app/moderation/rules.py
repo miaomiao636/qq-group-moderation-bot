@@ -511,7 +511,12 @@ class TextRuleEngine:
         actions: list[str] = []
         reason = ""
 
-        share_card = msg.kind == "share_card"
+        # 主审 F04（2026-09-18）：卡片判定不能只看顶层 kind——"文字/图片 + 卡片"的
+        # 混合消息 kind=mixed，会让 D-038 群名片撤回与 R006 未知来源卡片**双双被绕过**
+        # （实测：群卡前加一句"看看"即 allow）。改为按**卡片结构**判定（parser 已把
+        # 卡片的 ShareCardInfo 挂到 msg.share_card），覆盖 text+卡 / image+卡 / 多卡。
+        # 注意：**不是**"所有 mixed 都撤回"——仅当消息确实含卡片结构时才走卡片分支。
+        share_card = msg.kind == "share_card" or msg.share_card is not None
         share_source_allowed = _is_share_source_allowed(msg)
         if share_card and not share_source_allowed:
             hits.append(
