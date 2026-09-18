@@ -205,7 +205,7 @@ allow、未进入人工处理（5060361 基线同样复现：2 failed / 2 passed
      tests\test_pairing_retention_metadata.py -q -o addopts=""
    ```
 
-   （预期 **66 passed**）
+（预期 **66 passed**）
 
 **补丁（2026-09-18，主审 f08157d 复验 P1）**：同秒 + 前图未完成（inbox 排队 / 下载中 /
 数据库 processing）时，文字仍可能带处罚建议进入动作编排——"图片审核中不处罚"保护未覆盖
