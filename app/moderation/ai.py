@@ -859,6 +859,73 @@ _MINIPROGRAM_QR_BLOCKED_CATEGORIES = frozenset({"porn", "violence"})
 _LOCAL_HARD_EVIDENCE_RULES = frozenset({"R001", "R003", "R006"})
 
 
+def _secondary_pair_is_valid(
+    primary: AIModerationResult,
+    secondary: AIModerationResult,
+    *,
+    secondary_review_low: float,
+    secondary_review_high: float,
+) -> bool:
+    """一审/二审是否构成**有效复核结论**（主审 F02-R：QR 门与主路径共用同一判据）。
+
+    有效条件：二审为视觉、未降级、非同一模型、不要求人工、类别与首轮一致、
+    首轮达到低阈值且二审达到高阈值。
+    """
+    return not (
+        secondary.source != "vision"
+        or secondary.degraded_reason
+        or secondary.model_id == primary.model_id
+        or secondary.needs_review
+        or primary.category not in ("ad", "fraud", "porn", "violence", "flood")
+        or primary.category != secondary.category
+        or primary.confidence < secondary_review_low
+        or secondary.confidence < secondary_review_high
+    )
+
+
+def _attachment_reviews_unresolved(
+    ai_results: list[AIModerationResult],
+    local: ModerationDecision,
+    *,
+    primary_direct_threshold: float = 0.90,
+    secondary_review_low: float = 0.60,
+    secondary_review_high: float = 0.90,
+) -> bool:
+    """是否有**附件的复核对未形成结论**（主审 F02-R）。
+
+    判据与主路径一致：任一首轮结果需要复核（灰区/冲突）却没有**恰好一个**有效二审
+    （异类、低置信、非独立模型、降级、需人工），或存在孤儿二审。
+    这样"另一张图上有小程序码"就不可能替这张图的未决复核收尾。
+    """
+    primaries = [r for r in ai_results if r.source == "vision" and r.review_role == "primary"]
+    for primary in primaries:
+        secondaries = [
+            r
+            for r in ai_results
+            if r.review_role == "secondary" and r.review_group == primary.review_group
+        ]
+        reason = primary.review_reason or secondary_review_reason(
+            primary,
+            local,
+            direct_threshold=primary_direct_threshold,
+            low_threshold=secondary_review_low,
+        )
+        if (reason or secondaries) and (
+            len(secondaries) != 1
+            or not _secondary_pair_is_valid(
+                primary,
+                secondaries[0],
+                secondary_review_low=secondary_review_low,
+                secondary_review_high=secondary_review_high,
+            )
+        ):
+            return True
+    primary_groups = {r.review_group for r in primaries}
+    return any(
+        r.review_role == "secondary" and r.review_group not in primary_groups for r in ai_results
+    )
+
+
 def _miniprogram_qr_allow(
     local: ModerationDecision, ai_results: list[AIModerationResult]
 ) -> RuleHit | None:
@@ -881,6 +948,10 @@ def _miniprogram_qr_allow(
         for result in ai_results
         if result.source in ("vision", "degraded")
     ):
+        return None
+    # 主审 F02-R：**任何附件的复核对未形成结论**（缺二审/异类/低置信/非独立模型/孤儿二审）
+    # 时同样不授予放行——否则"另一张图上的码"会替这张图的未决复核收尾。
+    if _attachment_reviews_unresolved(ai_results, local):
         return None
     if local.category in _MINIPROGRAM_QR_BLOCKED_CATEGORIES:
         return None
@@ -1005,15 +1076,11 @@ def merge_ai_evidence(
                 unresolved = True
                 continue
             secondary = secondaries[0]
-            if (
-                secondary.source != "vision"
-                or secondary.degraded_reason
-                or secondary.model_id == primary.model_id
-                or secondary.needs_review
-                or primary.category not in ("ad", "fraud", "porn", "violence", "flood")
-                or primary.category != secondary.category
-                or primary.confidence < secondary_review_low
-                or secondary.confidence < secondary_review_high
+            if not _secondary_pair_is_valid(
+                primary,
+                secondary,
+                secondary_review_low=secondary_review_low,
+                secondary_review_high=secondary_review_high,
             ):
                 unresolved = True
             elif _text_veto:

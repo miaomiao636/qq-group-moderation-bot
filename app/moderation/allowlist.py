@@ -19,8 +19,9 @@ from __future__ import annotations
 import json
 from collections.abc import Sequence
 from dataclasses import dataclass
+from datetime import UTC, datetime
 
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -293,6 +294,10 @@ async def set_member_enabled(
         raise ValueError("成员白名单不存在")
     before = bool(row.enabled)
     row.enabled = enabled
+    # 主审二轮 F05-R：**显式管理操作必须推进版本**——即便 enabled 值没变（例如对已停用行
+    # 再次明确停用），也要更新 `updated_at`，否则"批准后发生的撤权"在条件写入里看不出来，
+    # 旧计划仍会把成员复活。
+    row.updated_at = datetime.now(UTC)
     session.add(
         AdminAudit(
             operator=operator[:64],
@@ -347,6 +352,9 @@ class MemberSyncPlan:
     enabled_before: int
     total_valid: int
     invalid: tuple[InvalidLine, ...]
+    # 预览时各"已存在且将被改动"行的版本（`updated_at`）。主审二轮 F05-R：
+    # 执行时必须用它做**条件写入**，否则批准与写入之间被其它会话撤权（含 ABA）会被覆盖。
+    row_versions: tuple[tuple[int, str, datetime], ...] = ()
 
     @property
     def has_changes(self) -> bool:
@@ -403,6 +411,16 @@ async def plan_member_import(
         for row in rows
         if row.enabled and row.external_user_id not in file_ids
     ]
+    touched = (
+        {member_id for member_id, _user_id in to_enable}
+        | {member_id for member_id, _user_id in to_disable}
+        | {member_id for member_id, _user_id, _note in to_update_note}
+    )
+    row_versions = tuple(
+        (row.id, row.external_user_id, row.updated_at)
+        for row in rows
+        if row.id in touched and row.updated_at is not None
+    )
     return MemberSyncPlan(
         provider=provider,
         to_add=tuple(to_add),
@@ -413,13 +431,36 @@ async def plan_member_import(
         enabled_before=sum(1 for row in rows if row.enabled),
         total_valid=len(parsed.valid),
         invalid=parsed.invalid,
+        row_versions=row_versions,
     )
 
 
+class ConcurrentMemberChangeError(RuntimeError):
+    """名单在"批准"与"写入"之间被其它操作改动（含 ABA）→ 拒绝执行、要求重新预览。"""
+
+    def __init__(self, user_id: str) -> None:
+        super().__init__(f"成员 {user_id} 在确认期间被其它操作改动")
+        self.user_id = user_id
+
+
 async def apply_member_import(
-    session: AsyncSession, plan: MemberSyncPlan, *, operator: str
+    session: AsyncSession, plan: MemberSyncPlan, *, operator: str, commit: bool = True
 ) -> None:
-    """执行全量同步（新增/启用/停用/改备注）并审计；单事务提交，失败整体回滚。"""
+    """执行全量同步（新增/启用/停用/改备注）并审计；默认单事务提交，失败整体回滚。
+
+    **条件写入**（主审二轮 F05-R）：改动已存在的行时，`UPDATE` 必须带上"预览时的
+    `updated_at`"作为条件——期间被其它会话改动（包括"启用后又停用"的 ABA）会 0 行命中并抛
+    `ConcurrentMemberChangeError`，绝不覆盖他人的显式撤权。
+    `commit=False` 供调用方把"名单写入 + 导入审计 + 计划终态"放进**同一事务**
+    （主审要求：终态与名单原子）。
+    """
+    expected = {(member_id, user_id): updated for member_id, user_id, updated in plan.row_versions}
+    now = datetime.now(UTC)
+
+    def _guard(user_id: str, rowcount: int) -> None:
+        if rowcount != 1:
+            raise ConcurrentMemberChangeError(user_id)
+
     for member in plan.to_add:
         session.add(
             AllowlistMember(
@@ -430,18 +471,36 @@ async def apply_member_import(
                 created_by=operator[:64],
             )
         )
-    for member_id, _user_id in plan.to_enable:
-        row = await session.get(AllowlistMember, member_id)
-        if row is not None:
-            row.enabled = True
-    for member_id, _user_id in plan.to_disable:
-        row = await session.get(AllowlistMember, member_id)
-        if row is not None:
-            row.enabled = False
-    for member_id, _user_id, note in plan.to_update_note:
-        row = await session.get(AllowlistMember, member_id)
-        if row is not None:
-            row.note = note
+    for member_id, user_id in plan.to_enable:
+        result = await session.execute(
+            update(AllowlistMember)
+            .where(
+                AllowlistMember.id == member_id,
+                AllowlistMember.updated_at == expected.get((member_id, user_id)),
+            )
+            .values(enabled=True, updated_at=now)
+        )
+        _guard(user_id, result.rowcount)  # type: ignore[attr-defined]
+    for member_id, user_id in plan.to_disable:
+        result = await session.execute(
+            update(AllowlistMember)
+            .where(
+                AllowlistMember.id == member_id,
+                AllowlistMember.updated_at == expected.get((member_id, user_id)),
+            )
+            .values(enabled=False, updated_at=now)
+        )
+        _guard(user_id, result.rowcount)  # type: ignore[attr-defined]
+    for member_id, user_id, note in plan.to_update_note:
+        result = await session.execute(
+            update(AllowlistMember)
+            .where(
+                AllowlistMember.id == member_id,
+                AllowlistMember.updated_at == expected.get((member_id, user_id)),
+            )
+            .values(note=note, updated_at=now)
+        )
+        _guard(user_id, result.rowcount)  # type: ignore[attr-defined]
     session.add(
         AdminAudit(
             operator=operator[:64],
@@ -464,4 +523,5 @@ async def apply_member_import(
             ),
         )
     )
-    await session.commit()
+    if commit:
+        await session.commit()

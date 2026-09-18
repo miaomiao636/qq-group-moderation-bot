@@ -398,7 +398,9 @@ def _match_allow_member(
 
 
 def _is_share_source_allowed(msg: StandardMessage) -> bool:
-    if msg.kind != "share_card":
+    # 主审二轮（P2）：与 D-032/D-038 同源——按**卡片结构**判断，而不是顶部 kind。
+    # 否则"允许来源的卡片 + 一句普通文字"（kind=mixed）会被当成未知来源卡片转人工。
+    if msg.share_card is None:
         return False
     card = msg.share_card
     source_text = " ".join(

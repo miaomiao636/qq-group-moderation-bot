@@ -70,14 +70,19 @@ def _is_group_card(card: Mapping[str, Any]) -> bool:
     结构化信号不足时**保持 False**（宁少撤一张群名片，也不误撤普通卡片）；
     真实 NapCat 群名片样本到位后按 schema 收窄/扩充（见 NEXT_TASKS）。
     """
-    app = str(card.get("app") or card.get("appName") or "").lower()
+    app = str(card.get("app") or card.get("appName") or "").strip().lower()
     view = str(card.get("view") or "").strip().lower()
     meta = card.get("meta")
-    if isinstance(meta, dict) and isinstance(meta.get("group"), dict):
-        return True
-    if "group" in app or "qun" in app:
-        return True
-    return view == "group"
+    # 主审二轮 F03-R：**禁止 app 名子串判定**——`com.example.groupbuy` / `com.example.quniversity`
+    # 这类普通卡片会因此被当成群名片并触发"一律撤回"。只接受**结构化身份字段**：
+    # ① meta.group 且含可识别字段（群号/群名等）；② app 恰为 QQ 群分享且 view=group 的明确组合。
+    if isinstance(meta, dict):
+        group = meta.get("group")
+        if isinstance(group, dict) and any(
+            group.get(key) for key in ("groupCode", "groupName", "groupUin", "memberNum")
+        ):
+            return True
+    return app == "com.tencent.qun.share" and view == "group"
 
 
 def _group_card_name(card: Mapping[str, Any]) -> str:

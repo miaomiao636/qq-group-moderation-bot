@@ -179,14 +179,32 @@ sc.exe start QQBotWeb ; sc.exe start QQBotRuntime
 **先备份名单**（决定"能否重新导入"，无论走哪个方案都先做）：
 
 1. 后台「白名单设置 → 导出当前成员白名单」（`GET /admin/allowlist/members/export`），或
-2. 直接从**升级前的数据库备份**（`data/backups/…`）导出 `allowlist_members` 表内容。
+2. 从**降级前的一致性备份**（`data/backups/…`，见下方第 2 步）导出 `allowlist_members` 表内容。
+   ⚠️ **不要用升级前的备份**：`allowlist_members` 正是本次迁移新建的表，旧备份里没有它。
 
 ```powershell
 sc.exe stop QQBotWeb ; sc.exe stop QQBotRuntime
-copy data\moderation.db data\backups\pre-rollback-<时间戳>.db     # 回滚前留证，不覆盖丢弃
-uv run alembic downgrade b8d4f2a05e31        # ⚠ 见下方数据影响
+sc.exe stop QQBotWeb ; sc.exe stop QQBotRuntime
+# 第 1 步：**确认两个服务已 STOPPED**（STOP_PENDING ≠ STOPPED；NSSM 允许 15 秒退出）
+$deadline = (Get-Date).AddSeconds(60)
+do { Start-Sleep -Seconds 2 ; $states = @(Get-Service QQBotWeb, QQBotRuntime).State }
+while (($states -contains 'StopPending') -and ((Get-Date) -lt $deadline))
+if ($states[0] -ne 'Stopped' -or $states[1] -ne 'Stopped') { throw "服务未在 60 秒内停止，中止回滚" }
+
+# 第 2 步：用**项目的一致性备份入口**留证（不要只 copy 主库文件）
+#   后台「设置 → 备份数据库」(POST /admin/settings/backup) 或等价 CLI；数据库为 WAL，
+#   只复制 moderation.db 会漏掉尚在 -wal 中的已提交数据。
+#   备份后校验 quick_check 与文件存在；失败即中止。
+
+# 第 3 步：从**降级前的当前库**导出成员名单并核对（不要用升级前的备份：
+#   allowlist_members 正是本次迁移新建的表，旧备份里没有它）
+uv run python -c "import sqlite3;c=sqlite3.connect(r'data\backups\<刚做的备份>.db');print('enabled=',c.execute('select count(*) from allowlist_members where enabled=1').fetchone()[0])"
+#   导出失败或启用数为 0 → 停止，不要降级（否则丢失全部名单）
+
+# 第 4 步：降级 + 切代码（每条命令检查退出码，失败即停）
+uv run alembic downgrade b8d4f2a05e31 ; if ($LASTEXITCODE -ne 0) { throw "降级失败，中止" }
 uv run alembic current                       # 期望 b8d4f2a05e31
-git switch --detach <上一个已验收 SHA>
+git switch --detach <上一个已验收 SHA> ; if ($LASTEXITCODE -ne 0) { throw "切版本失败，中止" }
 uv run python -c "from app.db import get_head_revision; print(get_head_revision())"   # 期望 b8d4f2a05e31
 sc.exe start QQBotWeb ; sc.exe start QQBotRuntime
 ```

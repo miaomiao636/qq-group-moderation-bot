@@ -531,7 +531,7 @@ def test_admin_member_import_preview_then_confirm_and_export() -> None:
             follow_redirects=False,
         )
         assert replay.status_code == 303
-        assert "预览已过期或已被使用" in unquote(str(replay.headers.get("location", "")))
+        assert "预览已过期" in unquote(str(replay.headers.get("location", "")))
         assert qq_b not in client.get("/admin/allowlist").text, "旧预览不得恢复已删除成员"
 
         # 空文件必须被拒绝：不会清空既有白名单

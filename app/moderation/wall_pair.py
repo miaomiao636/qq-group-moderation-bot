@@ -46,7 +46,11 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.contracts import StandardMessage
-from app.moderation.decision import ModerationDecision
+from app.moderation.decision import (
+    FORWARD_RECORD_RECALL_RULE_ID,
+    GROUP_CARD_RECALL_RULE_ID,
+    ModerationDecision,
+)
 from app.runtime.models import ShadowDecision
 
 WALL_PAIR_WINDOW_SECONDS = 120
@@ -67,6 +71,10 @@ SOURCE_MARKS = (WALL_MARK, MINIPROGRAM_MARK)
 #   诈骗（fraud）按负责人两次口径（"严重类别改为色情暴力"）不再列入。
 PAIR_EXEMPT_KINDS = frozenset({"text", "image"})
 PAIR_BLOCKED_CATEGORIES = frozenset({"porn", "violence", "flood"})
+# 结构性确定性规则（D-038：合并转发 / 群名片"一律撤回"）**不受窗口豁免影响**——
+# 主审二轮 F04-R：`image + 群卡` 的顶部 kind=image、类别 ad，曾被窗口改成 record_only。
+# 按 `decision.py` 导出的常量判断（不猜测 R0xx 段号）。
+STRUCTURAL_RULE_IDS = frozenset({FORWARD_RECORD_RECALL_RULE_ID, GROUP_CARD_RECALL_RULE_ID})
 
 
 def effective_categories(decision: ModerationDecision) -> frozenset[str]:
@@ -94,6 +102,9 @@ def is_pairing_candidate(msg: Any, decision: ModerationDecision) -> bool:
     if not decision.category:
         return False
     if effective_categories(decision) & PAIR_BLOCKED_CATEGORIES:
+        return False
+    # F04-R：结构性撤回规则优先于窗口豁免——含合并转发/群名片命中的消息不进入窗口候选。
+    if any(hit.rule_id in STRUCTURAL_RULE_IDS for hit in decision.rule_hits):
         return False
     if msg.kind not in PAIR_EXEMPT_KINDS:
         return False
@@ -138,20 +149,24 @@ def _source_mark(evidence: str) -> str | None:
     return None
 
 
-def _confirmed_source(detail: dict[str, Any]) -> tuple[str | None, str | None]:
-    """结构化校验后的（图内文案, 来源标记）；不可作为来源时返回 (None, None)。
+def _confirmed_source(detail: dict[str, Any]) -> tuple[str | None, str | None, bool]:
+    """结构化校验后的（图内文案, 来源标记, 结构化小程序码标记）。
 
-    R09 校验：全部 vision 结果 category 为空、未降级、不需人工，且 evidence 以
-    「校园墙白名单」或「小程序码通过」开头并含非空图内文案。
+    不可作为来源时返回 (None, None, False)。R09 校验：全部 vision 结果 category 为空、
+    未降级、不需人工，且 evidence 以「校园墙白名单」或「小程序码通过」开头并含非空图内文案。
+
+    第三个返回值取**同一条**视觉结果的 `has_miniprogram_code` 布尔——主审二轮指出：
+    "来源只信文字前缀"会被合成样本绕过（前缀为「小程序码通过」而结构化字段为 false），
+    因此诈骗豁免必须前缀与布尔**同时**成立。
     """
     if detail.get("processing") or detail.get("evidence_vetoes"):
-        return None, None
+        return None, None, False
     results = detail.get("ai_results")
     if not isinstance(results, list) or any(not isinstance(r, dict) for r in results):
-        return None, None
+        return None, None, False
     visions = [r for r in results if r.get("source") == "vision"]
     if not visions:
-        return None, None
+        return None, None, False
     # 使用 pipeline 的 AIModerationResult.model_dump 契约。缺字段不是确认正常，
     # 任一视觉结果仍有疑问时，不能挑出另一条白名单证据消掉尚未解决的矛盾。
     if any(
@@ -161,12 +176,16 @@ def _confirmed_source(detail: dict[str, Any]) -> tuple[str | None, str | None]:
         or r.get("degraded_reason") != ""
         for r in visions
     ):
-        return None, None
+        return None, None, False
     for result in visions:
         evidence = result.get("evidence")
         if isinstance(evidence, str) and (wall_text := extract_wall_text(evidence)):
-            return wall_text, _source_mark(evidence)
-    return None, None
+            return (
+                wall_text,
+                _source_mark(evidence),
+                result.get("has_miniprogram_code") is True,
+            )
+    return None, None, False
 
 
 def _wall_source_from_detail(detail_json: str) -> tuple[str | None, dict[str, Any]]:
@@ -176,7 +195,7 @@ def _wall_source_from_detail(detail_json: str) -> tuple[str | None, dict[str, An
     口径 C（2026-09-17）起不再有"已消费"概念：历史绑定字段不影响来源复用。
     """
     detail = _detail_object(detail_json)
-    wall_text, _mark = _confirmed_source(detail)
+    wall_text, _mark, _qr = _confirmed_source(detail)
     return wall_text, detail
 
 
@@ -243,8 +262,7 @@ async def maybe_wall_text_pairing(
 
     rows = (await session.execute(select(ShadowDecision).where(*scope))).scalars().all()
     covered_ids = {row.message_id for row in rows}
-    confirmed_wall: str | None = None
-    confirmed_mark: str | None = None
+    eligible_sources: list[tuple[str, str | None, bool]] = []
     processing_in_window = False
     for row in rows:
         if row.message_id == msg.message_id or row.external_message_id == msg.external_message_id:
@@ -269,13 +287,15 @@ async def maybe_wall_text_pairing(
             continue  # 已完成图与文字同秒：无法定序，不授予豁免。
         if row.verdict not in ("allow", "record_only"):
             continue
-        wall_text, source_mark = _confirmed_source(_detail_object(row.detail_json))
+        wall_text, source_mark, qr_flag = _confirmed_source(_detail_object(row.detail_json))
         if wall_text:
-            confirmed_wall = wall_text
-            confirmed_mark = source_mark
-            break
+            # 主审 N01：**收集全部合格来源**，不在第一个来源就 break——
+            # "先遇到一个对诈骗不合格的校园墙图"不等于"没有合格的小程序码来源"。
+            eligible_sources.append((wall_text, source_mark, qr_flag))
 
-    if confirmed_wall is None:
+    # 主审 N01：在途（已入队但未处理完）图片的保护与"是否存在合格来源"**无关**，
+    # 必须独立计算——否则"先有一张校园墙图"就会把待审图保护旁路掉。
+    if pending_messages:
         for pending in pending_messages:
             if (
                 pending.message_id in covered_ids
@@ -293,18 +313,29 @@ async def maybe_wall_text_pairing(
                 # 同秒（delta=0）同样视为"审核中"——只保护、不授予豁免。
                 processing_in_window = True
 
-    if confirmed_wall is not None:
-        # 负责人 2026-09-18（第三条口径）：窗口内**诈骗豁免仅限"带小程序码"的来源图**；
-        # 校园墙来源图之后的诈骗照常处理（保持 violation_high，不降级为记录）。
-        if "fraud" in effective_categories(decision) and confirmed_mark != MINIPROGRAM_MARK:
+    if eligible_sources:
+        # 负责人 2026-09-18（第三条口径）：窗口内**诈骗豁免仅限"带小程序码"的来源图**。
+        # 主审 N01：①按当前类别在**全部合格来源**里筛选（顺序无关）；
+        # ②前缀与结构化布尔必须同时成立（只信前缀会被合成样本绕过）；
+        # ③即使诈骗不豁免，**待审图保护仍然独立生效**（不能被来源判定旁路）。
+        if "fraud" in effective_categories(decision) and not any(
+            mark == MINIPROGRAM_MARK and qr_flag for _text, mark, qr_flag in eligible_sources
+        ):
+            if processing_in_window:
+                return _undecided_predecessor_decision(decision)
             return decision
         return _exempt_decision(decision)
     if processing_in_window:
-        return decision.model_copy(
-            update={
-                "verdict": "record_only",
-                "recommended_actions": [],
-                "reason": "前图审核未完成，配对资格未知，转人工（未授予白名单豁免）",
-            }
-        )
+        return _undecided_predecessor_decision(decision)
     return decision
+
+
+def _undecided_predecessor_decision(decision: ModerationDecision) -> ModerationDecision:
+    """前图审核未完成：只转人工、清空处罚建议，**不授予白名单豁免**。"""
+    return decision.model_copy(
+        update={
+            "verdict": "record_only",
+            "recommended_actions": [],
+            "reason": "前图审核未完成，配对资格未知，转人工（未授予白名单豁免）",
+        }
+    )

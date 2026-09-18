@@ -15,7 +15,11 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 from app.db import SessionLocal
-from app.moderation.decision import ModerationDecision, RuleHit
+from app.moderation.decision import (
+    GROUP_CARD_RECALL_RULE_ID,
+    ModerationDecision,
+    RuleHit,
+)
 from app.moderation.wall_pair import (
     extract_wall_text,
     maybe_wall_text_pairing,
@@ -75,6 +79,7 @@ def _wall_detail(
     vision_evidence: str | None = None,
     vision_cat: str | None = None,
     vision_nr: bool = False,
+    vision_qr: bool = False,
 ) -> str:
     return json.dumps(
         {
@@ -86,6 +91,8 @@ def _wall_detail(
                     "category": vision_cat,
                     "needs_review": vision_nr,
                     "degraded_reason": "",
+                    # 主审二轮：诈骗豁免要求"前缀 + 结构化布尔"同时成立，夹具须带该字段。
+                    "has_miniprogram_code": vision_qr,
                 }
             ],
         },
@@ -102,6 +109,7 @@ async def _insert_wall_image(
     vision_evidence: str | None = None,
     vision_cat: str | None = None,
     vision_nr: bool = False,
+    vision_qr: bool = False,
     verdict: str = "allow",
 ) -> ShadowDecision:
     """插入一条校园墙图判定：detail.sent_at = now - seconds_ago。"""
@@ -117,6 +125,7 @@ async def _insert_wall_image(
             vision_evidence=vision_evidence,
             vision_cat=vision_cat,
             vision_nr=vision_nr,
+            vision_qr=vision_qr,
         )
     async with SessionLocal() as session:
         row = ShadowDecision(
@@ -318,7 +327,9 @@ async def test_pairing_exempts_fraud_only_after_miniprogram_source() -> None:
     """
     g = _new_group()
     await _insert_wall_image(
-        group=g, vision_evidence="小程序码通过|文案:#兼职赚钱# 支付宝亲密号拉新"
+        group=g,
+        vision_evidence="小程序码通过|文案:#兼职赚钱# 支付宝亲密号拉新",
+        vision_qr=True,
     )
     async with SessionLocal() as session:
         result = await maybe_wall_text_pairing(
@@ -330,6 +341,72 @@ async def test_pairing_exempts_fraud_only_after_miniprogram_source() -> None:
     assert result.verdict == "record_only"
     assert result.recommended_actions == []
     assert "豁免" in result.reason
+
+
+@pytest.mark.asyncio
+async def test_fraud_source_prefix_alone_is_not_enough() -> None:
+    """主审二轮：来源限制不能只信文字前缀——结构化 `has_miniprogram_code` 必须为 true。"""
+    g = _new_group()
+    await _insert_wall_image(
+        group=g,
+        vision_evidence="小程序码通过|文案:#兼职赚钱# 支付宝亲密号拉新",
+        vision_qr=False,
+    )
+    async with SessionLocal() as session:
+        result = await maybe_wall_text_pairing(
+            session,
+            _msg(WALL_TEXT, group=g, sent_at=datetime.now(UTC)),
+            _decision(category="fraud"),
+        )
+        await session.commit()
+    assert result.verdict == "violation_high"
+
+
+@pytest.mark.asyncio
+async def test_fraud_source_scan_ignores_row_order() -> None:
+    """主审 N01：窗口内先落库校园墙图、后落库带码图时，诈骗仍应豁免（与顺序无关）。"""
+    g = _new_group()
+    await _insert_wall_image(group=g, wall_text=WALL_TEXT, seconds_ago=20)
+    await _insert_wall_image(
+        group=g,
+        seconds_ago=10,
+        vision_evidence="小程序码通过|文案:合成活动",
+        vision_qr=True,
+    )
+    async with SessionLocal() as session:
+        result = await maybe_wall_text_pairing(
+            session,
+            _msg(WALL_TEXT, group=g, sent_at=datetime.now(UTC)),
+            _decision(category="fraud"),
+        )
+        await session.commit()
+    assert result.verdict == "record_only"
+    assert result.recommended_actions == []
+
+
+@pytest.mark.asyncio
+async def test_structural_card_hit_is_not_window_exempted() -> None:
+    """主审 F04-R：结构性撤回规则（群名片/合并转发）不受窗口豁免影响。"""
+    g = _new_group()
+    await _insert_wall_image(group=g, wall_text=WALL_TEXT)
+    decision = _decision(category="ad").model_copy(
+        update={
+            "rule_hits": [
+                RuleHit(
+                    rule_id=GROUP_CARD_RECALL_RULE_ID,
+                    rule_name="group_card",
+                    category="ad",
+                )
+            ]
+        }
+    )
+    async with SessionLocal() as session:
+        result = await maybe_wall_text_pairing(
+            session, _msg(WALL_TEXT, group=g, sent_at=datetime.now(UTC)), decision
+        )
+        await session.commit()
+    assert result.verdict == "violation_high"
+    assert result.recommended_actions == ["recall", "mute", "warn"]
 
 
 @pytest.mark.asyncio

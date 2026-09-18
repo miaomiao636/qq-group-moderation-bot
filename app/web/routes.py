@@ -11,7 +11,7 @@ import html
 import json
 import re
 import secrets
-from datetime import timedelta
+from datetime import UTC, datetime, timedelta
 from hashlib import sha256
 from typing import Annotated, Any
 from urllib.parse import quote
@@ -2023,6 +2023,12 @@ def _member_import_params(plan: Any, text: str) -> dict[str, Any]:
         "enabled_before": plan.enabled_before,
         "valid_in_file": plan.total_valid,
         "invalid_lines": len(plan.invalid),
+        # 主审二轮：把"被改动行的版本"纳入指纹——只绑目标值（备注等）不足以发现
+        # 预览之后同一行被改过（含 ABA：启用后又停用）。
+        "row_versions": sorted(
+            f"{member_id}:{user_id}:{updated.isoformat()}"
+            for member_id, user_id, updated in plan.row_versions
+        ),
     }
 
 
@@ -2206,8 +2212,45 @@ async def allowlist_members_import(
             return _member_import_preview(plan, raw_text, _csrf_field(token), plan_id)
         if not plan.has_changes and not plan.invalid:
             return _member_notice_redirect("文件与当前名单完全一致，未做任何变更")
-        # 第二步：人工确认。批准与一次性认领都用**服务端重算**的差异做绑定校验：
-        # 计划过期/已用过，或期间名单/文件发生变化 → 认领失败 → 拒绝执行并提示重新预览。
+        # 第二步：**先校验归属与状态，再写任何东西**（主审二轮 P2-3）——
+        # 其它会话拿别人的 plan_id 提交时不得把该计划改成 APPROVED 而破坏它。
+        # 用**独立会话**做锁内复核：本会话此前已读过库（事务已开启），不能再发 BEGIN IMMEDIATE。
+        # 注意：本处理函数的表单参数名就是 `text`，会**遮蔽** `sqlalchemy.text` —— 用别名。
+        from sqlalchemy import text as sql_text
+
+        from app.models import AdminChangePlan
+        from app.moderation.allowlist import ConcurrentMemberChangeError
+        from app.web.agent_confirm import canonical
+
+        async with SessionLocal() as guard:
+            await guard.execute(sql_text("BEGIN IMMEDIATE"))
+            plan_row = await guard.get(AdminChangePlan, plan_id, populate_existing=True)
+            # SQLite 取回的是 naive datetime，比较前统一补 UTC 时区（否则 TypeError）。
+            expires_at = plan_row.expires_at if plan_row is not None else None
+            if expires_at is not None and expires_at.tzinfo is None:
+                expires_at = expires_at.replace(tzinfo=UTC)
+            if (
+                plan_row is None
+                or plan_row.action != "allowlist_members_sync"
+                or plan_row.requestor != actor
+                or plan_row.status not in ("PENDING", "APPROVED")
+                or expires_at is None
+                or expires_at <= datetime.now(UTC)
+            ):
+                await guard.rollback()
+                return _member_notice_redirect(
+                    "预览已过期、已被使用或不属于当前会话，未执行——请重新预览"
+                )
+            # 锁内重算：以一致的数据库状态核对"被批准的差异"
+            locked_plan = await plan_member_import(guard, raw_text)
+            if canonical(_member_import_params(locked_plan, raw_text)) != plan_row.params_json:
+                await guard.rollback()
+                return _member_notice_redirect(
+                    "预览与当前名单/文件不一致（可能已有其它变更），未执行——请重新预览"
+                )
+            await guard.rollback()
+
+        # 第三步：批准 + 一次性认领（各自事务；认领校验 requestor / action / 差异指纹）。
         if not await approve_confirmation(session, plan_id, human=actor):
             return _member_notice_redirect("预览已过期或已被使用，未执行——请重新预览")
         claimed = await claim_confirmation(
@@ -2221,9 +2264,23 @@ async def allowlist_members_import(
             return _member_notice_redirect(
                 "预览与当前名单/文件不一致（可能已有其它变更），未执行——请重新预览"
             )
-        await apply_member_import(session, plan, operator=actor)
-        claimed.status = "APPLIED"
-        await session.commit()
+
+        # 第四步：锁内**条件写入** + 导入审计 + 计划终态，**同一事务**（主审 F05-R）：
+        # 期间被其它会话撤权/删除 → 条件更新 0 行 → 整体回滚（不覆盖他人撤权，也不留假审计）。
+        async with SessionLocal() as executor:
+            await executor.execute(sql_text("BEGIN IMMEDIATE"))
+            try:
+                await apply_member_import(executor, locked_plan, operator=actor, commit=False)
+                final_plan = await executor.get(AdminChangePlan, plan_id, populate_existing=True)
+                if final_plan is not None:
+                    final_plan.status = "APPLIED"
+                await executor.commit()
+            except ConcurrentMemberChangeError:
+                await executor.rollback()
+                return _member_notice_redirect("名单在确认期间被其它操作改动，未执行——请重新预览")
+            except Exception:
+                await executor.rollback()
+                raise
     return _member_notice_redirect(
         f"已同步：新增 {len(plan.to_add)}，重新启用 {len(plan.to_enable)}，"
         f"停用 {len(plan.to_disable)}，改备注 {len(plan.to_update_note)}，"
