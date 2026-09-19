@@ -77,8 +77,9 @@
     —— `Lint, Type-check & Test (ubuntu-latest)` / `Lint, Type-check & Test (windows-latest)` /
     `Runtime deps regression (clean install)` **三个 job 全部 success**；
   - 探针入库提交 `89865e1`：[run 35431717989](https://github.com/miaomiao636/qq-group-moderation-bot/actions/runs/35431717989)
-    —— Ubuntu `jobId=105867402227` success、clean runtime-deps `jobId=105867402303` success，
-    Windows `jobId=105867402292`（在写本文时仍在跑，结论见 PR 页面 / 后续提交）。
+    —— **三个 job 全部 success**：Ubuntu `jobId=105867402227`、
+    Windows `jobId=105867402292`、clean runtime-deps `jobId=105867402303`。
+  - 本文档所在提交（纯文档改动）同样触发三 job CI，结论见 PR #45 页面。
 
 ---
 
