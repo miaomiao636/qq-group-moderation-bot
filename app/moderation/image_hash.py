@@ -41,6 +41,10 @@ DEFAULT_MAX_DISTANCE = 8
 BLOCKED_CATEGORIES = frozenset({"porn", "violence"})
 HARD_EVIDENCE_RULES = frozenset({"R001", "R003", "R006"})
 
+# 负责人审核（2026-09-19）时的命中阈值：观察与 enforce 都必须显式用它，
+# **不得**回落到基础 API 默认值（主审 A07）。
+REVIEWED_MAX_DISTANCE = 2
+
 # 管线接入模式：off（默认，零行为变化）/ shadow（只记录）/ enforce（未实现）
 VALID_MODES = frozenset({"off", "shadow", "enforce"})
 
@@ -170,18 +174,25 @@ async def observe_shadow(
     verdict: str,
     category: str,
     rule_ids: Iterable[str],
-    max_distance: int = DEFAULT_MAX_DISTANCE,
+    max_distance: int = REVIEWED_MAX_DISTANCE,
+    additional_blockers: Iterable[str] = (),
 ) -> dict[str, object] | None:
-    """**shadow 观察**：对图片附件算 dHash 并与白名单比对，返回观察结果（不改变判定）。
+    """**shadow 观察**：对图片附件算 dHash 并与白名单比对，返回观察结果（**绝不改变判定**）。
 
-    ``mode()`` 为 ``off`` 时返回 ``None``（调用方不写字段）。命中信息仅用于取证：
-    ``would_allow`` 表示"若切 enforce，本条**本可**被放行"（已扣除色情/暴力与本地硬证据例外）。
+    ``mode()`` 为 ``off`` 时返回 ``None``（调用方不写字段）。
+
+    - **A03**：读图/查库/任何异常只记 ``unavailable``，**不得抛给主流程**；
+    - **A06**：``would_allow`` 扣除全证据例外（调用方经 ``additional_blockers`` 传入
+      严重类别、未定论、附件缺失、evidence_vetoes 等）；
+    - **A07**：默认阈值 = 负责人审核值 ``REVIEWED_MAX_DISTANCE``（≤2）。
     """
     if mode() == "off":
         return None
     rules = {str(rule) for rule in rule_ids}
-    blocked = category in BLOCKED_CATEGORIES or any(
-        rule in HARD_EVIDENCE_RULES or rule.startswith("DR_") for rule in rules
+    blocked = (
+        category in BLOCKED_CATEGORIES
+        or any(rule in HARD_EVIDENCE_RULES or rule.startswith("DR_") for rule in rules)
+        or any(str(item) for item in additional_blockers)
     )
     checked = 0
     observation: dict[str, object] = {"mode": mode(), "checked": 0, "matched": False}
@@ -196,7 +207,17 @@ async def observe_shadow(
         if not path.is_file():
             continue
         checked += 1
-        hit = await match_bytes(session, path.read_bytes(), max_distance=max_distance)
+        try:
+            data = path.read_bytes()
+        except OSError:
+            # 并行清理 / 权限变化：观察不可用，不影响主判定
+            observation["unavailable"] = "read_failed"
+            continue
+        try:
+            hit = await match_bytes(session, data, max_distance=max_distance)
+        except Exception:  # noqa: BLE001 - 观察失败绝不影响主流程
+            observation["unavailable"] = "db_failed"
+            continue
         if hit is None:
             continue
         observation.update(

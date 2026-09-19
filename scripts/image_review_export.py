@@ -113,7 +113,9 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="导出需负责人审核的图片清单（只读 + 复制原图）")
     parser.add_argument("--db", default=str(ROOT / "data" / "moderation.db"))
     parser.add_argument("--media-dir", default=str(ROOT / "data" / "media"))
-    parser.add_argument("--samples-dir", default=str(ROOT / "docs" / "evidence" / "allowlist-samples"))
+    parser.add_argument(
+        "--samples-dir", default=str(ROOT / "docs" / "evidence" / "allowlist-samples")
+    )
     parser.add_argument("--out", default=str(ROOT / "docs" / "evidence" / "image-review"))
     parser.add_argument("--max-distance", type=int, default=2)
     parser.add_argument("--limit", type=int, default=4000)
@@ -128,10 +130,20 @@ def main(argv: list[str] | None = None) -> int:
         limit=args.limit,
     )
 
-    out_dir = Path(args.out)
-    out_dir.mkdir(parents=True, exist_ok=True)
-    for old in out_dir.glob("img-*"):
-        old.unlink()
+    out_dir = Path(args.out).resolve()
+    media_root = Path(args.media_dir).resolve()
+    samples_root = Path(args.samples_dir).resolve()
+    # A02：输出目录**不得**与输入目录重合或位于其内——旧实现会在这里通配删除原图。
+    if (
+        out_dir in (media_root, samples_root)
+        or media_root in out_dir.parents
+        or samples_root in out_dir.parents
+    ):
+        print(f"REVIEW_EXPORT_FAILED 输出目录与输入目录重合/位于其内：{out_dir}")
+        return 2
+    # 每个批次独立目录（不删除任何既有文件）；失败即非零退出。
+    batch = out_dir / f"batch-{datetime.now(UTC):%Y%m%dT%H%M%SZ}"
+    batch.mkdir(parents=True, exist_ok=False)
 
     lines = [
         "# 需负责人审核的图片清单（哈希白名单会改变判定）",
@@ -147,20 +159,24 @@ def main(argv: list[str] | None = None) -> int:
         "| --- | --- | --- | --- | --- | --- | --- | --- | --- |",
     ]
     with_images = 0
+    copy_failures = 0
     for order, (_index, entry) in enumerate(
         sorted(groups.items(), key=lambda kv: -int(kv[1]["would_change"])), start=1
     ):  # type: ignore[arg-type]
         source = Path(str(entry["image"]))
         suffix = source.suffix.lower() or ".jpg"
-        target = out_dir / f"img-{order:02d}_{to_hex(int(entry['hash']))}{suffix}"
+        target = batch / f"img-{order:02d}_{to_hex(int(entry['hash']))}{suffix}"
         try:
             shutil.copy2(source, target)
             with_images += 1
-        except OSError:
-            target = source  # 复制失败时直接指向原图
+        except OSError as exc:  # A02：复制失败必须显式失败，不能谎报完整
+            copy_failures += 1
+            print(f"  [失败] 复制原图失败：{source}（{exc}）")
+            target = source
         verdicts = ", ".join(f"{key}:{value}" for key, value in entry["verdicts"].most_common())  # type: ignore[union-attr]
         categories = ", ".join(
-            f"{key}:{value}" for key, value in entry["categories"].most_common()  # type: ignore[union-attr]
+            f"{key}:{value}"
+            for key, value in entry["categories"].most_common()  # type: ignore[union-attr]
         )
         distances = entry["distances"]  # type: ignore[assignment]
         samples = "<br>".join(str(x) for x in entry["samples"])  # type: ignore[union-attr]
@@ -179,8 +195,11 @@ def main(argv: list[str] | None = None) -> int:
         "- 标「放行」的图：保留；",
         "- 全部确认后即可切 enforce（放行），并保留色情/暴力与本地硬证据例外。",
     ]
-    (out_dir / "IMAGE_REVIEW.md").write_text("\n".join(lines) + "\n", encoding="utf-8")
-    print(f"REVIEW_EXPORT_OK {out_dir / 'IMAGE_REVIEW.md'}")
+    (batch / "IMAGE_REVIEW.md").write_text("\n".join(lines) + "\n", encoding="utf-8")
+    if copy_failures:
+        print(f"REVIEW_EXPORT_FAILED {copy_failures} 张原图复制失败（批次目录 {batch}）")
+        return 2
+    print(f"REVIEW_EXPORT_OK {batch / 'IMAGE_REVIEW.md'}")
     print(f"待审核图片={len(groups)} 已复制原图={with_images} 阈值<={args.max_distance}")
     return 0
 

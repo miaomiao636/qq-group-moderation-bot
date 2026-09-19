@@ -32,7 +32,7 @@ from app.moderation.decision import (
 )
 from app.moderation.dynamic_rules import load_cached_active_snapshot
 from app.moderation.image_engine import ImageModerationEngine, MediaAnalysis, merge_decisions
-from app.moderation.image_hash import observe_shadow
+from app.moderation.image_hash import REVIEWED_MAX_DISTANCE, observe_shadow
 from app.moderation.media_engine import evaluate_file, evaluate_video, evaluate_voice
 from app.moderation.review_gate import ReviewGate
 from app.moderation.rules import TextRuleEngine
@@ -448,14 +448,36 @@ async def _run_pipeline(
         # 图片感知哈希白名单 **shadow 观察**（负责人 2026-09-19）：
         # `IMAGE_HASH_MODE=off`（默认）时完全不读白名单、不写字段——线上行为零变化；
         # `shadow` 时只把"是否命中 / 本可放行"写进判定明细，**不改变判定**（enforce 未实现）。
-        image_hash_observation = await observe_shadow(
-            session,
-            attachments=msg.attachments,
-            media_dir=MEDIA_DIR,
-            verdict=decision.verdict,
-            category=decision.category or "",
-            rule_ids=[hit.rule_id for hit in decision.rule_hits],
-        )
+        # A06：把"全证据"层面的例外也算进来（严重类别 / 未定论 / 附件缺失 / 否决），
+        # 否则 would_allow 会高估"本可放行"。
+        extra_blockers: list[str] = []
+        if evidence_vetoes:
+            extra_blockers.append("evidence_veto")
+        if any(str(r.category or "") in ("porn", "violence") for r in ai_results):
+            extra_blockers.append("attachment_category")
+        if any(r.needs_review or r.degraded_reason for r in ai_results):
+            extra_blockers.append("unresolved")
+        if any(
+            str(att.content_type).startswith("image/")
+            and not (MEDIA_DIR / Path(str(att.filename)).name).is_file()
+            for att in msg.attachments
+        ):
+            extra_blockers.append("media_missing")
+        # A03：观察器**任何**异常都不得中断主判定与动作编排。
+        try:
+            image_hash_observation = await observe_shadow(
+                session,
+                attachments=msg.attachments,
+                media_dir=MEDIA_DIR,
+                verdict=decision.verdict,
+                category=decision.category or "",
+                rule_ids=[hit.rule_id for hit in decision.rule_hits],
+                max_distance=REVIEWED_MAX_DISTANCE,
+                additional_blockers=extra_blockers,
+            )
+        except Exception:  # noqa: BLE001 - 观察失败只记录，不影响审核
+            logger.warning("图片哈希观察失败（已忽略，不影响判定）", exc_info=True)
+            image_hash_observation = {"mode": "shadow", "unavailable": "observer_error"}
         if image_hash_observation is not None:
             detail["image_hash"] = image_hash_observation
         record = await upsert_shadow_decision(

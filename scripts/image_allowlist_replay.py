@@ -86,9 +86,8 @@ def replay(
             for entry in detail.get("rule_hits") or []
             if isinstance(entry, dict)
         }
-        blocked = (
-            category in BLOCKED_CATEGORIES
-            or any(rid in HARD_EVIDENCE or str(rid).startswith("DR_") for rid in rule_ids)
+        blocked = category in BLOCKED_CATEGORIES or any(
+            rid in HARD_EVIDENCE or str(rid).startswith("DR_") for rid in rule_ids
         )
         record = {
             "message_id": message_id,
@@ -178,15 +177,15 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="图片哈希白名单历史回放对比（只读）")
     parser.add_argument("--db", default=str(ROOT / "data" / "moderation.db"))
     parser.add_argument("--media-dir", default=str(ROOT / "data" / "media"))
-    parser.add_argument("--samples-dir", default=str(ROOT / "docs" / "evidence" / "allowlist-samples"))
+    parser.add_argument(
+        "--samples-dir", default=str(ROOT / "docs" / "evidence" / "allowlist-samples")
+    )
     parser.add_argument("--max-distance", type=int, default=DEFAULT_MAX_DISTANCE)
     parser.add_argument("--limit", type=int, default=4000)
     parser.add_argument("--out", default=str(ROOT / "docs" / "evidence" / "stats"))
     args = parser.parse_args(argv)
 
-    whitelist = load_whitelist(
-        Path(args.samples_dir), Path(args.db), Path(args.media_dir)
-    )
+    whitelist = load_whitelist(Path(args.samples_dir), Path(args.db), Path(args.media_dir))
     result = replay(
         db=Path(args.db),
         media_dir=Path(args.media_dir),
