@@ -53,6 +53,25 @@ def _cell(value: object) -> str:
     return "-" if value is None else str(value)
 
 
+def _parse_utc(text: str) -> str:
+    """把窗口时间**解析并规范化**为 UTC ``YYYY-MM-DD HH:MM:SS`` 字符串。
+
+    主审 C05：此前直接把输入字符串与库里的时间比较——`2026-01-02T00:00:00Z` 这类
+    ISO 写法与库里的空格写法**不等价**，会漏掉起点、纳入终点；非法/逆序还会生成"成功报告"。
+    支持：`YYYY-MM-DD HH:MM:SS`、带 `T`/`Z`/`±HH:MM` 偏移的 ISO 8601（统一折算到 UTC）。
+    """
+    raw = (text or "").strip()
+    try:
+        parsed = datetime.fromisoformat(raw.replace("Z", "+00:00").replace("z", "+00:00"))
+    except ValueError as exc:
+        raise ValueError(
+            f"不支持的时间格式：{text!r}（支持 'YYYY-MM-DD HH:MM:SS' 或 ISO 8601 带偏移）"
+        ) from exc
+    if parsed.tzinfo is not None:
+        parsed = parsed.astimezone(UTC)
+    return parsed.strftime("%Y-%m-%d %H:%M:%S")
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="shadow 观察报告（只读）")
     parser.add_argument("--db", default=str(ROOT / "data" / "moderation.db"))
@@ -62,11 +81,25 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
 
     db = Path(args.db)
+    window: tuple[str, str] | None = None
+    if args.since or args.until:
+        # C05（主审第十轮）：**先解析并规范化到 UTC**，再校验起点早于终点；
+        # 非法/逆序一律拒绝生成报告（此前直接按字符串比较会漏起点、纳终点，甚至给出假成功）。
+        try:
+            start = _parse_utc(args.since) if args.since else "0000"
+            end = _parse_utc(args.until) if args.until else "9999"
+        except ValueError as exc:
+            print(f"WINDOW_INVALID {exc} → 拒绝生成报告")
+            return 2
+        if start >= end:
+            print(f"WINDOW_INVALID 起点不早于终点：{start} → {end} → 拒绝生成报告")
+            return 2
+        window = (start, end)
     con = sqlite3.connect(f"file:{db}?mode=ro", uri=True)
     try:
-        if args.since or args.until:
+        if window is not None:
             # 起点**含**、终点**不含**；观测、总数、图片数**同一范围**（窗外一律不计入）。
-            lo, hi = args.since or "0000", args.until or "9999"
+            lo, hi = window
             rows = con.execute(SQL + _RANGE + _ORDER, (lo, hi)).fetchall()
             total = con.execute(
                 _COUNT + " where created_at >= ? and created_at < ?", (lo, hi)
@@ -104,8 +137,13 @@ def main(argv: list[str] | None = None) -> int:
         "- **口径警示**：本报告**不是**「窗口内覆盖率」的证据 —— 默认口径下分子（观察条数）与"
         f"分母（全库留存判定 {total} 条、其中图片判定 {image_total} 条）**不同范围**，"
         "不得相除得出覆盖率或命中率；需要窗口口径请用 `--since/--until` 重出。",
-        f"- **有 `image_hash` 观察的判定**：{len(rows)} 条（全库留存累计判定 {total} 条，"
-        f"其中图片判定 {image_total} 条；两者**不同范围**，不可相除）",
+        f"- **有 `image_hash` 观察的判定**：{len(rows)} 条"
+        + (
+            f"（窗口内判定 {total} 条，其中图片判定 {image_total} 条；**同一 UTC 半开范围**）"
+            if windowed
+            else f"（全库留存累计判定 {total} 条，其中图片判定 {image_total} 条；"
+            "两者**不同范围**，不可相除）"
+        ),
         f"- 模式分布：{dict(modes) or '（无）'}",
         f"- **命中（matched）**：{len(matched)} 条；其中 **would_allow**：{len(would_allow)} 条"
         "（raw 观察信号，**不是** enforce 执行承诺——enforce 未实现、未授权）",

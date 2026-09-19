@@ -203,6 +203,10 @@ def main(argv: list[str] | None = None) -> int:
         now = datetime.now(UTC).strftime("%Y-%m-%d %H:%M:%S.%f")
         inserted_owners, inserted_routes = [], []
         try:
+            # C01/P1（主审第十轮）：**先取真正的写锁**再复核——默认连接下此前的 SELECT 并不开启
+            # 写事务，复核与首次 INSERT 之间别的连接仍能提交撤权/跨通道冲突。
+            # `BEGIN IMMEDIATE` 立刻拿写锁，使"复核 → 赋权 → 提交"整体序列化。
+            con.execute("BEGIN IMMEDIATE")
             # R9-09-R / B01：写事务内**逐目标重新复核**资格与完整归属——
             # 预览→备份之间可能已被撤权（版本变化）或并发插入别的 provider 路由。
             # 必须在**任何写入之前**完成，冲突先阻塞、绝不"先写 owner 把冲突消解"。

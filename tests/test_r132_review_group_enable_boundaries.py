@@ -1,12 +1,13 @@
 # ruff: noqa: E402, I001, F401, F811, SIM105
 # Reviewer round-8 probe pack (8299ce8), promoted into the repo suite.
-# Only this header was added, PLUS one documented platform adaptation:
-#   `test_group_survey_uses_configured_account_not_first_config_file` 的注入条件是
-#   `str(self) == "D:/QQ/config"`，而 Windows 上该字符串是 `D:\\QQ\\config`（反斜杠）→
-#   假配置永远注入不进去，探针**在 Windows 上因错误原因失败**。现改为
-#   `str(self) == str(pathlib.Path(survey.ONEBOT_CONFIG_DIR))`（平台无关，语义等价）。
-#   断言与意图逐字未改；`tests/test_r132_review_group_survey_account_binding.py`
-#   另以平台无关方式钉住同一契约。
+# Only this header was added, PLUS documented adaptations:
+#   ①`test_group_survey_uses_configured_account_not_first_config_file` 的注入条件是
+#     `str(self) == "D:/QQ/config"`，而 Windows 上该字符串是 `D:\\QQ\\config`（反斜杠）→
+#     假配置永远注入不进去，探针**在 Windows 上因错误原因失败**。现改为
+#     `str(self) == str(pathlib.Path(survey.ONEBOT_CONFIG_DIR))`（平台无关，语义等价）。
+#   ②主审第十轮决定**移除"注入 loader"的生产兼容分支**后，本文件的 `setup` 夹具改为
+#     **写入合法结构化快照**（测试输入准备），不再替换 `enable.load_survey`——
+#     所有业务断言逐字未改。
 """Independent bulk group action controls; synthetic DBs only, no network.
 
 No production path/config is read. Every CLI --db and artifact directory is
@@ -43,7 +44,27 @@ def setup(tmp_path, monkeypatch):
     stats.mkdir()
     monkeypatch.setattr(enable, "STATS", stats)
     monkeypatch.setattr(survey, "OUT_DIR", stats)
-    monkeypatch.setattr(enable, "load_survey", lambda: [("1001", 300, "Synthetic", False)])
+    # 夹具适配（主审第十轮决定：生产已移除"注入 loader"的兼容分支，执行路径只认结构化快照）：
+    # 这里改为**写入合法快照**——只是测试输入准备，业务断言逐字未改。
+    (stats / "groups-synthetic.json").write_text(
+        json.dumps(
+            {
+                "self_id": "10000001",
+                "provider": "onebot",
+                "collected_at": "2026-09-20T00:00:00Z",
+                "groups": [
+                    {
+                        "external_group_id": "1001",
+                        "member_count": 300,
+                        "name": "Synthetic",
+                        "action_enabled": False,
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("ONEBOT_SELF_ID", "10000001")
     monkeypatch.setenv("ONEBOT_ACTION_STAGE", "recall_only")
     yield path, engine, stats
     engine.dispose()

@@ -151,8 +151,8 @@ def load_survey() -> list[tuple[str, int, str, bool]]:
     return load_snapshot()[1]
 
 
-# 原函数对象：用于识别"调用方是否替换了 `load_survey`"（注入名单的兼容路径）。
-_ORIGINAL_LOAD_SURVEY = load_survey
+# 注：主审第十轮已移除"注入 loader 的生产兼容分支"；`load_survey` 仅保留给展示/测试使用，
+# 执行路径只认 `load_snapshot()` 的单次读取。
 
 
 def required_columns(con: sqlite3.Connection, table: str) -> list[tuple[str, str, object]]:
@@ -234,33 +234,21 @@ def main(argv: list[str] | None = None) -> int:
     else:
         meta, survey = load_snapshot()
     if not meta:
-        if load_survey is not _ORIGINAL_LOAD_SURVEY:
-            # 兼容路径：调用方**注入**了名单（测试/工具替换了模块级 `load_survey`）且没有快照。
-            # 允许执行，但审计**如实标注** `source=injected_loader`（无账号/摘要证据 = NOT_PROVEN），
-            # 绝不把它当成"已绑定快照"。
-            meta = {
-                "path": "",
-                "sha256": "",
-                "self_id": "",
-                "provider": provider,
-                "collected_at": "",
-                "source": "injected_loader",
-            }
-            survey = load_survey()
-        else:
-            print("REFUSED_SNAPSHOT_UNAVAILABLE 没有可用的结构化普查快照（拒绝执行）")
-            return 2
-    bound_to_snapshot = str(meta.get("source") or "") != "injected_loader"
-    if bound_to_snapshot and not self_id:
+        # 主审第十轮决定：**移除生产兼容分支**——没有可绑定的结构化快照就拒绝执行。
+        # （普通 CLI/JSON 本来就无法伪造该字段，只有同进程替换 Python 函数才能进入；
+        #  那条"无身份执行路径"不应为测试保留。）
+        print("REFUSED_SNAPSHOT_UNAVAILABLE 没有可用的结构化普查快照（拒绝执行）")
+        return 2
+    if not self_id:
         print("REFUSED_NO_SELF_ID ONEBOT_SELF_ID 未配置：无法绑定到具体账号（拒绝执行）")
         return 2
-    if bound_to_snapshot and str(meta.get("self_id") or "") != self_id:
+    if str(meta.get("self_id") or "") != self_id:
         print(
             f"REFUSED_ACCOUNT_BINDING snapshot_self_id={meta.get('self_id') or '（缺失）'} "
             f"configured={self_id} → 快照账号与当前配置不一致，拒绝执行"
         )
         return 2
-    if bound_to_snapshot and str(meta.get("provider") or "") != provider:
+    if str(meta.get("provider") or "") != provider:
         print(
             f"REFUSED_PROVIDER_BINDING snapshot_provider={meta.get('provider') or '（缺失）'} "
             f"target={provider} → 快照不是该 provider 采集的，拒绝执行"
@@ -273,19 +261,28 @@ def main(argv: list[str] | None = None) -> int:
         cols = {c[1] for c in con.execute(f"PRAGMA table_info({args.table})")}
         gid_col = "external_group_id" if "external_group_id" in cols else "group_openid"
         has_version = "version" in cols
-        # R9-01/R9-09-R：前态**只取目标 provider**，并同时取**行版本**——计划要带版本，
-        # 写事务内用 CAS 复核（`version=version+1` 不能替代 `where version=expected`）。
-        current: dict[str, tuple[int, int]] = {}
+        # R9-01/R9-09-R：前态**只取目标 provider**，并同时取**行版本**与 `updated_at`——
+        # 计划要带这些身份，写事务内用 CAS 复核（`version=version+1` 不能替代 `where version=?`；
+        # 直接 SQL 删除重建会让 version 回到 1，`updated_at` 能识别出"不是同一行"）。
+        current: dict[str, tuple[int, int, str]] = {}
         if "provider" in cols and "action_enabled" in cols:
-            selector = f"{gid_col}, action_enabled, " + ("version" if has_version else "1")
+            selector = (
+                f"{gid_col}, action_enabled, "
+                + ("version" if has_version else "1")
+                + ", ifnull(updated_at,'')"
+            )
             for row in con.execute(
                 f"select {selector} from {args.table} where provider=?", (provider,)
             ):
-                current[str(row[0])] = (int(row[1] or 0), int(row[2] or 0))
+                current[str(row[0])] = (
+                    int(row[1] or 0),
+                    int(row[2] or 0),
+                    str(row[3] or ""),
+                )
         plan = []
         for gid, count, name, _flag in targets:
             # R9-09：前态以**数据库现值**为准，旧 Markdown/快照的"是"不得覆盖。
-            before, version = current.get(gid, (0, 0))
+            before, version, updated = current.get(gid, (0, 0, ""))
             new_row = gid not in current
             blocked = new_row and not route_ready(con, provider, gid)
             plan.append(
@@ -296,6 +293,7 @@ def main(argv: list[str] | None = None) -> int:
                     "name": _UNSAFE_NAME.sub(" ", name)[:64],
                     "before": before,
                     "version": version,
+                    "updated_at": updated,
                     "after": 1,
                     "new_row": new_row,
                     "blocked": blocked,
@@ -331,8 +329,19 @@ def main(argv: list[str] | None = None) -> int:
         need_defaults = required_columns(con, args.table)
         changed: list[dict] = []
         try:
+            # C01/C02（主审第十轮）：**先取真正的写锁**——默认连接下预览期的 SELECT 不开启写事务，
+            # "复核 → 写入"之间别的连接仍能提交撤权/路由撤销。`BEGIN IMMEDIATE` 让复核与写入
+            # 整体序列化（一致性备份已在事务之前完成）。
+            con.execute("BEGIN IMMEDIATE")
             for p in plan:
                 if p["blocked"] or (p["before"] == 1 and not p["new_row"]):
+                    continue
+                if p["new_row"] and not route_ready(con, provider, p["group"]):
+                    # C02/P2：**新建行必须在同一写事务内复核路由/归属**——预览到备份之间路由
+                    # 被撤销时，不得再新建 `action_enabled=1`（违反"无路由就不开"的入口契约）。
+                    # 处理方式与预览期一致：**跳过并报告**（不新建、不开启），不虚报成功。
+                    p["blocked"] = True
+                    p["blocked_reason"] = "route_revoked_after_preview"
                     continue
                 if p["new_row"]:
                     row: dict[str, object] = {
@@ -364,9 +373,12 @@ def main(argv: list[str] | None = None) -> int:
                     params: list[object] = [datetime.now(UTC).strftime("%Y-%m-%d %H:%M:%S.%f")]
                     if has_version:
                         conditions += " and version=?"
+                    # `updated_at` 一并 CAS：直接 SQL 删除后用相同 version 重建的新行不属于旧计划。
+                    conditions += " and ifnull(updated_at,'')=?"
                     params += [provider, p["group"]]
                     if has_version:
                         params.append(int(p["version"]))
+                    params.append(str(p["updated_at"] or ""))
                     cursor = con.execute(
                         f"update {args.table} set action_enabled=1, "
                         + ("version=version+1, " if has_version else "")
@@ -382,6 +394,8 @@ def main(argv: list[str] | None = None) -> int:
                     p["rowcount"] = cursor.rowcount
                 changed.append(p)
 
+            # 写事务内可能新增"阻塞"项（C02：路由在预览后被撤销）→ 重新统计，审计与输出如实反映。
+            blocked_items = [p for p in plan if p.get("blocked")]
             # 3) **审计先落盘**（R9-02）：写失败 → 回滚，绝不留下"已开启但无证据"的群。
             audit = STATS / f"enable-groups-{stamp}-{op_id}.plan.json"
             audit.parent.mkdir(parents=True, exist_ok=True)

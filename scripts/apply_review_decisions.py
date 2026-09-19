@@ -31,6 +31,7 @@ from image_allowlist_seed import (  # noqa: E402
     import_seeds,
     record_approval,
     record_rejection,
+    rejection_snapshot_path,
 )
 
 REVIEW_ROOT = ROOT / "docs" / "evidence" / "image-review"
@@ -182,46 +183,81 @@ def main(argv: list[str] | None = None) -> int:
         for value in sorted(rejected):
             record_rejection(db, value, source=f"review:{batch.name}", operator=OPERATOR)
 
-    def _prior_state() -> dict[str, int]:
-        """本次涉及哈希的**导入前状态**（-1 = 库里没有该行），供失败补偿复位。"""
-        state: dict[str, int] = {}
+    def _row_state(con: sqlite3.Connection, value: str) -> tuple[int, int, str] | None:
+        """``(id, enabled, note)``；行不存在 → ``None``。"""
+        row = con.execute(
+            "select id, enabled, note from image_allowlist where phash=?", (value,)
+        ).fetchone()
+        return None if row is None else (int(row[0] or 0), int(row[1] or 0), str(row[2] or ""))
+
+    def _states() -> dict[str, tuple[int, int, str] | None]:
+        """本次涉及哈希的**完整行状态**（id / enabled / note）——用于"只撤销自己那一份"。"""
+        state: dict[str, tuple[int, int, str] | None] = {}
         con = sqlite3.connect(f"file:{db}?mode=ro", uri=True)
         try:
             for value in [seed[3] for seed in approved] + sorted(rejected):
-                row = con.execute(
-                    "select enabled from image_allowlist where phash=?", (value,)
-                ).fetchone()
-                state[value] = -1 if row is None else int(row[0] or 0)
+                state[value] = _row_state(con, value)
         finally:
             con.close()
         return state
 
-    def _compensate(prior: dict[str, int]) -> None:
-        """R9-05-R/R9-06-R：快照落盘失败 → **补偿回滚**已提交的 DB 变更。
-
-        采用"先提交 DB（保住并发语义）+ 失败补偿"，等价于可恢复提交；
-        不把 DB 事务悬在快照写盘期间——那会让并发操作撞上 SQLite 写锁。
-        """
-        con = sqlite3.connect(db)
+    def _snapshot_state(value: str) -> str:
+        """拒绝快照里该哈希**当前的决定状态**（``approved`` / ``rejected`` / 无条目 → 空串）。"""
         try:
+            data = json.loads(rejection_snapshot_path(db).read_bytes().decode("utf-8"))
+        except (OSError, ValueError):
+            return ""
+        entry = data.get(value) if isinstance(data, dict) else None
+        return str(entry.get("state", "rejected")) if isinstance(entry, dict) else ""
+
+    def _compensate(
+        prior: dict[str, tuple[int, int, str] | None],
+        after: dict[str, tuple[int, int, str] | None],
+    ) -> None:
+        """C03/P2（主审第十轮）：**只撤销本操作拥有的那一份变更**。
+
+        仍采用"先提交 DB（保住并发语义）+ 失败补偿"，但补偿必须满足：
+        ① 该行**仍等于本操作写入后的状态**（`after`）才动手——后来的同值/不同值写入、
+           外部删除/重建都会被识别为"不属于本操作"，**跳过并标冲突**；
+        ② 拒绝快照里已有**别的 source** 的决定 → 有更晚的成功决定，**不得覆盖**；
+        ③ 恢复**精确的原 note 字符串**（不做全局删后缀）；恢复不完整如实报告，不假称已回滚。
+        """
+        reverted: list[str] = []
+        conflicts: list[str] = []
+        con = sqlite3.connect(db, timeout=10)
+        try:
+            con.execute("BEGIN IMMEDIATE")
             for value, before in prior.items():
-                if before == -1:
+                if _row_state(con, value) != after.get(value):
+                    conflicts.append(f"{value}:行已被本操作之外的写入改动")
+                    continue
+                # ② 若快照里的**现存决定**与"回滚后应有的状态"矛盾，说明有更晚的成功决定 → 不覆盖。
+                target_enabled = 0 if before is None else int(before[1])
+                entry_state = _snapshot_state(value)
+                if (entry_state == "approved" and target_enabled != 1) or (
+                    entry_state == "rejected" and target_enabled != 0
+                ):
+                    conflicts.append(f"{value}:快照现存决定 state={entry_state} 与回滚结果矛盾")
+                    continue
+                if before is None:
                     con.execute("delete from image_allowlist where phash=?", (value,))
                 else:
                     con.execute(
-                        "update image_allowlist set enabled=?, "
-                        "note = replace(replace(note, ';reapproved:2026-09-19', ''), "
-                        "';excluded:2026-09-19', '') where phash=?",
-                        (before, value),
+                        "update image_allowlist set enabled=?, note=? where phash=?",
+                        (before[1], before[2], value),
                     )
+                reverted.append(value)
             con.commit()
         finally:
             con.close()
         print(
-            f"COMPENSATED_APPROVAL_ROLLBACK hashes={len(prior)}（决定快照写盘失败，已复位 DB 状态）"
+            f"COMPENSATED_APPROVAL_ROLLBACK reverted={len(reverted)} conflicts={len(conflicts)}"
+            "（决定快照写盘失败 → 只复位本操作拥有的行）"
         )
+        if conflicts:
+            print("COMPENSATION_CONFLICT " + "；".join(conflicts) + "（未完全回滚，需人工确认）")
 
-    prior = _prior_state()
+    prior = _states()
     result = import_seeds(
         db=db,
         seeds=approved,
@@ -231,10 +267,11 @@ def main(argv: list[str] | None = None) -> int:
         # 显式重新批准：只有这条路可以覆盖既有拒绝并重新启用
         reapproved={seed[3] for seed in approved},
     )
+    after = _states()
     try:
         _persist_decisions()
     except (OSError, ValueError, RuntimeError):
-        _compensate(prior)
+        _compensate(prior, after)
         raise
     added, duplicate, failed, skipped = result
     print(f"IMPORT_OK 新增={added} 已存在={duplicate} 失败={failed} 排除={skipped}")
