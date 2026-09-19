@@ -31,7 +31,10 @@ def test_notification_upgrade_constraints_and_downgrade(tmp_path: Path) -> None:
             env=environment,
             capture_output=True,
             text=True,
-            timeout=30,
+            # 2026-09-19 CI（windows-latest）曾因冷启动让 `alembic upgrade` 卡到 30s 超时而失败，
+            # 同 SHA 重跑即三 job 全绿——属环境抖动而非迁移缺陷。这里给足余量，**只放宽超时，
+            # 不改任何断言**，避免把 runner 抖动误判成产品问题。
+            timeout=180,
         )
         assert process.returncode == 0, process.stderr
 
