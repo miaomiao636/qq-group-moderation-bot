@@ -167,7 +167,14 @@ def render(data: dict[str, object], *, deployment: str, prompt_version: str, db:
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="固定 UTC 半开窗口统计导出（只读）")
     parser.add_argument("--db", default=str(ROOT / "data" / "moderation.db"))
-    parser.add_argument("--start", default="2026-09-18T17:00:00Z", help="窗口起点（UTC，含）")
+    parser.add_argument(
+        "--start",
+        default="2026-09-18T17:01:22Z",
+        help=(
+            "窗口起点（UTC，含）。默认=**已证明生效的时刻**（9ca1066 部署：新进程启动于 "
+            "UTC 17:01:22，主审 A09：旧默认 17:00:00 会含部署前 82–88 秒）"
+        ),
+    )
     parser.add_argument("--end", default=None, help="窗口终点（UTC，不含）；缺省=导出时刻")
     parser.add_argument("--out", default=str(ROOT / "docs" / "evidence" / "stats"))
     parser.add_argument("--deployment-sha", default="9ca1066")

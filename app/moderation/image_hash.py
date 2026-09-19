@@ -58,11 +58,20 @@ def mode() -> str:
 
 
 def dhash64(data: bytes) -> int | None:
-    """计算 64 位 dHash；无法解码/过小/缺 Pillow 时返回 ``None``（按未命中处理）。"""
+    """计算 64 位 dHash；无法解码 / 过小 / **动图** / 缺 Pillow 时返回 ``None``（按未命中）。
+
+    - **A11**：尺寸检查必须在 **resize 之前**——旧实现先缩到 9×8 再判像素数，等于永不触发；
+    - **G02**：动图（GIF/WebP 多帧）只代表**首帧外观**，不能代表整图内容 →
+      **不参与哈希放行**（enforce 前必须的门槛）。
+    """
     try:
         from PIL import Image
 
         with Image.open(io.BytesIO(data)) as image:
+            if getattr(image, "is_animated", False):
+                return None
+            if image.width < 9 or image.height < 8:
+                return None
             gray = image.convert("L").resize((9, 8), Image.Resampling.LANCZOS)
             pixels = list(gray.getdata())
     except Exception:  # noqa: BLE001 - 任何解码问题都按"未命中"处理

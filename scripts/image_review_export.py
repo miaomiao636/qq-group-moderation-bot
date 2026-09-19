@@ -29,6 +29,7 @@ sys.path.insert(0, str(ROOT / "scripts"))
 
 from app.moderation.image_hash import best_match, dhash64_file, to_hex  # noqa: E402
 from image_allowlist_seed import (  # noqa: E402
+    detail_blockers,
     effective_hashes,
     load_excluded,
     scan_history,
@@ -88,8 +89,10 @@ def collect(
             for entry in detail.get("rule_hits") or []
             if isinstance(entry, dict)
         }
-        blocked = category in BLOCKED_CATEGORIES or any(
-            rid in HARD_EVIDENCE or str(rid).startswith("DR_") for rid in rule_ids
+        blocked = (
+            category in BLOCKED_CATEGORIES
+            or any(rid in HARD_EVIDENCE or str(rid).startswith("DR_") for rid in rule_ids)
+            or bool(detail_blockers(detail))  # A06-R：离线与在线同源看全证据
         )
         for name in names:
             path = media_dir / name.rsplit("/", 1)[-1].rsplit("\\", 1)[-1]

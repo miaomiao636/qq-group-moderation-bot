@@ -94,6 +94,29 @@ def effective_hashes(db: Path) -> set[str] | None:
     return values or None
 
 
+def detail_blockers(detail: dict) -> list[str]:
+    """**A06-R 离线同源**：回放/导出必须与在线一样看**完整证据**。
+
+    在线判据（pipeline）会把"任一附件严重类别 / 任一附件未定论 / evidence_vetoes"计入例外，
+    离线工具此前只看顶层 category 与少数 rule_id，会把这些情形误报成"会改变判定"。
+    """
+    blockers: list[str] = []
+    if detail.get("evidence_vetoes"):
+        blockers.append("evidence_veto")
+    results = detail.get("ai_results") or []
+    if any(
+        isinstance(item, dict) and str(item.get("category") or "") in ("porn", "violence")
+        for item in results
+    ):
+        blockers.append("attachment_category")
+    if any(
+        isinstance(item, dict) and (item.get("needs_review") or item.get("degraded_reason"))
+        for item in results
+    ):
+        blockers.append("unresolved")
+    return blockers
+
+
 def import_seeds(
     *,
     db: Path,
