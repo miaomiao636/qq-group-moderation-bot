@@ -104,10 +104,25 @@ def collect(*, db: Path, start: datetime, end: datetime) -> dict[str, object]:
         hi,
         scope,
     )
-    # A08：越界核查必须看**实际外发目标**（action_logs 的 provider:group），不是"出现过判定的群"。
+    # A08 / R6-03：越界核查必须看**实际外发目标**，且与结果表**共用同一分类**：
+    # `attempts > 0` = **已尝试发送**（失败/超时同样有发送尝试，**不能为清零而剔除**）→ 才算目标；
+    # `attempts = 0` = **未发送**（急停/群开关/阶段拦截）→ 单列，**不进目标集合**；
+    # `attempts IS NULL` = **无法判定** → 单列，也不进目标集合（零证据不当越界）。
     action_targets = q(
         "select provider, external_group_id, count(*) from action_logs "
-        "where created_at >= ? and created_at < ? group by 1, 2 order by 3 desc",
+        "where created_at >= ? and created_at < ? and attempts > 0 group by 1, 2 order by 3 desc",
+        lo,
+        hi,
+    )
+    not_sent_targets = q(
+        "select provider, external_group_id, count(*) from action_logs "
+        "where created_at >= ? and created_at < ? and attempts = 0 group by 1, 2 order by 3 desc",
+        lo,
+        hi,
+    )
+    unknown_attempt_targets = q(
+        "select provider, external_group_id, count(*) from action_logs "
+        "where created_at >= ? and created_at < ? and attempts is null group by 1, 2 order by 3 desc",
         lo,
         hi,
     )
@@ -129,14 +144,24 @@ def collect(*, db: Path, start: datetime, end: datetime) -> dict[str, object]:
         "decisions_by_kind_verdict": by_kind,
         "action_intents_by_status": intents,
         "action_logs_by_action_ok": actions,
+        # R6-04：动作日志的 message_id 是**原始消息 ID**（不是判定表的复合键 `onebot:<self_id>:<id>`），
+        # 两个账号可以出现相同原始 ID——因此**不能**把判定表的 LIKE 前缀条件照搬到动作/意图表，
+        # 那会把真实日志整片过滤掉或错误归属。此处**如实标明**：动作/意图为**全库（全局）统计**，
+        # 含其它账号与无法归属部分，与本账号判定**分列**，不构成同一分子/分母。
+        "action_scope": "global_unattributed",
+        "action_not_sent_targets": not_sent_targets,
+        "action_unknown_attempt_targets": unknown_attempt_targets,
         "per_group": per_group,
         "boundary_check": {
             "action_targets_outside_authorized": outside_action_targets,
             "groups_seen_outside_authorized": outside,
             "note": (
-                "越界 = **实际外发动作的目标**（`action_logs` 的 `provider:group`）不在"
-                ' `action_enabled=1` 的授权集合内——此项**必须为空**；下方"出现过判定但未开动作"'
-                "只是观察面，不等于动作越界。"
+                "越界 = **已尝试外发**（`attempts > 0`）的动作目标（`action_logs` 的 `provider:group`）"
+                "不在 `action_enabled=1` 的授权集合内——此项**必须为空**；`attempts=0`（未发送）"
+                "与 `attempts IS NULL`（无法判定）单列、不计入目标集合；"
+                "**注意**：这里比的是**导出时刻**的授权集合，只能说明与导出时的授权一致，"
+                "**不能**证明动作发生时未越权（未绑定历史授权快照，该事实按 NOT_PROVEN 处理）；"
+                '另："出现过判定但未开动作"只是观察面，不等于动作越界。'
             ),
         },
         "dedupe": DEDUPE_NOTE,
@@ -163,8 +188,10 @@ def render(data: dict[str, object], *, deployment: str, prompt_version: str, db:
         f"- 统计窗口：`{data['window']['start_utc']}` → `{data['window']['end_utc']}`"
         f"（{data['window']['semantics']}，UTC）",
         f"- 机器人账号（self_id）：{data['account'] or '未配置'}",
-        f"- 其它账号消息（已分离、不计入下表）：{data['other_account_decisions']} 条"
-        "（A08：不同 self_id 的消息不得混入本账号统计）",
+        f"- 其它账号消息（**仅判定表**可分离）：{data['other_account_decisions']} 条"
+        "（R6-04：判定表按 `onebot:<self_id>:` 分离；**动作/意图表**的 message_id 是**原始消息 ID**、"
+        "两个账号可重复，无法安全归属 → 下表动作/意图为**全库（全局）统计**，含其它账号与不可归属部分，"
+        "**不是**本账号判定的分子）",
         "- **动作状态语义**（A08）：`SKIPPED` = **未发送**（急停/群开关/阶段拦截，不是请求失败）；"
         "`ok=0` 且 `err_code` 为空 = 调用未成功但**最终效果未知**；`err_code=1200` = 调用超时"
         '（同样不等于客户端最终未撤回）。三类不得混写成同一种"失败"。',
@@ -206,11 +233,15 @@ def render(data: dict[str, object], *, deployment: str, prompt_version: str, db:
         "",
         "## 越界核查",
         "",
-        "- **实际外发动作的目标**（provider:group）不在授权集合内（必须为空）："
+        "- **已尝试外发**（attempts>0）动作的目标（provider:group）不在授权集合内（必须为空）："
         + (
             ", ".join(str(g) for g in data["boundary_check"]["action_targets_outside_authorized"])
             or "**无**"
         ),
+        "- **未发送**（attempts=0，拦截/跳过）的目标（单列、不算越界）："
+        + (", ".join(f"{p}:{g}×{c}" for p, g, c in data["action_not_sent_targets"]) or "无"),
+        "- **无法判定**（attempts 为空）的目标（单列、不算越界）："
+        + (", ".join(f"{p}:{g}×{c}" for p, g, c in data["action_unknown_attempt_targets"]) or "无"),
         "- 出现过判定、但未启用真实动作的群（观察面）："
         + (
             ", ".join(str(g) for g in data["boundary_check"]["groups_seen_outside_authorized"])

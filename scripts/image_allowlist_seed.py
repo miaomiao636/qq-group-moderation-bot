@@ -92,6 +92,27 @@ def disabled_hashes(db: Path) -> set[str]:
     return {str(row[0]).lower() for row in rows}
 
 
+def effective_state(db: Path) -> tuple[set[str] | None, str]:
+    """生效名单 + **读取状态原因**（主审 R6-02）：``("ok")`` / ``("missing_table")`` /
+    ``("bad_schema")`` / ``("unreadable")``。
+
+    三态底层契约不变（表存在但为空 = 空集；缺表/缺列 = ``None`` = unavailable），
+    但**上层报告必须写出原因**，不能把"缺迁移 / 坏结构"与"生效名单就是空的"混成一句结论。
+    """
+    try:
+        con = sqlite3.connect(f"file:{db}?mode=ro", uri=True)
+    except sqlite3.Error:
+        return None, "unreadable"
+    try:
+        try:
+            rows = con.execute("select phash from image_allowlist where enabled=1").fetchall()
+        except sqlite3.OperationalError as exc:
+            return None, "missing_table" if "no such table" in str(exc).lower() else "bad_schema"
+    finally:
+        con.close()
+    return {str(row[0]).lower() for row in rows}, "ok"
+
+
 def effective_hashes(db: Path) -> set[str] | None:
     """**生效名单**：已导入且 ``enabled=1`` 的哈希集合（A05-R）。
 
@@ -114,25 +135,46 @@ def effective_hashes(db: Path) -> set[str] | None:
 
 
 def detail_blockers(detail: dict) -> list[str]:
-    """**A06-R 离线同源**：回放/导出必须与在线一样看**完整证据**。
+    """**A06-R / R6-01 离线同源**：回放/导出必须与在线看**同一套**完整证据。
 
-    在线判据（pipeline）会把"任一附件严重类别 / 任一附件未定论 / evidence_vetoes"计入例外，
-    离线工具此前只看顶层 category 与少数 rule_id，会把这些情形误报成"会改变判定"。
+    在线判据是 `app.moderation.ai.attachment_reviews_unresolved`，覆盖：任一附件严重类别、
+    任一附件未定论——**含二审异类 / 二审置信不足 / 二审与主审同模型（不独立）/ 孤儿二审**——
+    以及 `evidence_vetoes`、附件缺失。
+    离线此前只检查严重类别 / `needs_review` / `degraded_reason` / veto，于是"二审无效"的三类
+    情形会被离线误报成"会改变判定"（主审 R6-01 实测 6 项）。现在**直接调同一个函数**。
+
+    旧记录缺 `review_role`/`review_group` 等复核字段时无法判定是否已消疑 →
+    标 `unresolved_unknown`（**保守**：计入例外），**绝不按默认阈值猜成已消疑**。
     """
     blockers: list[str] = []
     if detail.get("evidence_vetoes"):
         blockers.append("evidence_veto")
-    results = detail.get("ai_results") or []
-    if any(
-        isinstance(item, dict) and str(item.get("category") or "") in ("porn", "violence")
-        for item in results
-    ):
+    raw = detail.get("ai_results")
+    results = [item for item in raw if isinstance(item, dict)] if isinstance(raw, list) else []
+    if any(str(item.get("category") or "") in ("porn", "violence") for item in results):
         blockers.append("attachment_category")
-    if any(
-        isinstance(item, dict) and (item.get("needs_review") or item.get("degraded_reason"))
-        for item in results
-    ):
+    if any(item.get("needs_review") or item.get("degraded_reason") for item in results):
         blockers.append("unresolved")
+    if not results:
+        return blockers
+    review_evidence = any(
+        item.get("review_role") == "secondary" or item.get("review_reason") for item in results
+    )
+    if any("review_role" not in item or "review_group" not in item for item in results):
+        if review_evidence:
+            blockers.append("unresolved_unknown")
+        return blockers
+    try:
+        from app.moderation.ai import AIModerationResult, attachment_reviews_unresolved
+
+        parsed = [AIModerationResult.model_validate(item) for item in results]
+    except Exception:  # noqa: BLE001 - 解析不了就不猜（有复核痕迹则保守计入例外）
+        if review_evidence:
+            blockers.append("unresolved_unknown")
+        return blockers
+    if attachment_reviews_unresolved(parsed):
+        # local=None：只用结果里已持久化的 review_reason，不重算、不按默认阈值猜
+        blockers.append("unresolved_secondary")
     return blockers
 
 

@@ -883,19 +883,26 @@ def _secondary_pair_is_valid(
     )
 
 
-def _attachment_reviews_unresolved(
+def attachment_reviews_unresolved(
     ai_results: list[AIModerationResult],
-    local: ModerationDecision,
+    local: ModerationDecision | None = None,
     *,
     primary_direct_threshold: float = 0.90,
     secondary_review_low: float = 0.60,
     secondary_review_high: float = 0.90,
 ) -> bool:
-    """是否有**附件的复核对未形成结论**（主审 F02-R）。
+    """是否有**附件的复核对未形成结论**（主审 F02-R）——在线与离线**唯一**判据（主审 R6-01）。
 
-    判据与主路径一致：任一首轮结果需要复核（灰区/冲突）却没有**恰好一个**有效二审
+    判据：任一首轮结果需要复核（灰区/冲突）却没有**恰好一个**有效二审
     （异类、低置信、非独立模型、降级、需人工），或存在孤儿二审。
     这样"另一张图上有小程序码"就不可能替这张图的未决复核收尾。
+
+    **离线必须调本函数**：离线工具只有 `model_dump()` 出的字典，用
+    `AIModerationResult.model_validate` 还原后传入即可——不存在"在线看二审有效性、
+    离线只看两个布尔字段"的第二套判据。
+    `local is None`（离线无本地判定对象）时只用结果里**已持久化**的 `review_reason`：
+    既**不重算**，也**不按默认阈值把"缺证据"猜成"已消疑"**（缺证据的旧记录由调用方标
+    `unknown`，按保守方向计入例外）。
     """
     primaries = [r for r in ai_results if r.source == "vision" and r.review_role == "primary"]
     for primary in primaries:
@@ -904,11 +911,15 @@ def _attachment_reviews_unresolved(
             for r in ai_results
             if r.review_role == "secondary" and r.review_group == primary.review_group
         ]
-        reason = primary.review_reason or secondary_review_reason(
-            primary,
-            local,
-            direct_threshold=primary_direct_threshold,
-            low_threshold=secondary_review_low,
+        reason = primary.review_reason or (
+            ""
+            if local is None
+            else secondary_review_reason(
+                primary,
+                local,
+                direct_threshold=primary_direct_threshold,
+                low_threshold=secondary_review_low,
+            )
         )
         if (reason or secondaries) and (
             len(secondaries) != 1
@@ -923,6 +934,24 @@ def _attachment_reviews_unresolved(
     primary_groups = {r.review_group for r in primaries}
     return any(
         r.review_role == "secondary" and r.review_group not in primary_groups for r in ai_results
+    )
+
+
+def _attachment_reviews_unresolved(
+    ai_results: list[AIModerationResult],
+    local: ModerationDecision,
+    *,
+    primary_direct_threshold: float = 0.90,
+    secondary_review_low: float = 0.60,
+    secondary_review_high: float = 0.90,
+) -> bool:
+    """兼容包装（原调用点不变）：统一走 `attachment_reviews_unresolved`。"""
+    return attachment_reviews_unresolved(
+        ai_results,
+        local,
+        primary_direct_threshold=primary_direct_threshold,
+        secondary_review_low=secondary_review_low,
+        secondary_review_high=secondary_review_high,
     )
 
 

@@ -33,6 +33,7 @@ from image_allowlist_seed import (  # noqa: E402
     detail_blockers,
     disabled_hashes,
     effective_hashes,
+    effective_state,
     load_excluded,
     scan_history,
     scan_samples,
@@ -221,13 +222,41 @@ def main(argv: list[str] | None = None) -> int:
     batch = out_dir / f"batch-{datetime.now(UTC):%Y%m%dT%H%M%SZ}"
     batch.mkdir(parents=True, exist_ok=False)
 
+    # R6-02：**生效名单评估**与**候选图片搜集**必须分列，且报告要写出模式、来源、读取状态——
+    # 不能悄悄把"读不到白名单"或"生效名单为空"补成候选后仍冒充同一次生效评估。
+    _state, state_reason = effective_state(Path(args.db))
+    labels = [source for _value, source in whitelist]
+    if state_reason != "ok":
+        set_mode = "candidate"
+        mode_note = f"生效名单不可读（`{state_reason}`）→ 本清单是**候选**，不是生效评估"
+    elif _state:
+        set_mode = "active"
+        mode_note = "按**生效名单**（`image_allowlist` 中 `enabled=1`）评估"
+    elif labels:
+        set_mode = "candidate_referenced"
+        mode_note = "生效名单**为空** → 仅取『判定引用过且与样本库同图』的候选（非生效集合）"
+    else:
+        set_mode = "empty"
+        mode_note = "生效名单为空且无候选"
+    source_mix = ", ".join(sorted({label.split(":")[0] for label in labels})) or "无"
+
     lines = [
         "# 需负责人审核的图片清单（哈希白名单会改变判定）",
         "",
         f"- 生成时刻（UTC）：{datetime.now(UTC).isoformat(timespec='seconds')}",
+        f"- **集合模式**：`{set_mode}` —— {mode_note}",
+        f"- **集合来源构成**：{source_mix}",
         f"- 命中阈值：汉明距离 <= {args.max_distance}；扫描范围：最近 {args.limit} 条图片判定",
         f"- 待审核图片：**{len(groups)} 张**（唯一图片；同图的多条消息已折叠）",
         "",
+    ]
+    if set_mode != "active":
+        lines += [
+            "> ⚠️ **本清单不是生效名单评估结果**：它只是**候选**图片搜集，供负责人判断哪些图"
+            "**值得考虑**；不得据此声称与在线使用同一生效集合。",
+            "",
+        ]
+    lines += [
         "> 请对**每张图**给一个结论（**放行 / 撤回**），我按你的结论增删白名单条目。",
         "> 图片就在本目录下（`img-XX_<hash>.jpg/png`），点开对照即可。",
         "",
@@ -274,7 +303,8 @@ def main(argv: list[str] | None = None) -> int:
         "",
         "- 标「撤回」的图：我从白名单里**删除**对应哈希（或按你的要求收紧阈值）；",
         "- 标「放行」的图：保留；",
-        "- 全部确认后即可切 enforce（放行），并保留色情/暴力与本地硬证据例外。",
+        "- **enforce（命中即放行）尚未实现、未经复验，也未获负责人授权**——本清单"
+        "**不构成**启用依据；请勿据本文件切 enforce。",
     ]
     (batch / "IMAGE_REVIEW.md").write_text("\n".join(lines) + "\n", encoding="utf-8")
     if copy_failures:
