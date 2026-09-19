@@ -31,6 +31,7 @@ from app.moderation.image_hash import (  # noqa: E402
     to_hex,
 )
 from image_allowlist_seed import (  # noqa: E402
+    detail_blockers,
     effective_hashes,
     load_excluded,
     scan_history,
@@ -108,8 +109,13 @@ def replay(
             for entry in detail.get("rule_hits") or []
             if isinstance(entry, dict)
         }
-        blocked = category in BLOCKED_CATEGORIES or any(
-            rid in HARD_EVIDENCE or str(rid).startswith("DR_") for rid in rule_ids
+        # A06-R：离线必须与在线**同源**看完整证据（严重类别 / 未定论 / evidence_vetoes），
+        # 不能只看顶层 category 与少数 rule_id——否则会把"另一附件未定论/缺失"误报成会放行。
+        detail_block = detail_blockers(detail)
+        blocked = (
+            category in BLOCKED_CATEGORIES
+            or any(rid in HARD_EVIDENCE or str(rid).startswith("DR_") for rid in rule_ids)
+            or bool(detail_block)
         )
         record = {
             "message_id": message_id,
@@ -122,6 +128,7 @@ def replay(
             "blocked_by": sorted(
                 ({"category"} if category in BLOCKED_CATEGORIES else set())
                 | {str(r) for r in rule_ids if r in HARD_EVIDENCE or str(r).startswith("DR_")}
+                | set(detail_block)
             ),
         }
         if blocked:
