@@ -93,9 +93,24 @@ def _card(no: str, status: str, image: str, source: str, fields: dict[str, str])
 </div>"""
 
 
-def build(batch: Path) -> Path:
+def build(batch: Path, exclude: Path | None = None) -> Path:
     text = (batch / "IMAGE_REVIEW.md").read_text(encoding="utf-8")
     lines = text.splitlines()
+    skip: set[str] = set()
+    if exclude is not None:
+        # 只保留"没在已审批次里出现过"的图（按文件 SHA-256 判定），避免重复审核
+        for line in (exclude / "IMAGE_REVIEW.md").read_text(encoding="utf-8").splitlines():
+            m = ROW.match(line)
+            if m:
+                cells = [c.strip() for c in line.split("|")]
+                if len(cells) > 5:
+                    # 第 5 列 = 文件 SHA-256（第 4 列是"来源"）
+                    skip.add(cells[5].strip("`"))
+        lines = [
+            line
+            for line in lines
+            if not (ROW.match(line) and [c.strip() for c in line.split("|")][5].strip("`") in skip)
+        ]
     header = [ln for ln in lines if "待审核图片" in ln or "集合模式" in ln or "动图范围" in ln]
     cards: list[str] = []
     for line in lines:
@@ -121,7 +136,7 @@ def build(batch: Path) -> Path:
                 },
             )
         )
-    out = batch / "REVIEW.html"
+    out = batch / ("REVIEW_NEW.html" if exclude is not None else "REVIEW.html")
     out.write_text(
         PAGE.format(
             batch=batch.name,
@@ -136,15 +151,21 @@ def build(batch: Path) -> Path:
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="生成可勾选的图片审核网页")
     parser.add_argument("--batch", default=None, help="批次目录；缺省=最新批次")
+    parser.add_argument(
+        "--exclude-batch",
+        default=None,
+        help="已审批次目录：排除其中已出现过的图（按文件 SHA-256），只渲染新增",
+    )
     args = parser.parse_args(argv)
     batch = (
         Path(args.batch)
         if args.batch
         else max(DEFAULT_ROOT.glob("batch-*"), key=lambda p: p.stat().st_mtime)
     )
-    out = build(batch)
+    exclude = Path(args.exclude_batch) if args.exclude_batch else None
+    out = build(batch, exclude)
     count = out.read_text(encoding="utf-8").count('class="card"')
-    print(f"REVIEW_SHEET_OK {out} （{count} 张）")
+    print(f"REVIEW_SHEET_OK {out} （{count} 张{'新增' if exclude else ''}）")
     return 0
 
 
