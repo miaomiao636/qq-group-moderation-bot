@@ -65,6 +65,16 @@ def collect(*, db: Path, start: datetime, end: datetime) -> dict[str, object]:
         lo,
         hi,
     )
+    # A08：另一个 self_id 的消息**不得混入**本账号统计——按 message_id 前缀显式分离。
+    self_id = account[0] if account else ""
+    other_account = q(
+        "select count(*) from shadow_decisions where created_at >= ? and created_at < ? "
+        "and (? <> '' and message_id not like ?)",
+        lo,
+        hi,
+        self_id,
+        f"onebot:{self_id}:%",
+    )
     intents = q(
         "select status, count(*) from action_intents "
         "where created_at >= ? and created_at < ? group by status order by 2 desc",
@@ -90,6 +100,8 @@ def collect(*, db: Path, start: datetime, end: datetime) -> dict[str, object]:
     return {
         "window": {"start_utc": _iso(start), "end_utc": _iso(end), "semantics": "[start, end)"},
         "account": account,
+        "self_id": self_id,
+        "other_account_decisions": other_account[0][0] if other_account else 0,
         "authorized_action_groups": authorized,
         "decisions_by_verdict": decisions,
         "decisions_by_kind_verdict": by_kind,
@@ -114,7 +126,12 @@ def render(data: dict[str, object], *, deployment: str, prompt_version: str, db:
         f"- 部署 SHA / 提示词版本：`{deployment}` / `{prompt_version}`",
         f"- 统计窗口：`{data['window']['start_utc']}` → `{data['window']['end_utc']}`"
         f"（{data['window']['semantics']}，UTC）",
-        f"- 机器人账号：{data['account']}",
+        f"- 机器人账号（self_id）：{data['account'] or '未配置'}",
+        f"- 其它账号消息（已分离、不计入下表）：{data['other_account_decisions']} 条"
+        "（A08：不同 self_id 的消息不得混入本账号统计）",
+        "- **动作状态语义**（A08）：`SKIPPED` = **未发送**（急停/群开关/阶段拦截，不是请求失败）；"
+        "`ok=0` 且 `err_code` 为空 = 调用未成功但**最终效果未知**；`err_code=1200` = 调用超时"
+        '（同样不等于客户端最终未撤回）。三类不得混写成同一种"失败"。',
         f"- 动作已启用群（{len(data['authorized_action_groups'])} 个）："
         + ", ".join(str(g) for g in data["authorized_action_groups"]),
         f"- 去重键：{data['dedupe']}",
