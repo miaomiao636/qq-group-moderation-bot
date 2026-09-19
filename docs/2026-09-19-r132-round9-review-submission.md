@@ -17,6 +17,7 @@
 | `ruff format --check` | **286 文件** 已格式化 |
 | `mypy app` | **89 源文件** 无问题 |
 | 三工具实跑 | 统计窗口 / 回放 / 导出均正常产出 |
+| **同 SHA CI（`8299ce8`）** | [run 35447474583](https://github.com/miaomiao636/qq-group-moderation-bot/actions/runs/35447474583) —— `Lint, Type-check & Test (ubuntu-latest)` `jobId=105908794916`、`Lint, Type-check & Test (windows-latest)` `jobId=105908794797`、`Runtime deps regression (clean install)` `jobId=105908794917`，**三个 job 全部 success** |
 
 入库的 14 个探针文件（**原样**，仅加一行文件头与出处说明，**未改断言、未改逻辑、未删用例**）：
 
