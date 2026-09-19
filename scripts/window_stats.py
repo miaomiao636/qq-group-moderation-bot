@@ -46,13 +46,14 @@ def collect(*, db: Path, start: datetime, end: datetime) -> dict[str, object]:
         for line in (ROOT / ".env").read_text(encoding="utf-8").splitlines()
         if line.startswith("ONEBOT_SELF_ID=")
     ]
-    authorized = [
-        row[0]
-        for row in q(
-            "select external_group_id from provider_group_settings "
-            "where action_enabled=1 order by external_group_id"
-        )
-    ]
+    # A08：授权必须按 **(provider, external_group_id)** 判定——同一群号在 qq_official 已授权、
+    # 在 onebot 未授权时，不能被"只看群号"的集合掩盖。
+    authorized_rows = q(
+        "select provider, external_group_id from provider_group_settings "
+        "where action_enabled=1 order by 1, 2"
+    )
+    authorized = [f"{p}:{g}" for p, g in authorized_rows]
+    authorized_keys = {(str(p), str(g)) for p, g in authorized_rows}
     decisions = q(
         "select verdict, count(*) from shadow_decisions "
         "where created_at >= ? and created_at < ? group by verdict order by 2 desc",
@@ -95,8 +96,18 @@ def collect(*, db: Path, start: datetime, end: datetime) -> dict[str, object]:
         lo,
         hi,
     )
-    # 越界核查：窗口内判定所属的群，是否都在"动作已启用"的授权集合里
-    outside = sorted({row[0] for row in per_group} - set(authorized))
+    # A08：越界核查必须看**实际外发目标**（action_logs 的 provider:group），不是"出现过判定的群"。
+    action_targets = q(
+        "select provider, external_group_id, count(*) from action_logs "
+        "where created_at >= ? and created_at < ? group by 1, 2 order by 3 desc",
+        lo,
+        hi,
+    )
+    outside_action_targets = [
+        f"{p}:{g}" for p, g, _c in action_targets if (str(p), str(g)) not in authorized_keys
+    ]
+    # 观察面（非越界）：窗口内出现过判定的群里，哪些**未开启真实动作**——只用于说明覆盖范围
+    outside = sorted({str(row[0]) for row in per_group} - {g for _p, g in authorized_keys})
     return {
         "window": {"start_utc": _iso(start), "end_utc": _iso(end), "semantics": "[start, end)"},
         "account": account,
@@ -109,8 +120,13 @@ def collect(*, db: Path, start: datetime, end: datetime) -> dict[str, object]:
         "action_logs_by_action_ok": actions,
         "per_group": per_group,
         "boundary_check": {
+            "action_targets_outside_authorized": outside_action_targets,
             "groups_seen_outside_authorized": outside,
-            "note": "越界=窗口内出现过判定、但其群未启用真实动作（应只记录、不动作）",
+            "note": (
+                "越界 = **实际外发动作的目标**（`action_logs` 的 `provider:group`）不在"
+                ' `action_enabled=1` 的授权集合内——此项**必须为空**；下方"出现过判定但未开动作"'
+                "只是观察面，不等于动作越界。"
+            ),
         },
         "dedupe": DEDUPE_NOTE,
         "failure_semantics": FAILURE_NOTE,
@@ -163,7 +179,12 @@ def render(data: dict[str, object], *, deployment: str, prompt_version: str, db:
         "",
         "## 越界核查",
         "",
-        "- 窗口内出现过判定、但**未启用真实动作**的群："
+        "- **实际外发动作的目标**（provider:group）不在授权集合内（必须为空）："
+        + (
+            ", ".join(str(g) for g in data["boundary_check"]["action_targets_outside_authorized"])
+            or "**无**"
+        ),
+        "- 出现过判定、但未启用真实动作的群（观察面）："
         + (
             ", ".join(str(g) for g in data["boundary_check"]["groups_seen_outside_authorized"])
             or "无"
