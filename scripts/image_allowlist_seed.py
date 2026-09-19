@@ -64,11 +64,29 @@ def scan_history(db: Path, media_dir: Path, *, limit: int = 5000) -> list[tuple[
     return list(found.values())
 
 
+def load_excluded(path: Path) -> set[str]:
+    """负责人审核后**排除**的哈希（小写十六进制）；文件不存在则为空集。"""
+    if not path.is_file():
+        return set()
+    excluded: set[str] = set()
+    for line in path.read_text(encoding="utf-8").splitlines():
+        value = line.split("#", 1)[0].strip().lower()
+        if value:
+            excluded.add(value)
+    return excluded
+
+
 def import_seeds(
-    *, db: Path, seeds: list[tuple[Path, str, str]], dry_run: bool, operator: str
-) -> tuple[int, int, int]:
-    """写入白名单；返回 (新增, 已存在(重复), 计算失败)。"""
-    added = duplicate = failed = 0
+    *,
+    db: Path,
+    seeds: list[tuple[Path, str, str]],
+    dry_run: bool,
+    operator: str,
+    excluded: set[str] | None = None,
+) -> tuple[int, int, int, int]:
+    """写入白名单；返回 (新增, 已存在(重复), 计算失败, 被排除清单跳过)。"""
+    excluded = excluded or set()
+    added = duplicate = failed = skipped = 0
     con = None if dry_run else sqlite3.connect(db)
     try:
         for path, source, note in seeds:
@@ -78,6 +96,10 @@ def import_seeds(
                 print(f"  [跳过] 无法计算哈希：{path.name}")
                 continue
             value = to_hex(phash)
+            if value in excluded:
+                skipped += 1
+                print(f"  [排除] 负责人在审核清单中判为撤回：{value} {path.name}")
+                continue
             if dry_run:
                 added += 1
                 print(f"  [dry-run] {value} {source} {path.name}")
@@ -97,7 +119,7 @@ def import_seeds(
     finally:
         if con is not None:
             con.close()
-    return added, duplicate, failed
+    return added, duplicate, failed, skipped
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -110,18 +132,32 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--from-history", action="store_true", help="同时导入历史放行图")
     parser.add_argument("--dry-run", action="store_true")
     parser.add_argument("--operator", default="human:seed")
+    parser.add_argument(
+        "--exclude-file",
+        default=str(ROOT / "docs" / "evidence" / "image-review" / "exclude_hashes.txt"),
+        help="负责人审核后排除的哈希清单（每行一个十六进制值，# 开头为注释）",
+    )
     args = parser.parse_args(argv)
 
+    excluded = load_excluded(Path(args.exclude_file))
+    print(f"排除清单：{len(excluded)} 条（{args.exclude_file}）")
     seeds = scan_samples(Path(args.samples_dir))
     print(f"负责人样本：{len(seeds)} 张")
     if args.from_history:
         history = scan_history(Path(args.db), Path(args.media_dir))
         print(f"历史放行图（原图仍在盘）：{len(history)} 张")
         seeds += history
-    added, duplicate, failed = import_seeds(
-        db=Path(args.db), seeds=seeds, dry_run=args.dry_run, operator=args.operator
+    added, duplicate, failed, skipped = import_seeds(
+        db=Path(args.db),
+        seeds=seeds,
+        dry_run=args.dry_run,
+        operator=args.operator,
+        excluded=excluded,
     )
-    print(f"SEED_DONE added={added} duplicate={duplicate} failed={failed} dry_run={args.dry_run}")
+    print(
+        f"SEED_DONE added={added} duplicate={duplicate} failed={failed} "
+        f"excluded={skipped} dry_run={args.dry_run}"
+    )
     return 0
 
 
