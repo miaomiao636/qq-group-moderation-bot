@@ -166,6 +166,13 @@ class _Attachment:
 async def test_observe_shadow_is_off_by_default(monkeypatch, tmp_path: Path) -> None:
     """``IMAGE_HASH_MODE`` 未设置 → 返回 None（调用方不写字段，行为零变化）。"""
     monkeypatch.delenv("IMAGE_HASH_MODE", raising=False)
+
+    # 配置隔离：`.env` 由 pydantic-settings 装载，**部署时可能已配成 shadow**；
+    # 本用例问的是"**未配置**时为 off"，因此把应用配置也显式置空（非改断言，只隔离输入）。
+    class _NoMode:
+        image_hash_mode = ""
+
+    monkeypatch.setattr("app.config.get_settings", lambda: _NoMode())
     (tmp_path / "a.png").write_bytes(_image_bytes(0))
     async with SessionLocal() as session:
         assert (

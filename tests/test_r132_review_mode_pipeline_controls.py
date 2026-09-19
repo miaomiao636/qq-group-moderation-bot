@@ -42,6 +42,13 @@ async def test_mode_never_changes_existing_decision(
         monkeypatch.delenv("IMAGE_HASH_MODE", raising=False)
     else:
         monkeypatch.setenv("IMAGE_HASH_MODE", raw)
+    if raw in (None, ""):
+        # 配置隔离：这两组参数问的是"**未配置**时的默认值"，而部署 `.env` 可能已设 shadow。
+        # 只隔离输入（断言仍为 `== expected`），不改任何预期。
+        class _NoMode:
+            image_hash_mode = ""
+
+        monkeypatch.setattr("app.config.get_settings", lambda: _NoMode())
     assert image_hash.mode() == expected
     monkeypatch.setattr(pipeline, "MEDIA_DIR", tmp_path)
     data = _image_bytes(0)

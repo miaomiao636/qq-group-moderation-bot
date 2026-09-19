@@ -50,10 +50,23 @@ VALID_MODES = frozenset({"off", "shadow", "enforce"})
 
 
 def mode() -> str:
-    """当前模式（``IMAGE_HASH_MODE``，非法值按 ``off`` 处理——绝不因配置错误放行）。"""
+    """当前模式（``IMAGE_HASH_MODE``，非法值按 ``off`` 处理——绝不因配置错误放行）。
+
+    取值优先级：**进程环境变量 → 应用配置（`.env`）→ ``off``**。
+    注意：本项目用 **pydantic-settings** 读 `.env`，它**不会**把值写进 ``os.environ``，
+    所以只读环境变量会让"写在 .env 里的模式"永远读不到（shadow 曾因此一直不生效）。
+    """
     import os
 
-    value = os.environ.get("IMAGE_HASH_MODE", "off").strip().lower()
+    raw = os.environ.get("IMAGE_HASH_MODE", "").strip()
+    if not raw:
+        try:
+            from app.config import get_settings
+
+            raw = str(getattr(get_settings(), "image_hash_mode", "") or "").strip()
+        except Exception:  # noqa: BLE001 - 配置读不到就按 off（绝不误放行）
+            raw = ""
+    value = raw.lower() or "off"
     return value if value in VALID_MODES else "off"
 
 
