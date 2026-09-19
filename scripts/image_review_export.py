@@ -31,6 +31,7 @@ sys.path.insert(0, str(ROOT / "scripts"))
 from app.moderation.image_hash import best_match, dhash64_file, to_hex  # noqa: E402
 from image_allowlist_seed import (  # noqa: E402
     detail_blockers,
+    disabled_hashes,
     effective_hashes,
     load_excluded,
     scan_history,
@@ -44,18 +45,60 @@ BLOCKED_CATEGORIES = {"porn", "violence"}
 HARD_EVIDENCE = {"R001", "R003", "R006"}
 
 
+def _referenced_hashes(db: Path, media_dir: Path) -> set[int]:
+    """**判定里确实出现过的**图片哈希（不按判定结论过滤：关键是"有没有发生过判定"）。
+
+    用于生效名单为空时的审核批次：负责人要看的是"这些真实出现过的图会不会因白名单改变判定"。
+    """
+    con = sqlite3.connect(f"file:{db}?mode=ro", uri=True)
+    try:
+        rows = con.execute("select detail_json from shadow_decisions where kind='image'").fetchall()
+    finally:
+        con.close()
+    values: set[int] = set()
+    for (detail_json,) in rows:
+        try:
+            detail = json.loads(detail_json or "{}")
+        except ValueError:
+            continue
+        for entry in detail.get("media_files") or []:
+            name = entry.get("name") if isinstance(entry, dict) else None
+            if not isinstance(name, str):
+                continue
+            path = media_dir / name.rsplit("/", 1)[-1].rsplit("\\", 1)[-1]
+            if not path.is_file():
+                continue
+            phash = dhash64_file(path)
+            if phash is not None:
+                values.add(phash)
+    return values
+
+
 def build_whitelist(samples_dir: Path, db: Path, media_dir: Path) -> list[tuple[int, str]]:
     """**生效名单优先**（已导入且 enabled=1，与 shadow 读取完全一致，A05-R）。
 
-    没有生效名单（尚未导入）时退化为**候选**：样本 + 历史放行图 − 排除清单。
+    - 生效名单**非空** → 直接用；
+    - 生效名单**存在但为空**（默认导入什么都没加 / 全被停用排除）→ **审核批次不得塌成空**：
+      取"判定里确实出现过的图"里、与样本库同一张的那些（未被停用/排除）——否则导出会静默
+      输出 0 张图并以成功退出，等于谎报"没有需要复核的图"；
+    - 表**缺失/不可读** → 候选：样本库 + 历史放行图 − 排除清单。
     """
     approved = effective_hashes(db)
-    if approved is not None:
-        # 表存在 → 只认生效名单（空集也是结论，不回落到候选）
+    if approved:
         return [(int(value, 16), "db:enabled") for value in sorted(approved)]
-    # 表缺失/不可读 → 候选：样本库 + 历史放行图 − 排除清单
     excluded = load_excluded(EXCLUDE_FILE)
     seen: dict[int, str] = {}
+    if approved is not None:
+        referenced = _referenced_hashes(db, media_dir)
+        disabled = disabled_hashes(db)
+        for path, source, note in scan_samples(samples_dir):
+            phash = dhash64_file(path)
+            if phash is None or phash not in referenced:
+                continue
+            if to_hex(phash) in excluded or to_hex(phash) in disabled:
+                continue
+            seen.setdefault(phash, f"sample:{source}:{note}")
+        return list(seen.items())
     for path, source, note in scan_samples(samples_dir) + scan_history(db, media_dir):
         phash = dhash64_file(path)
         if phash is None or to_hex(phash) in excluded:

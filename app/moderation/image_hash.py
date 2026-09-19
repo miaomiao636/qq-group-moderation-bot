@@ -58,18 +58,19 @@ def mode() -> str:
 
 
 def dhash64(data: bytes) -> int | None:
-    """计算 64 位 dHash；无法解码 / 过小 / **动图** / 缺 Pillow 时返回 ``None``（按未命中）。
+    """计算 64 位 dHash；无法解码 / 过小 / 缺 Pillow 时返回 ``None``（按未命中）。
 
     - **A11**：尺寸检查必须在 **resize 之前**——旧实现先缩到 9×8 再判像素数，等于永不触发；
-    - **G02**：动图（GIF/WebP 多帧）只代表**首帧外观**，不能代表整图内容 →
-      **不参与哈希放行**（enforce 前必须的门槛）。
+    - **动图口径（主审探针更正）**：GIF/WebP 多帧**按首帧参与**，**不返回** ``None``——
+      PIL 打开动图默认停在第 0 帧，因此 dHash 天然只代表首帧外观。这是**已声明的局限**
+      （首帧相同、后续帧不同会被判为同一张图），由 ``frame_scope_of`` 标注为
+      ``first_frame``，绝不声称"整图等价"。（此前我误做成"动图整个不参与哈希",
+      会把负责人认可的首帧画面漏掉，与本模块"确定放行的图不再受模型波动影响"的目的相反。）
     """
     try:
         from PIL import Image
 
         with Image.open(io.BytesIO(data)) as image:
-            if getattr(image, "is_animated", False):
-                return None
             if image.width < 9 or image.height < 8:
                 return None
             gray = image.convert("L").resize((9, 8), Image.Resampling.LANCZOS)
@@ -85,6 +86,17 @@ def dhash64(data: bytes) -> int | None:
             right = pixels[row * 9 + col + 1]
             bits = (bits << 1) | (1 if left > right else 0)
     return bits
+
+
+def frame_scope_of(data: bytes) -> str:
+    """``"first_frame"``（多帧图，只按首帧参与）/ ``"single"``（静态图或无法解码）。"""
+    try:
+        from PIL import Image
+
+        with Image.open(io.BytesIO(data)) as image:
+            return "first_frame" if getattr(image, "is_animated", False) else "single"
+    except Exception:  # noqa: BLE001 - 判不出就按静态处理，不影响哈希结果
+        return "single"
 
 
 def dhash64_file(path: Path) -> int | None:
@@ -129,8 +141,13 @@ def best_match(
     return best
 
 
-async def load_enabled(session: AsyncSession) -> list[tuple[int, int]]:
-    """读取启用中的白名单 ``[(id, phash)]``；**任何异常都返回空列表**（fail-closed）。"""
+async def load_enabled_or_none(session: AsyncSession) -> list[tuple[int, int]] | None:
+    """同 ``load_enabled``，但**区分"读不到"与"空名单"**（主审探针）：
+
+    - 表缺失 / 查询失败 → ``None``——调用方必须标 ``unavailable``（**不得**当成"干净未命中"：
+      把"没有表"说成"查过了没命中"，等于用零证据给出结论）；
+    - 正常读取（**含空集**）→ 列表：空集是结论（表存在但没有任何启用项）。
+    """
     try:
         rows = (
             await session.execute(
@@ -140,14 +157,24 @@ async def load_enabled(session: AsyncSession) -> list[tuple[int, int]]:
             )
         ).all()
     except Exception:  # noqa: BLE001 - 读不到白名单时绝不误放行
-        logger.warning("读取图片哈希白名单失败，按空集处理（fail-closed）", exc_info=True)
-        return []
+        logger.warning("读取图片哈希白名单失败（观察侧标 unavailable/fail-closed）", exc_info=True)
+        return None
     candidates: list[tuple[int, int]] = []
     for row_id, value in rows:
         parsed = from_hex(str(value))
         if parsed is not None:
             candidates.append((int(row_id), parsed))
     return candidates
+
+
+async def load_enabled(session: AsyncSession) -> list[tuple[int, int]]:
+    """读取启用中的白名单 ``[(id, phash)]``；**任何异常都返回空列表**（fail-closed）。
+
+    与 ``load_enabled_or_none`` 只差错误处理：这是"宁可当空集也不误放行"的判定路径口径；
+    **观察 / 证据导出**必须用 ``load_enabled_or_none``，否则"读不到"会被写成"干净未命中"。
+    """
+    loaded = await load_enabled_or_none(session)
+    return [] if loaded is None else loaded
 
 
 async def match_bytes(
@@ -223,12 +250,21 @@ async def observe_shadow(
             observation["unavailable"] = "read_failed"
             continue
         try:
-            hit = await match_bytes(session, data, max_distance=max_distance)
+            candidates = await load_enabled_or_none(session)
         except Exception:  # noqa: BLE001 - 观察失败绝不影响主流程
             observation["unavailable"] = "db_failed"
             continue
+        if candidates is None:
+            # 表缺失 / 查询失败：**必须**标 unavailable——零证据不能写成"查过了、没命中"
+            observation["unavailable"] = "db_failed"
+            continue
+        phash = dhash64(data)
+        hit = None if phash is None else best_match(phash, candidates, max_distance=max_distance)
         if hit is None:
             continue
+        if frame_scope_of(data) == "first_frame":
+            # 已声明局限：多帧图只按首帧参与，命中不代表整图等价
+            observation["frame_scope"] = "first_frame"
         observation.update(
             {
                 "matched": True,
