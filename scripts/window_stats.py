@@ -82,16 +82,38 @@ def collect(*, db: Path, start: datetime, end: datetime) -> dict[str, object]:
         self_id,
         f"onebot:{self_id}:%",
     )
+    # R6-04：动作/意图的 `message_id` 是**原始 ID**，两个账号可重复——**不能**照搬判定表的
+    # 前缀过滤（会把真实日志整片过滤掉或错误归属）。这里用**可证明的归属**：同一 provider 下
+    # 若存在判定行、其 `external_message_id` 等于该原始 ID、且该判定复合键**属于别的账号**
+    # → 剔除（可证明不是本账号的）；否则（本账号判定命中，或**找不到判定行 = 无法归属**）
+    # **保留**并单独报数量——不"假装完成"历史账号归属。用 EXISTS 避免同一原始 ID 命中多行重复计数。
+    other_account_predicate = (
+        "select 1 from shadow_decisions d where d.provider = a.provider "
+        "and d.external_message_id = a.message_id and d.message_id not like ?"
+    )
     intents = q(
-        "select status, count(*) from action_intents "
-        "where created_at >= ? and created_at < ? group by status order by 2 desc",
+        "select i.status, count(*) from action_intents i "
+        "where i.created_at >= ? and i.created_at < ? and not exists ("
+        "  select 1 from shadow_decisions d where d.provider = i.provider "
+        "  and d.external_message_id = i.message_id and d.message_id not like ?) "
+        "group by i.status order by 2 desc",
         lo,
         hi,
+        scope,
     )
     actions = q(
-        "select action, ok, err_code, attempts, count(*) from action_logs "
-        "where created_at >= ? and created_at < ? "
-        "group by action, ok, err_code, attempts order by 5 desc",
+        "select a.action, a.ok, a.err_code, a.attempts, count(*) from action_logs a "
+        "where a.created_at >= ? and a.created_at < ? and not exists ("
+        + other_account_predicate
+        + ") group by a.action, a.ok, a.err_code, a.attempts order by 5 desc",
+        lo,
+        hi,
+        scope,
+    )
+    unattributed_actions = q(
+        "select count(*) from action_logs a where a.created_at >= ? and a.created_at < ? "
+        "and not exists (select 1 from shadow_decisions d where d.provider = a.provider "
+        " and d.external_message_id = a.message_id)",
         lo,
         hi,
     )
@@ -148,7 +170,8 @@ def collect(*, db: Path, start: datetime, end: datetime) -> dict[str, object]:
         # 两个账号可以出现相同原始 ID——因此**不能**把判定表的 LIKE 前缀条件照搬到动作/意图表，
         # 那会把真实日志整片过滤掉或错误归属。此处**如实标明**：动作/意图为**全库（全局）统计**，
         # 含其它账号与无法归属部分，与本账号判定**分列**，不构成同一分子/分母。
-        "action_scope": "global_unattributed",
+        "action_scope": "attributed_or_unattributable",
+        "action_unattributed_rows": unattributed_actions[0][0] if unattributed_actions else 0,
         "action_not_sent_targets": not_sent_targets,
         "action_unknown_attempt_targets": unknown_attempt_targets,
         "per_group": per_group,
@@ -188,10 +211,11 @@ def render(data: dict[str, object], *, deployment: str, prompt_version: str, db:
         f"- 统计窗口：`{data['window']['start_utc']}` → `{data['window']['end_utc']}`"
         f"（{data['window']['semantics']}，UTC）",
         f"- 机器人账号（self_id）：{data['account'] or '未配置'}",
-        f"- 其它账号消息（**仅判定表**可分离）：{data['other_account_decisions']} 条"
-        "（R6-04：判定表按 `onebot:<self_id>:` 分离；**动作/意图表**的 message_id 是**原始消息 ID**、"
-        "两个账号可重复，无法安全归属 → 下表动作/意图为**全库（全局）统计**，含其它账号与不可归属部分，"
-        "**不是**本账号判定的分子）",
+        f"- 其它账号消息（判定表已分离）：{data['other_account_decisions']} 条"
+        "（R6-04：判定表按 `onebot:<self_id>:` 分离；**动作/意图表**的 `message_id` 是**原始 ID**、"
+        "两个账号可重复，因此**只有**『同一 provider 下存在判定行、且该判定属于别的账号』才被剔除；"
+        f"**无法归属**的动作日志另有 {data['action_unattributed_rows']} 行，"
+        "它们**保留在统计中并单列**——保守方向，不假装完成了历史账号归属）",
         "- **动作状态语义**（A08）：`SKIPPED` = **未发送**（急停/群开关/阶段拦截，不是请求失败）；"
         "`ok=0` 且 `err_code` 为空 = 调用未成功但**最终效果未知**；`err_code=1200` = 调用超时"
         '（同样不等于客户端最终未撤回）。三类不得混写成同一种"失败"。',

@@ -31,7 +31,6 @@ sys.path.insert(0, str(ROOT / "scripts"))
 from app.moderation.image_hash import best_match, dhash64_file, to_hex  # noqa: E402
 from image_allowlist_seed import (  # noqa: E402
     detail_blockers,
-    disabled_hashes,
     effective_hashes,
     effective_state,
     load_excluded,
@@ -85,21 +84,15 @@ def build_whitelist(samples_dir: Path, db: Path, media_dir: Path) -> list[tuple[
     - 表**缺失/不可读** → 候选：样本库 + 历史放行图 − 排除清单。
     """
     approved = effective_hashes(db)
-    if approved:
+    if approved is not None:
+        # 生效名单**存在**（非空或为空）→ **只认生效名单**（R6-02）。
+        # 生效名单为空时**不得**把"判定引用过、样本库里也有"的图补成候选来冒充生效评估——
+        # 候选收集是 `collect` 的职责，且会显式标注"未在生效名单（候选）"；
+        # 在构建集合时偷偷补人，会让负责人以为这是生效名单。
         return [(int(value, 16), "db:enabled") for value in sorted(approved)]
+    # 表缺失/不可读 → 候选：样本库 + 历史放行图 − 排除清单（来源标 candidate）
     excluded = load_excluded(EXCLUDE_FILE)
     seen: dict[int, str] = {}
-    if approved is not None:
-        referenced = _referenced_hashes(db, media_dir)
-        disabled = disabled_hashes(db)
-        for path, source, note in scan_samples(samples_dir):
-            phash = dhash64_file(path)
-            if phash is None or phash not in referenced:
-                continue
-            if to_hex(phash) in excluded or to_hex(phash) in disabled:
-                continue
-            seen.setdefault(phash, f"sample:{source}:{note}")
-        return list(seen.items())
     for path, source, note in scan_samples(samples_dir) + scan_history(db, media_dir):
         phash = dhash64_file(path)
         if phash is None or to_hex(phash) in excluded:
@@ -151,18 +144,23 @@ def collect(
             if phash is None:
                 continue
             found = best_match(phash, candidates, max_distance=max_distance)
-            if found is None:
+            unmatched = found is None
+            if unmatched and candidates:
+                # 生效名单**非空**：不在名单内的图与本次审核无关（保持原行为）
                 continue
             try:
                 file_sha = hashlib.sha256(path.read_bytes()).hexdigest()
                 file_size = path.stat().st_size
             except OSError:
                 continue
+            # R6-02：生效名单**为空**（空表/不可读）时，判定里出现过的图**仍纳入批次**，
+            # 但显式标成"未在生效名单（候选）"，且**不计入"会改变判定"**——
+            # 没有生效条目就不存在"因白名单而改变"的结论。
             entry = groups.setdefault(
-                (found[0], file_sha),
+                (-1, file_sha) if unmatched else (found[0], file_sha),
                 {
-                    "seed_hash": whitelist[found[0]][0],
-                    "label": whitelist[found[0]][1],
+                    "seed_hash": 0 if unmatched else whitelist[found[0]][0],
+                    "label": "未在生效名单（候选）" if unmatched else whitelist[found[0]][1],
                     "file_dhash": phash,
                     "file_sha256": file_sha,
                     "file_size": file_size,
@@ -178,7 +176,8 @@ def collect(
             entry["count"] = int(entry["count"]) + 1  # type: ignore[arg-type]
             entry["verdicts"][verdict] += 1  # type: ignore[index]
             entry["categories"][str(category)] += 1  # type: ignore[index]
-            entry["distances"].append(found[1])  # type: ignore[union-attr]
+            if found is not None:
+                entry["distances"].append(found[1])  # type: ignore[union-attr]
             if verdict != "allow" and not blocked:
                 entry["would_change"] = int(entry["would_change"]) + 1  # type: ignore[arg-type]
                 if len(entry["samples"]) < 5:  # type: ignore[arg-type]
@@ -234,7 +233,13 @@ def main(argv: list[str] | None = None) -> int:
         mode_note = "按**生效名单**（`image_allowlist` 中 `enabled=1`）评估"
     elif labels:
         set_mode = "candidate_referenced"
-        mode_note = "生效名单**为空** → 仅取『判定引用过且与样本库同图』的候选（非生效集合）"
+        # 生效名单为空时**只做候选收集**（不再把引用过的样本补进生效集合，R6-02）；
+        # 这里给出"判定里出现过的图"数量，让负责人知道本批次的来源范围。
+        mode_note = (
+            "生效名单**为空**（未导入 / 全被停用或排除）→ 标为候选："
+            f"`collect` 会列出判定里出现过的图（共 {len(_referenced_hashes(Path(args.db), Path(args.media_dir)))} 张哈希），"
+            "**这不是**生效名单评估"
+        )
     else:
         set_mode = "empty"
         mode_note = "生效名单为空且无候选"
@@ -289,10 +294,11 @@ def main(argv: list[str] | None = None) -> int:
         )
         distances = entry["distances"]  # type: ignore[assignment]
         samples = "<br>".join(str(x) for x in entry["samples"])  # type: ignore[union-attr]
+        dist_text = f"{min(distances)}~{max(distances)}" if distances else "-"
         lines.append(
             f"| {order:02d} | `{target.name}` | {str(entry['file_sha256'])[:12]} | "
             f"{to_hex(int(entry['file_dhash'] or 0))} | {to_hex(int(entry['seed_hash'] or 0))} | "
-            f"{min(distances)}~{max(distances)} | {entry['count']} | **{entry['would_change']}** | "
+            f"{dist_text} | {entry['count']} | **{entry['would_change']}** | "
             f"{verdicts} | {categories or '-'} | {samples or '-'} |  |"
         )
     lines += [
