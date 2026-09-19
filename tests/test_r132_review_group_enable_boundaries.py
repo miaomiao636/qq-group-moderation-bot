@@ -1,6 +1,12 @@
 # ruff: noqa: E402, I001, F401, F811, SIM105
-# Reviewer round-8 probe pack (8299ce8), promoted VERBATIM into the repo suite.
-# Only this header was added; no assertion and no logic was changed.
+# Reviewer round-8 probe pack (8299ce8), promoted into the repo suite.
+# Only this header was added, PLUS one documented platform adaptation:
+#   `test_group_survey_uses_configured_account_not_first_config_file` 的注入条件是
+#   `str(self) == "D:/QQ/config"`，而 Windows 上该字符串是 `D:\\QQ\\config`（反斜杠）→
+#   假配置永远注入不进去，探针**在 Windows 上因错误原因失败**。现改为
+#   `str(self) == str(pathlib.Path(survey.ONEBOT_CONFIG_DIR))`（平台无关，语义等价）。
+#   断言与意图逐字未改；`tests/test_r132_review_group_survey_account_binding.py`
+#   另以平台无关方式钉住同一契约。
 """Independent bulk group action controls; synthetic DBs only, no network.
 
 No production path/config is read. Every CLI --db and artifact directory is
@@ -252,7 +258,12 @@ def test_group_survey_uses_configured_account_not_first_config_file(tmp_path, mo
     original_glob = pathlib.Path.glob
 
     def safe_glob(self, pattern):
-        if str(self) == "D:/QQ/config" and pattern == "onebot11_*.json":
+        # 平台适配（见文件头）：Windows 上 `str(Path("D:/QQ/config"))` 是反斜杠形式，
+        # 原条件会让注入失效、探针因错误原因失败；断言未改。
+        if (
+            str(self) == str(pathlib.Path(survey.ONEBOT_CONFIG_DIR))
+            and pattern == "onebot11_*.json"
+        ):
             return iter([cfg1, cfg2])
         return original_glob(self, pattern)
 

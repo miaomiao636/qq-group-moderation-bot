@@ -10,7 +10,7 @@
 
 | 检查 | 结果 |
 | --- | --- |
-| **入库主审探针合计** | **113 passed / 0 failed / 0 error**（三批入库：65 + 22 + 26；AST 核对 **12/14 文件一致**，另 2 处差异已明示，见下） |
+| **入库主审探针合计** | **113 passed / 0 failed / 0 error**（三批入库：65 + 22 + 26；AST 核对 **11/14 文件一致**，另 **3 处**差异已逐处明示，见下） |
 | 主审原包复跑（`b7d7e78` 包，26 项） | **26 passed** |
 | 仓库全量 | **1745 用例 / 0 failed / 0 error / 15 skipped**（环境相关跳过） |
 | `ruff check` | 全过 |
@@ -19,8 +19,8 @@
 | 三工具实跑 | 统计窗口 / 回放 / 导出均正常产出 |
 | **同 SHA CI（`8299ce8`）** | [run 35447474583](https://github.com/miaomiao636/qq-group-moderation-bot/actions/runs/35447474583) —— `Lint, Type-check & Test (ubuntu-latest)` `jobId=105908794916`、`Lint, Type-check & Test (windows-latest)` `jobId=105908794797`、`Runtime deps regression (clean install)` `jobId=105908794917`，**三个 job 全部 success** |
 
-入库的 14 个探针文件（仅加一行文件头与出处说明；**12/14 文件与原件 AST 一致**，
-两处差异**已明示**，见本节末；其余**未删用例、未弱化断言**）：
+入库的 14 个探针文件（仅加一行文件头与出处说明；**11/14 文件与原件 AST 一致**，
+**三处**差异**已逐处明示**，见本节末；其余**未删用例、未弱化断言**）：
 
 ```
 tests/test_r132_review_mode_pipeline_controls.py
