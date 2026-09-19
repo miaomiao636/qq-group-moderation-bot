@@ -15,6 +15,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import shutil
 import sqlite3
@@ -73,7 +74,9 @@ def collect(
         (limit,),
     ).fetchall()
 
-    groups: dict[int, dict[str, object]] = {}
+    # A04：按 **(命中种子, 该文件的 SHA-256)** 分组——旧实现只按种子分组，会把"字节不同、
+    # 但 dHash 相近"的多张图折叠成一条并只展示第一张，人工看到一张不能推定审核了整个匹配簇。
+    groups: dict[tuple[int, str], dict[str, object]] = {}
     for message_id, created_at, verdict, category, group, detail_json in rows:
         try:
             detail = json.loads(detail_json or "{}")
@@ -104,11 +107,19 @@ def collect(
             found = best_match(phash, candidates, max_distance=max_distance)
             if found is None:
                 continue
+            try:
+                file_sha = hashlib.sha256(path.read_bytes()).hexdigest()
+                file_size = path.stat().st_size
+            except OSError:
+                continue
             entry = groups.setdefault(
-                found[0],
+                (found[0], file_sha),
                 {
-                    "hash": whitelist[found[0]][0],
+                    "seed_hash": whitelist[found[0]][0],
                     "label": whitelist[found[0]][1],
+                    "file_dhash": phash,
+                    "file_sha256": file_sha,
+                    "file_size": file_size,
                     "count": 0,
                     "would_change": 0,
                     "verdicts": Counter(),
@@ -175,8 +186,8 @@ def main(argv: list[str] | None = None) -> int:
         "> 请对**每张图**给一个结论（**放行 / 撤回**），我按你的结论增删白名单条目。",
         "> 图片就在本目录下（`img-XX_<hash>.jpg/png`），点开对照即可。",
         "",
-        "| 编号 | 图片文件 | 命中次数 | 其中会改变判定 | 原判定分布 | 类别分布 | 距离 | 样例消息 | 负责人结论（放行/撤回） |",
-        "| --- | --- | --- | --- | --- | --- | --- | --- | --- |",
+        "| 编号 | 图片文件 | 文件 SHA-256（前 12） | 文件 dHash | 命中种子 dHash | 距离 | 命中次数 | 其中会改变判定 | 原判定分布 | 类别分布 | 样例消息 | 负责人结论（放行/撤回） |",
+        "| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |",
     ]
     with_images = 0
     copy_failures = 0
@@ -185,7 +196,11 @@ def main(argv: list[str] | None = None) -> int:
     ):  # type: ignore[arg-type]
         source = Path(str(entry["image"]))
         suffix = source.suffix.lower() or ".jpg"
-        target = batch / f"img-{order:02d}_{to_hex(int(entry['hash']))}{suffix}"
+        # 文件名写**该文件自己的** dHash + SHA-256 前缀（A04：不能再拿种子 dHash 冒充文件身份）
+        target = batch / (
+            f"img-{order:02d}_{to_hex(int(entry['file_dhash'] or 0))}_"
+            f"{str(entry['file_sha256'])[:8]}{suffix}"
+        )
         try:
             shutil.copy2(source, target)
             with_images += 1
@@ -201,9 +216,10 @@ def main(argv: list[str] | None = None) -> int:
         distances = entry["distances"]  # type: ignore[assignment]
         samples = "<br>".join(str(x) for x in entry["samples"])  # type: ignore[union-attr]
         lines.append(
-            f"| {order:02d} | `{target.name}` | {entry['count']} | **{entry['would_change']}** | "
-            f"{verdicts} | {categories or '-'} | "
-            f"{min(distances)}~{max(distances)} | {samples or '-'} |  |"
+            f"| {order:02d} | `{target.name}` | {str(entry['file_sha256'])[:12]} | "
+            f"{to_hex(int(entry['file_dhash'] or 0))} | {to_hex(int(entry['seed_hash'] or 0))} | "
+            f"{min(distances)}~{max(distances)} | {entry['count']} | **{entry['would_change']}** | "
+            f"{verdicts} | {categories or '-'} | {samples or '-'} |  |"
         )
     lines += [
         "",
