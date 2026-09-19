@@ -32,6 +32,7 @@ from app.moderation.decision import (
 )
 from app.moderation.dynamic_rules import load_cached_active_snapshot
 from app.moderation.image_engine import ImageModerationEngine, MediaAnalysis, merge_decisions
+from app.moderation.image_hash import observe_shadow
 from app.moderation.media_engine import evaluate_file, evaluate_video, evaluate_voice
 from app.moderation.review_gate import ReviewGate
 from app.moderation.rules import TextRuleEngine
@@ -444,6 +445,19 @@ async def _run_pipeline(
                 {"kind": s.kind, "text": s.text[:80], "attachment_index": s.attachment_index}
                 for s in msg.segments
             ]
+        # 图片感知哈希白名单 **shadow 观察**（负责人 2026-09-19）：
+        # `IMAGE_HASH_MODE=off`（默认）时完全不读白名单、不写字段——线上行为零变化；
+        # `shadow` 时只把"是否命中 / 本可放行"写进判定明细，**不改变判定**（enforce 未实现）。
+        image_hash_observation = await observe_shadow(
+            session,
+            attachments=msg.attachments,
+            media_dir=MEDIA_DIR,
+            verdict=decision.verdict,
+            category=decision.category or "",
+            rule_ids=[hit.rule_id for hit in decision.rule_hits],
+        )
+        if image_hash_observation is not None:
+            detail["image_hash"] = image_hash_observation
         record = await upsert_shadow_decision(
             session,
             message_id=claim_key,

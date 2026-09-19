@@ -152,3 +152,101 @@ async def test_match_bytes_ignores_disabled_and_unknown(clean_allowlist) -> None
         await session.commit()
         assert await image_hash.match_bytes(session, data) is None
         assert await image_hash.match_bytes(session, _image_bytes(1)) is None
+
+
+# --- 管线 shadow 接入（默认 off：线上行为零变化）-----------------------------------------
+
+
+class _Attachment:
+    def __init__(self, filename: str, content_type: str = "image/png") -> None:
+        self.filename = filename
+        self.content_type = content_type
+
+
+async def test_observe_shadow_is_off_by_default(monkeypatch, tmp_path: Path) -> None:
+    """``IMAGE_HASH_MODE`` 未设置 → 返回 None（调用方不写字段，行为零变化）。"""
+    monkeypatch.delenv("IMAGE_HASH_MODE", raising=False)
+    (tmp_path / "a.png").write_bytes(_image_bytes(0))
+    async with SessionLocal() as session:
+        assert (
+            await image_hash.observe_shadow(
+                session,
+                attachments=[_Attachment("a.png")],
+                media_dir=tmp_path,
+                verdict="violation_high",
+                category="ad",
+                rule_ids=[],
+            )
+            is None
+        )
+
+
+async def test_observe_shadow_invalid_mode_falls_back_to_off(monkeypatch, tmp_path: Path) -> None:
+    monkeypatch.setenv("IMAGE_HASH_MODE", "enforce-please")
+    assert image_hash.mode() == "off"
+
+
+@pytest.mark.parametrize(
+    "category,verdict,rule_ids,expected_would_allow,expected_blocked",
+    [
+        ("ad", "violation_high", [], True, ""),
+        ("porn", "violation_high", [], False, "category"),
+        ("ad", "violation_high", ["R003"], False, "hard_evidence"),
+        ("ad", "allow", [], False, ""),
+    ],
+)
+async def test_observe_shadow_records_hit_and_exceptions(
+    monkeypatch,
+    clean_allowlist,
+    tmp_path: Path,
+    category,
+    verdict,
+    rule_ids,
+    expected_would_allow,
+    expected_blocked,
+) -> None:
+    """命中记录 would_allow；色情/本地硬证据/已放行 均不记 would_allow。"""
+    monkeypatch.setenv("IMAGE_HASH_MODE", "shadow")
+    data = _image_bytes(0)
+    (tmp_path / "a.png").write_bytes(data)
+    phash = image_hash.dhash64(data)
+    assert phash is not None
+    async with SessionLocal() as session:
+        session.add(
+            ImageAllowlist(
+                phash=image_hash.to_hex(phash), note="shadow", source="test", created_by="synthetic"
+            )
+        )
+        await session.commit()
+        observation = await image_hash.observe_shadow(
+            session,
+            attachments=[_Attachment("a.png"), _Attachment("note.txt", "text/plain")],
+            media_dir=tmp_path,
+            verdict=verdict,
+            category=category,
+            rule_ids=rule_ids,
+        )
+    assert observation is not None
+    assert observation["mode"] == "shadow"
+    assert observation["checked"] == 1, "只统计图片附件"
+    assert observation["matched"] is True
+    assert observation["would_allow"] is expected_would_allow
+    assert observation["blocked_by"] == expected_blocked
+
+
+async def test_observe_shadow_without_whitelist_hit(
+    monkeypatch, clean_allowlist, tmp_path: Path
+) -> None:
+    monkeypatch.setenv("IMAGE_HASH_MODE", "shadow")
+    (tmp_path / "b.png").write_bytes(_image_bytes(2))
+    async with SessionLocal() as session:
+        observation = await image_hash.observe_shadow(
+            session,
+            attachments=[_Attachment("b.png")],
+            media_dir=tmp_path,
+            verdict="violation_high",
+            category="ad",
+            rule_ids=[],
+        )
+    assert observation is not None and observation["matched"] is False
+    assert observation["checked"] == 1
