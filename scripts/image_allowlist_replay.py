@@ -24,20 +24,30 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(ROOT / "scripts"))
 
-from app.moderation.image_hash import DEFAULT_MAX_DISTANCE, best_match, dhash64_file  # noqa: E402
-from image_allowlist_seed import scan_history, scan_samples  # noqa: E402
+from app.moderation.image_hash import (  # noqa: E402
+    DEFAULT_MAX_DISTANCE,
+    best_match,
+    dhash64_file,
+    to_hex,
+)
+from image_allowlist_seed import load_excluded, scan_history, scan_samples  # noqa: E402
+
+# A05：回放与导入/导出必须共用**同一套集合**（含负责人排除清单）
+EXCLUDE_FILE = ROOT / "docs" / "evidence" / "image-review" / "exclude_hashes.txt"
 
 BLOCKED_CATEGORIES = {"porn", "violence"}
 HARD_EVIDENCE = {"R001", "R003", "R006"}
 
 
 def load_whitelist(samples_dir: Path, db: Path, media_dir: Path) -> list[tuple[int, str]]:
-    """构建白名单 [(phash, 来源说明)]（同一张图只保留一条）。"""
+    """生效名单 = 样本 + 历史放行图 **减去** 负责人排除清单（与导入共用同一集合）。"""
+    excluded = load_excluded(EXCLUDE_FILE)
     seen: dict[int, str] = {}
     for path, source, note in scan_samples(samples_dir) + scan_history(db, media_dir):
         phash = dhash64_file(path)
-        if phash is not None:
-            seen.setdefault(phash, f"{source}:{note}")
+        if phash is None or to_hex(phash) in excluded:
+            continue
+        seen.setdefault(phash, f"{source}:{note}")
     return list(seen.items())
 
 

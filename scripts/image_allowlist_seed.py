@@ -99,6 +99,14 @@ def import_seeds(
             if value in excluded:
                 skipped += 1
                 print(f"  [排除] 负责人在审核清单中判为撤回：{value} {path.name}")
+                if con is not None:
+                    # A05：排除必须**真正停用**既有启用条目——只跳过 INSERT 等于没撤权
+                    con.execute(
+                        "update image_allowlist set enabled=0, "
+                        "note = note || ';excluded:2026-09-19' "
+                        "where phash = ? and enabled = 1",
+                        (value,),
+                    )
                 continue
             if dry_run:
                 added += 1
@@ -115,6 +123,14 @@ def import_seeds(
             else:
                 duplicate += 1
         if con is not None:
+            # A05：即使该哈希不是本次种子（例如上一批已导入后才被判撤回），
+            # 也必须按排除清单停用——保证"生效名单"与负责人结论一致。
+            for value in sorted(excluded):
+                con.execute(
+                    "update image_allowlist set enabled=0, note = note || ';excluded:2026-09-19' "
+                    "where phash = ? and enabled = 1",
+                    (value,),
+                )
             con.commit()
     finally:
         if con is not None:
