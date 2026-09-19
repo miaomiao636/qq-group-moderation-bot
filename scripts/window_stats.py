@@ -46,6 +46,9 @@ def collect(*, db: Path, start: datetime, end: datetime) -> dict[str, object]:
         for line in (ROOT / ".env").read_text(encoding="utf-8").splitlines()
         if line.startswith("ONEBOT_SELF_ID=")
     ]
+    # A08：本账号口径——判定统计必须限定 `onebot:<self_id>:`（否则报告标一个账号、数字里混着另一个）
+    self_id = account[0] if account else ""
+    scope = f"onebot:{self_id}:%" if self_id else "%"
     # A08：授权必须按 **(provider, external_group_id)** 判定——同一群号在 qq_official 已授权、
     # 在 onebot 未授权时，不能被"只看群号"的集合掩盖。
     authorized_rows = q(
@@ -56,18 +59,21 @@ def collect(*, db: Path, start: datetime, end: datetime) -> dict[str, object]:
     authorized_keys = {(str(p), str(g)) for p, g in authorized_rows}
     decisions = q(
         "select verdict, count(*) from shadow_decisions "
-        "where created_at >= ? and created_at < ? group by verdict order by 2 desc",
+        "where created_at >= ? and created_at < ? and message_id like ? "
+        "group by verdict order by 2 desc",
         lo,
         hi,
+        scope,
     )
     by_kind = q(
         "select kind, verdict, count(*) from shadow_decisions "
-        "where created_at >= ? and created_at < ? group by kind, verdict order by 3 desc",
+        "where created_at >= ? and created_at < ? and message_id like ? "
+        "group by kind, verdict order by 3 desc",
         lo,
         hi,
+        scope,
     )
-    # A08：另一个 self_id 的消息**不得混入**本账号统计——按 message_id 前缀显式分离。
-    self_id = account[0] if account else ""
+    # A08：另一个 self_id 的消息**不得混入**本账号统计——按 message_id 前缀显式分列。
     other_account = q(
         "select count(*) from shadow_decisions where created_at >= ? and created_at < ? "
         "and (? <> '' and message_id not like ?)",
@@ -83,18 +89,20 @@ def collect(*, db: Path, start: datetime, end: datetime) -> dict[str, object]:
         hi,
     )
     actions = q(
-        "select action, ok, err_code, count(*) from action_logs "
-        "where created_at >= ? and created_at < ? group by action, ok, err_code order by 4 desc",
+        "select action, ok, err_code, attempts, count(*) from action_logs "
+        "where created_at >= ? and created_at < ? "
+        "group by action, ok, err_code, attempts order by 5 desc",
         lo,
         hi,
     )
     per_group = q(
-        "select external_group_id, "
+        "select provider, external_group_id, "
         "sum(case when verdict='violation_high' then 1 else 0 end), count(*) "
-        "from shadow_decisions where created_at >= ? and created_at < ? "
-        "group by external_group_id order by 3 desc",
+        "from shadow_decisions where created_at >= ? and created_at < ? and message_id like ? "
+        "group by provider, external_group_id order by 4 desc",
         lo,
         hi,
+        scope,
     )
     # A08：越界核查必须看**实际外发目标**（action_logs 的 provider:group），不是"出现过判定的群"。
     action_targets = q(
@@ -106,8 +114,11 @@ def collect(*, db: Path, start: datetime, end: datetime) -> dict[str, object]:
     outside_action_targets = [
         f"{p}:{g}" for p, g, _c in action_targets if (str(p), str(g)) not in authorized_keys
     ]
-    # 观察面（非越界）：窗口内出现过判定的群里，哪些**未开启真实动作**——只用于说明覆盖范围
-    outside = sorted({str(row[0]) for row in per_group} - {g for _p, g in authorized_keys})
+    # 观察面（非越界）：窗口内出现过判定的群里，哪些**未开启真实动作**——只用于说明覆盖范围。
+    # 必须按 (provider, group) 判定：同一群号在 qq_official 已授权，不能顺带给 onebot 授权。
+    outside = sorted(
+        {str(g) for p, g, _vh, _total in per_group if (str(p), str(g)) not in authorized_keys}
+    )
     return {
         "window": {"start_utc": _iso(start), "end_utc": _iso(end), "semantics": "[start, end)"},
         "account": account,
@@ -131,6 +142,15 @@ def collect(*, db: Path, start: datetime, end: datetime) -> dict[str, object]:
         "dedupe": DEDUPE_NOTE,
         "failure_semantics": FAILURE_NOTE,
     }
+
+
+def _status_label(ok: object, code: object, attempts: object) -> str:
+    """A08：真实"发送前跳过"（attempts=0）不是请求失败；失败与超时必须分开写。"""
+    if int(attempts or 0) == 0:
+        return "未发送（跳过/拦截）"
+    if ok:
+        return "成功"
+    return "超时（最终效果未知）" if code == 1200 else "失败（最终效果未知）"
 
 
 def render(data: dict[str, object], *, deployment: str, prompt_version: str, db: Path) -> str:
@@ -166,15 +186,22 @@ def render(data: dict[str, object], *, deployment: str, prompt_version: str, db:
         "",
         "## 动作结果（分子）",
         "",
-        "| 动作 | ok | err_code | 条数 |",
-        "| --- | --- | --- | --- |",
+        "| 动作 | 结果 | err_code | attempts | 条数 |",
+        "| --- | --- | --- | --- | --- |",
     ]
     lines += [
-        f"| {a} | {'成功' if ok else '失败'} | {code if code is not None else '-'} | {c} |"
-        for a, ok, code, c in data["action_logs_by_action_ok"]
-    ] or ["| （无） | - | - | 0 |"]
-    lines += ["", "## 按群分布", "", "| 群 | violation_high | 判定总数 |", "| --- | --- | --- |"]
-    lines += [f"| {g} | {vh} | {total} |" for g, vh, total in data["per_group"]]
+        f"| {a} | {_status_label(ok, code, attempts)} | {code if code is not None else '-'} | "
+        f"{attempts} | {c} |"
+        for a, ok, code, attempts, c in data["action_logs_by_action_ok"]
+    ] or ["| （无） | - | - | - | 0 |"]
+    lines += [
+        "",
+        "## 按群分布",
+        "",
+        "| provider | 群 | violation_high | 判定总数 |",
+        "| --- | --- | --- | --- |",
+    ]
+    lines += [f"| {p} | {g} | {vh} | {total} |" for p, g, vh, total in data["per_group"]]
     lines += [
         "",
         "## 越界核查",

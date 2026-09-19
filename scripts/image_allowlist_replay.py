@@ -53,7 +53,10 @@ def load_whitelist(samples_dir: Path, db: Path, media_dir: Path) -> list[tuple[i
     """
     approved = effective_hashes(db)
     if approved is not None:
+        # 表存在 → **只认生效名单**（即使是空集：默认导入什么都没加、或被负责人停用/排除）。
+        # 不得回落到"样本/历史候选"，否则已被停用或被排除的图会被重新报出来。
         return [(int(value, 16), "db:enabled") for value in sorted(approved)]
+    # 表缺失/不可读（尚未迁移）→ 无法判定，只能给**候选**：样本库 + 历史放行图 − 排除清单。
     excluded = load_excluded(EXCLUDE_FILE)
     seen: dict[int, str] = {}
     for path, source, note in scan_samples(samples_dir) + scan_history(db, media_dir):

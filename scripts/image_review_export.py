@@ -51,7 +51,9 @@ def build_whitelist(samples_dir: Path, db: Path, media_dir: Path) -> list[tuple[
     """
     approved = effective_hashes(db)
     if approved is not None:
+        # 表存在 → 只认生效名单（空集也是结论，不回落到候选）
         return [(int(value, 16), "db:enabled") for value in sorted(approved)]
+    # 表缺失/不可读 → 候选：样本库 + 历史放行图 − 排除清单
     excluded = load_excluded(EXCLUDE_FILE)
     seen: dict[int, str] = {}
     for path, source, note in scan_samples(samples_dir) + scan_history(db, media_dir):

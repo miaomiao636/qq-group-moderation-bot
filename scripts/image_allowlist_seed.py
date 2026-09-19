@@ -76,6 +76,22 @@ def load_excluded(path: Path) -> set[str]:
     return excluded
 
 
+def disabled_hashes(db: Path) -> set[str]:
+    """负责人**显式停用/排除**的行（``enabled=0``）——离线审核范围必须把它们剔除。
+
+    表缺失/不可读时返回空集（调用方另有 `effective_hashes` 判断"无法判定"）。
+    """
+    try:
+        con = sqlite3.connect(f"file:{db}?mode=ro", uri=True)
+        try:
+            rows = con.execute("select phash from image_allowlist where enabled=0").fetchall()
+        finally:
+            con.close()
+    except sqlite3.Error:
+        return set()
+    return {str(row[0]).lower() for row in rows}
+
+
 def effective_hashes(db: Path) -> set[str] | None:
     """**生效名单**：已导入且 ``enabled=1`` 的哈希集合（A05-R）。
 
@@ -90,8 +106,11 @@ def effective_hashes(db: Path) -> set[str] | None:
             con.close()
     except sqlite3.Error:
         return None
-    values = {str(row[0]).lower() for row in rows}
-    return values or None
+    # **表存在但为空 ≠ 表缺失**（主审探针）：空集合表示"生效名单存在且为空"（默认导入按设计什么都没加、
+    # 或被负责人停用/排除），离线工具必须原样输出 ∅；只有表缺失/不可读（sqlite 错误）才返回 None
+    # 表示"无法判定"，此时才退化为候选。此前 `values or None` 把两者混为一谈，于是**已被停用或被排除的
+    # 样本会被重新当成候选报出来**，与"生效名单优先"的承诺不符。
+    return {str(row[0]).lower() for row in rows}
 
 
 def detail_blockers(detail: dict) -> list[str]:
