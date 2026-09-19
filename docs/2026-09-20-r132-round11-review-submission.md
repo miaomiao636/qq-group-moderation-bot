@@ -14,7 +14,7 @@
 | 全部入库主审探针（8 批） | **196 passed / 0 failed** |
 | 仓库全量（本机） | **1828 用例 / 0 failed / 0 error / 15 skipped** |
 | `ruff check` + `format --check`（270+ 文件）、`mypy app`（89 文件） | 全绿 |
-| **同 SHA CI（`194eb0b`）** | [run 35454483168](https://github.com/miaomiao636/qq-group-moderation-bot/actions/runs/35454483168)：`ubuntu-latest` `jobId=105927237807` **success**、`clean runtime-deps` `jobId=105927237926` **success**；`windows-latest` `jobId=105927237916` 首跑 **failure**（唯一失败 = `tests/test_migration_notifications.py::test_notification_upgrade_constraints_and_downgrade`：`alembic upgrade` 子进程 **30s 超时**；该 job 本次耗时 13:21，逐条结果 `1 failed / 1824 passed / 3 skipped`；**与本次改动无关**——本批未触碰 alembic/迁移，本机同一测试通过），**已触发失败 job 重跑**，结论见 PR 页面或后续提交 |
+| **同 SHA CI（`194eb0b`）** | [run 35454483168](https://github.com/miaomiao636/qq-group-moderation-bot/actions/runs/35454483168)：`ubuntu-latest` `jobId=105927237807` **success**、`clean runtime-deps` `jobId=105927237926` **success**；`windows-latest` `jobId=105927237916` 首跑 **failure**（唯一失败 = `tests/test_migration_notifications.py::test_notification_upgrade_constraints_and_downgrade`：`alembic upgrade` 子进程 **30s 超时**；该 job 首跑耗时 13:21，逐条 `1 failed / 1824 passed / 3 skipped`；本批未触碰 alembic/迁移，本机同一测试通过），**失败 job 重跑后 success ——三 job 全部 success**，可判定为与本次改动无关的 CI 抖动 |
 | 生产身份关联（**重写后的严格工具**） | `IDENTITY_OK allowed=68 (mismatch 0) rejected=1 (mismatch 0) snapshot_state=ok` |
 
 ---
