@@ -463,7 +463,17 @@ async def _run_pipeline(
                     extra_blockers.append("evidence_veto")
                 if any(str(r.category or "") in ("porn", "violence") for r in ai_results):
                     extra_blockers.append("attachment_category")
-                if any(r.needs_review or r.degraded_reason for r in ai_results):
+                # A06-R：未定论必须复用**已有**的附件复核判据（含二审异类/低置信/非独立模型/
+                # 孤儿二审），并透传服务实际阈值——不再按两个布尔字段另写一套简化判断。
+                from app.moderation.ai import _attachment_reviews_unresolved
+
+                if _attachment_reviews_unresolved(
+                    ai_results,
+                    decision,
+                    primary_direct_threshold=float(getattr(ai_service, "direct_threshold", 0.90)),
+                    secondary_review_low=float(getattr(ai_service, "secondary_review_low", 0.60)),
+                    secondary_review_high=float(getattr(ai_service, "secondary_review_high", 0.90)),
+                ) or any(r.needs_review or r.degraded_reason for r in ai_results):
                     extra_blockers.append("unresolved")
                 for att in msg.attachments:
                     if not str(att.content_type).startswith("image/"):
