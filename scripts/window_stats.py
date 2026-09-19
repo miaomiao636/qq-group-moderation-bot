@@ -146,7 +146,7 @@ def render(data: dict[str, object], *, deployment: str, prompt_version: str, db:
         "",
         "## 越界核查",
         "",
-        f"- 窗口内出现过判定、但**未启用真实动作**的群："
+        "- 窗口内出现过判定、但**未启用真实动作**的群："
         + (
             ", ".join(str(g) for g in data["boundary_check"]["groups_seen_outside_authorized"])
             or "无"
@@ -188,7 +188,12 @@ def main(argv: list[str] | None = None) -> int:
     out_dir.mkdir(parents=True, exist_ok=True)
     out = out_dir / f"window-{start:%Y%m%dT%H%M%SZ}-{end:%Y%m%dT%H%M%SZ}.md"
     out.write_text(
-        render(data, deployment=args.deployment_sha, prompt_version=prompt_version or "?", db=Path(args.db)),
+        render(
+            data,
+            deployment=args.deployment_sha,
+            prompt_version=prompt_version or "?",
+            db=Path(args.db),
+        ),
         encoding="utf-8",
     )
     print(f"WINDOW_STATS_OK {out}")

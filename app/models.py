@@ -198,6 +198,27 @@ class AdminChangePlan(Base):
     expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
 
 
+class ImageAllowlist(Base):
+    """图片感知哈希白名单（负责人 2026-09-19）：命中即视为「负责人认可的图」。
+
+    与 ``allowlist_members`` 同为"人工认可的放行来源"，但**作用域不同**：本表只描述
+    **图片外观**，且**不豁免**色情/暴力与本地硬证据（由调用方按既有例外口径处理）。
+    ``phash`` 存 64 位 dHash 的十六进制字符串；(phash) 唯一，重复导入不会产生重复行。
+    """
+
+    __tablename__ = "image_allowlist"
+    __table_args__ = (UniqueConstraint("phash", name="uq_image_allowlist_phash"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    phash: Mapped[str] = mapped_column(String(16))
+    note: Mapped[str] = mapped_column(String(64), default="")
+    source: Mapped[str] = mapped_column(String(16), default="")
+    hit_count: Mapped[int] = mapped_column(Integer, default=0)
+    enabled: Mapped[bool] = mapped_column(Boolean, default=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
+    created_by: Mapped[str] = mapped_column(String(64), default="")
+
+
 class SystemSetting(Base):
     """系统级设置：保留期、清理开关等（管理后台可视化配置）。"""
 
