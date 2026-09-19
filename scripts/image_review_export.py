@@ -140,10 +140,11 @@ def collect(
             for entry in detail.get("rule_hits") or []
             if isinstance(entry, dict)
         }
+        detail_block = detail_blockers(detail)  # A06-R：离线与在线同源看全证据
         blocked = (
             category in BLOCKED_CATEGORIES
             or any(rid in HARD_EVIDENCE or str(rid).startswith("DR_") for rid in rule_ids)
-            or bool(detail_blockers(detail))  # A06-R：离线与在线同源看全证据
+            or bool(detail_block)
         )
         for name in names:
             path = media_dir / name.rsplit("/", 1)[-1].rsplit("\\", 1)[-1]
@@ -186,6 +187,9 @@ def collect(
                     # R7（主审）：动图范围必须在**离线清单**里可见——多帧图只按**首帧**参与哈希，
                     # 命中不代表整段动图等价（在线观察侧已有 `frame_scope`，这里补到导出侧）。
                     "frame_scope": frame_scope_of(path.read_bytes()),
+                    # 该行"没有计入会改变判定"的原因（供清单显示，避免静默剔除）
+                    "blocked_by": [],
+                    "unknown": 0,
                     "count": 0,
                     "would_change": 0,
                     "verdicts": Counter(),
@@ -203,6 +207,13 @@ def collect(
             # R6-02-R：**只有命中生效条目**才可能"因白名单改变判定"；候选（未匹配）一律为 0。
             if found is not None and verdict != "allow" and not blocked:
                 entry["would_change"] = int(entry["would_change"]) + 1  # type: ignore[arg-type]
+            elif found is not None and detail_block:
+                # R6-01-R 的后果修正：历史记录缺政策上下文（`unresolved_unknown`）时**不再静默剔除**——
+                # 如实计入 `unknown` 并在清单标注，否则负责人会**漏审**这些图。
+                entry["blocked_by"] = sorted(
+                    {*entry["blocked_by"], *detail_block}  # type: ignore[arg-type, index]
+                )
+                entry["unknown"] = int(entry["unknown"]) + 1  # type: ignore[arg-type]
                 if len(entry["samples"]) < 5:  # type: ignore[arg-type]
                     entry["samples"].append(f"{message_id} @{created_at} ({group})")  # type: ignore[union-attr]
     # R6-02-R：返回过滤必须与计数同步——**候选行即使"会改变判定"为 0 也必须保留**
@@ -210,7 +221,9 @@ def collect(
     return {
         index: entry
         for index, entry in groups.items()
-        if int(entry["would_change"]) > 0 or index[0] == -1
+        # 候选（未命中）与"命中了但结论无法判定（缺证据）"的行**都必须保留**，
+        # 否则清单会静默变小、负责人漏审。
+        if int(entry["would_change"]) > 0 or index[0] == -1 or int(entry["unknown"]) > 0
     }  # type: ignore[arg-type]
 
 
@@ -284,6 +297,9 @@ def main(argv: list[str] | None = None) -> int:
         f"- 待审核图片：**{len(groups)} 张**（唯一图片；同图的多条消息已折叠）",
         f"- **动图范围**：{sum(1 for e in groups.values() if e.get('frame_scope') == 'first_frame')} 张为"
         "多帧图（**仅按首帧参与哈希**——命中不代表整段动图等价，请据此判断是否可放行）",
+        f"- **无法判定（历史记录缺政策上下文）**："
+        f"{sum(1 for e in groups.values() if int(e.get('unknown', 0)) > 0)} 张"
+        "——这些图**已列出但未计入「会改变判定」**（不是「不会变」，而是**证据不足以判定**），请人工判断",
         "",
     ]
     if set_mode != "active":
@@ -335,6 +351,8 @@ def main(argv: list[str] | None = None) -> int:
         label_text = str(entry["label"]) + (
             "（动图:仅首帧）" if entry.get("frame_scope") == "first_frame" else ""
         )
+        if int(entry["unknown"]) > 0:
+            label_text += "（无法判定:证据不足）"
         lines.append(
             f"| {order:02d} | `{target.name}` | {label_text} | {str(entry['file_sha256'])[:12]} | "
             f"{to_hex(int(entry['file_dhash'] or 0))} | {seed_text} | "
