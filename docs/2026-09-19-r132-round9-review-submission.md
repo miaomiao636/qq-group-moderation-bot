@@ -10,7 +10,7 @@
 
 | 检查 | 结果 |
 | --- | --- |
-| **入库主审探针合计** | **113 passed / 0 failed / 0 error**（三批原样入库：65 + 22 + 26） |
+| **入库主审探针合计** | **113 passed / 0 failed / 0 error**（三批入库：65 + 22 + 26；AST 核对 **12/14 文件一致**，另 2 处差异已明示，见下） |
 | 主审原包复跑（`b7d7e78` 包，26 项） | **26 passed** |
 | 仓库全量 | **1745 用例 / 0 failed / 0 error / 15 skipped**（环境相关跳过） |
 | `ruff check` | 全过 |
@@ -19,7 +19,8 @@
 | 三工具实跑 | 统计窗口 / 回放 / 导出均正常产出 |
 | **同 SHA CI（`8299ce8`）** | [run 35447474583](https://github.com/miaomiao636/qq-group-moderation-bot/actions/runs/35447474583) —— `Lint, Type-check & Test (ubuntu-latest)` `jobId=105908794916`、`Lint, Type-check & Test (windows-latest)` `jobId=105908794797`、`Runtime deps regression (clean install)` `jobId=105908794917`，**三个 job 全部 success** |
 
-入库的 14 个探针文件（**原样**，仅加一行文件头与出处说明，**未改断言、未改逻辑、未删用例**）：
+入库的 14 个探针文件（仅加一行文件头与出处说明；**12/14 文件与原件 AST 一致**，
+两处差异**已明示**，见本节末；其余**未删用例、未弱化断言**）：
 
 ```
 tests/test_r132_review_mode_pipeline_controls.py
@@ -72,6 +73,7 @@ tests/test_r132_review_stats_attribution.py
 | **图片哈希模式** | `IMAGE_HASH_MODE=**shadow**`（只观察、**不改变判定**）。已有 `image_hash` 观察样本，例如 `{"mode": "shadow", "checked": 1, "matched": false}` |
 | **白名单** | 负责人 2026-09-19 完成两轮审图：首批 95 张 → **94 放行 / 1 撤回**；追加批 87/88/95/96 → **4 放行**。落库结果：**生效名单 68 条**（`enabled=1`）+ **拒绝快照 1 条**。撤回的那张经核验与 68 条生效条目**距离均 >2**（不会被间接放行） |
 | **真实动作范围** | 负责人**明确授权**「按 >200 人全开，只撤回，不排除任何群」。已执行：`provider_group_settings.action_enabled=1` 的群 **13 → 67**（新增 54 行）。附**变更前一致性备份**、**逐群审计记录**（`docs/evidence/stats/enable-groups-audit.json`）与**一键回滚 SQL**（`docs/evidence/stats/rollback-enable-groups.sql`）。动作阶段仍为 **`recall_only`**（**只撤回**，未提禁言/警告） |
+| **⚠️ 上表口径更正（主审 R9-09 复核 + 我 2026-09-19 只读核对）** | 当时 67 群中**只有 13 群有归属/路由、真正可执行**；另 54 群 `resolve_action_provider` 返回 `None`（运行时 fail-closed，**不会外发动作**）——即"配置位已开"**不等于**"执行就绪"。负责人随后明确选择 **B 方案**：已用 `scripts/authorize_group_routes.py` 补齐 **54 行归属 + 54 行路由**（变更前一致性备份、审计先落盘、提交前逐群复核、附回滚 SQL），并以运行时真实函数复核 **67/67 群可路由**（阶段仍 `recall_only`） |
 | **enforce** | **仍未实现、未复验、未授权** —— 白名单当前**不会放行任何图** |
 
 ---
@@ -100,7 +102,9 @@ tests/test_r132_review_stats_attribution.py
 ## 六、可直接转发的回评
 
 > 主审 r132 第七批复验（受审 `b7d7e78`）的三项 P2 残余 + P3 已整改，本批推送至 **`8299ce8`**：
-> **您三轮入库探针合计 113 项全部通过（65 + 22 + 26，0 failed）**，全部**原样入库**（仅加文件头，未改断言）。
+> **您三轮入库探针合计 113 项全部通过（65 + 22 + 26，0 failed）**；入库 14 个文件中
+> **12/14 与原件 AST 一致**，另 2 处（scope 测试按您已接受的"方案 2"改断言、mode 测试加**输入配置隔离**）
+> **已逐处明示**——原送审稿把它们总称成"全部原样、未改断言"是**不实总述**，现予更正。
 > 映射：R6-01-R → 判定落库 `review_policy` 三阈值，离线只用真实阈值，缺元数据 / 解析失败 / 无政策一律
 > `unresolved_unknown`（不再静默空 blockers、不拿默认值当结论）；R6-02-R → 只有命中生效条目才计
 > `would_change`、候选套同一拒绝快照 + 排除清单 + `enabled=0`、头部模式由实际行决定、逐行渲染来源、

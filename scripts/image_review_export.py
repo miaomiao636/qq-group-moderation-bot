@@ -97,8 +97,8 @@ def build_whitelist(samples_dir: Path, db: Path, media_dir: Path) -> list[tuple[
         # 候选收集是 `collect` 的职责，且会显式标注"未在生效名单（候选）"；
         # 在构建集合时偷偷补人，会让负责人以为这是生效名单。
         return [(int(value, 16), "db:enabled") for value in sorted(approved)]
-    # 表缺失/不可读 → 候选：样本库 + 历史放行图 − 排除清单（来源标 candidate）
-    excluded = load_excluded(EXCLUDE_FILE)
+    # 表缺失/不可读 → 候选：样本库 + 历史放行图 − 排除清单 − **拒绝快照**（R9-06 同源）
+    excluded = load_excluded(EXCLUDE_FILE) | load_rejections(db)
     seen: dict[int, str] = {}
     for path, source, note in scan_samples(samples_dir) + scan_history(db, media_dir):
         phash = dhash64_file(path)
@@ -372,7 +372,8 @@ def main(argv: list[str] | None = None) -> int:
         else:
             status = "命中（不改变）"
         lines.append(
-            f"| {order:02d} | {status} | `{target.name}` | {label_text} | {str(entry['file_sha256'])[:12]} | "
+            # R9-04：清单里写**完整 SHA-256**（不再只写前 12 位）——落库工具按它校验"批准的就是这批字节"。
+            f"| {order:02d} | {status} | `{target.name}` | {label_text} | {entry['file_sha256']} | "
             f"{to_hex(int(entry['file_dhash'] or 0))} | {seed_text} | "
             f"{dist_text} | {entry['count']} | **{entry['would_change']}** | "
             f"{verdicts} | {categories or '-'} | {samples or '-'} |  |"

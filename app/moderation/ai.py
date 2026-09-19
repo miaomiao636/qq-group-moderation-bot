@@ -540,6 +540,19 @@ class AIReviewService:
         if not 0 <= self.secondary_review_high <= 1:
             raise ValueError("AI secondary threshold must be between 0 and 1")
 
+    def policy_snapshot(self) -> dict[str, float]:
+        """判定政策三阈值的**唯一只读来源**（主审 R9-08）。
+
+        在线持久化（`detail_json.review_policy`）与离线解释都用这一份字段；
+        此前 `pipeline` 读的是不存在的属性名 `direct_threshold`，于是"落库真实阈值"
+        实际永远写默认 0.90 —— 现已改为从服务实际字段读取。
+        """
+        return {
+            "primary_direct_threshold": float(self.primary_direct_threshold),
+            "secondary_review_low": float(self.secondary_review_low),
+            "secondary_review_high": float(self.secondary_review_high),
+        }
+
     def _policy_context(self) -> str:
         """Version all settings that affect review routing and interpretation."""
         return json.dumps(

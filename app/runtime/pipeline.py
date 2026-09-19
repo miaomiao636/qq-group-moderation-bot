@@ -74,6 +74,46 @@ def _best_effort_identity(payload: dict[str, Any]) -> tuple[str, str, str]:
     return group, user, name
 
 
+_POLICY_KEYS = ("primary_direct_threshold", "secondary_review_low", "secondary_review_high")
+_POLICY_DEFAULTS = (0.90, 0.60, 0.90)
+
+
+def _service_policy_values(ai_service: object) -> dict[str, float] | None:
+    """服务**实际字段**里的三阈值；读不到返回 ``None``（调用方必须显式决定，不静默猜）。
+
+    主审 R9-08：此前读的是**不存在的属性名** `direct_threshold`，于是真配置 0.80/0.95
+    也总被写成默认 0.90。现在优先用 `AIReviewService.policy_snapshot()`，退化按**真实字段名**读。
+    """
+    snapshot = getattr(ai_service, "policy_snapshot", None)
+    if callable(snapshot):
+        try:
+            values = snapshot()
+        except Exception:  # noqa: BLE001 - 读政策失败 → 交由调用方按未知处理
+            values = None
+        if isinstance(values, dict) and all(
+            isinstance(values.get(key), (int, float)) for key in _POLICY_KEYS
+        ):
+            return {key: float(values[key]) for key in _POLICY_KEYS}
+    out: dict[str, float] = {}
+    for key in _POLICY_KEYS:
+        value = getattr(ai_service, key, None)
+        if not isinstance(value, (int, float)):
+            return None
+        out[key] = float(value)
+    return out
+
+
+def _service_policy(ai_service: object) -> dict[str, float]:
+    """服务**实际生效**的判定政策三阈值——在线持久化与 shadow 判据**同源**。"""
+    values = _service_policy_values(ai_service)
+    return values if values is not None else dict(zip(_POLICY_KEYS, _POLICY_DEFAULTS, strict=True))
+
+
+def _policy_source(ai_service: object) -> str:
+    """政策来源标签：``service``（读到服务实际字段）/ ``assumed_defaults``（服务未暴露字段）。"""
+    return "service" if _service_policy_values(ai_service) is not None else "assumed_defaults"
+
+
 def _is_image(content_type: str) -> bool:
     return content_type.startswith("image/")
 
@@ -442,11 +482,10 @@ async def _run_pipeline(
             # R6-01-R：把**本次判定使用的复核阈值/政策上下文**随记录落库——离线工具（回放/导出）
             # 必须按当时配置解释二审是否有效，不能拿函数默认值（0.60/0.90）当确定结论。
             # 旧记录没有这个键时，离线一律标 `unresolved_unknown`（如实 unknown，不猜）。
-            "review_policy": {
-                "primary_direct_threshold": float(getattr(ai_service, "direct_threshold", 0.90)),
-                "secondary_review_low": float(getattr(ai_service, "secondary_review_low", 0.60)),
-                "secondary_review_high": float(getattr(ai_service, "secondary_review_high", 0.90)),
-            },
+            "review_policy": _service_policy(ai_service),
+            # 来源标签：`service` = 读到服务真实字段；`assumed_defaults` = 服务未暴露阈值，
+            # 用的是判据函数里**文档化的默认值**（如实标注，绝不与"已配置的真实阈值"混同）。
+            "review_policy_source": _policy_source(ai_service),
         }
         if msg.segments:
             # T-306：中立段摘要（含未知段元数据），供人工复核追溯
@@ -475,13 +514,20 @@ async def _run_pipeline(
                 # 孤儿二审），并透传服务实际阈值——不再按两个布尔字段另写一套简化判断。
                 from app.moderation.ai import _attachment_reviews_unresolved
 
-                if _attachment_reviews_unresolved(
-                    ai_results,
-                    decision,
-                    primary_direct_threshold=float(getattr(ai_service, "direct_threshold", 0.90)),
-                    secondary_review_low=float(getattr(ai_service, "secondary_review_low", 0.60)),
-                    secondary_review_high=float(getattr(ai_service, "secondary_review_high", 0.90)),
-                ) or any(r.needs_review or r.degraded_reason for r in ai_results):
+                policy = _service_policy(ai_service)
+                needs_attention = any(r.needs_review or r.degraded_reason for r in ai_results)
+                # R9-08：阈值与持久化的是**同一份**（服务实际字段；服务未暴露则为其实际生效的
+                # 文档化默认值，并在 `review_policy_source` 标注）——在线与离线不会分叉。
+                if (
+                    _attachment_reviews_unresolved(
+                        ai_results,
+                        decision,
+                        primary_direct_threshold=policy["primary_direct_threshold"],
+                        secondary_review_low=policy["secondary_review_low"],
+                        secondary_review_high=policy["secondary_review_high"],
+                    )
+                    or needs_attention
+                ):
                     extra_blockers.append("unresolved")
                 for att in msg.attachments:
                     if not str(att.content_type).startswith("image/"):

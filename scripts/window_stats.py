@@ -171,7 +171,7 @@ def collect(*, db: Path, start: datetime, end: datetime) -> dict[str, object]:
         # 两个账号可以出现相同原始 ID——因此**不能**把判定表的 LIKE 前缀条件照搬到动作/意图表，
         # 那会把真实日志整片过滤掉或错误归属。此处**如实标明**：动作/意图为**全库（全局）统计**，
         # 含其它账号与无法归属部分，与本账号判定**分列**，不构成同一分子/分母。
-        "action_scope": "attributed_or_unattributable",
+        "action_scope": "global_all_providers_retained",
         "action_unattributed_rows": unattributed_actions[0][0] if unattributed_actions else 0,
         "action_not_sent_targets": not_sent_targets,
         "action_unknown_attempt_targets": unknown_attempt_targets,
@@ -218,11 +218,12 @@ def render(data: dict[str, object], *, deployment: str, prompt_version: str, db:
         f"- 统计窗口：`{data['window']['start_utc']}` → `{data['window']['end_utc']}`"
         f"（{data['window']['semantics']}，UTC）",
         f"- 机器人账号（self_id）：{data['account'] or '未配置'}",
-        f"- 其它账号消息（判定表已分离）：{data['other_account_decisions']} 条"
-        "（R6-04：判定表按 `onebot:<self_id>:` 分离；**动作/意图表**的 `message_id` 是**原始 ID**、"
-        "两个账号可重复，因此**只有**『同一 provider 下存在判定行、且该判定属于别的账号』才被剔除；"
-        f"**无法归属**的动作日志另有 {data['action_unattributed_rows']} 行，"
-        "它们**保留在统计中并单列**——保守方向，不假装完成了历史账号归属）",
+        f"- 其它账号消息（**判定表**已按账号分离）：{data['other_account_decisions']} 条",
+        f"- **动作/意图统计范围**（`action_scope={data['action_scope']}`）：**全库（全局）保留**——"
+        "按主审方案 2，**不做**账号剔除（`action_logs.message_id` 是**原始 ID**、两个账号可重复，"
+        "无法安全归属）；其中**无法与任何判定对齐**的另有 "
+        f"{data['action_unattributed_rows']} 行，**单列但不剔除**（保守方向），"
+        "本表**不得**当作本账号判定的分子或分母",
         "- **动作状态语义**（A08）：`SKIPPED` = **未发送**（急停/群开关/阶段拦截，不是请求失败）；"
         "`ok=0` 且 `err_code` 为空 = 调用未成功但**最终效果未知**；`err_code=1200` = 调用超时"
         '（同样不等于客户端最终未撤回）。三类不得混写成同一种"失败"。',

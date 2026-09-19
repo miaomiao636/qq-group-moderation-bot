@@ -12,9 +12,13 @@
 from __future__ import annotations
 
 import argparse
+import contextlib
 import json
+import os
 import sqlite3
 import sys
+import time
+from collections.abc import Iterator
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -203,33 +207,136 @@ def rejection_snapshot_path(db: Path) -> Path:
     return db.with_suffix(db.suffix + ".rejections.json")
 
 
-def record_rejection(db: Path, value: str, *, source: str = "exclude", operator: str = "") -> None:
-    """把**已应用的拒绝**写进快照（已存在则不覆盖，保留最早来源与时间）。"""
-    path = rejection_snapshot_path(db)
+@contextlib.contextmanager
+def _snapshot_lock(path: Path, *, timeout: float = 10.0, stale: float = 60.0) -> Iterator[None]:
+    """拒绝快照的**互斥**读写（跨线程/跨进程）。
+
+    - 用 `O_EXCL` 建旁路锁文件；获取超时 → `RuntimeError`（**可见失败**，绝不静默丢记录）；
+    - 锁文件时间戳超过 `stale` 秒视为崩溃残留并回收。
+    """
+    lock = path.with_suffix(path.suffix + ".lock")
+    deadline = time.monotonic() + timeout
+    handle: int | None = None
+    while handle is None:
+        try:
+            handle = os.open(lock, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+        except FileExistsError:
+            try:
+                if time.time() - lock.stat().st_mtime > stale:
+                    lock.unlink(missing_ok=True)
+                    continue
+            except OSError:
+                pass
+            if time.monotonic() > deadline:
+                raise RuntimeError(f"拒绝快照被占用，等待超时：{lock}") from None
+            time.sleep(0.01)
     try:
-        data = json.loads(path.read_text(encoding="utf-8")) if path.is_file() else {}
-    except (OSError, ValueError):
-        data = {}
+        yield
+    finally:
+        os.close(handle)
+        lock.unlink(missing_ok=True)
+
+
+def _read_snapshot(path: Path) -> dict[str, object]:
+    """**严格读取**：缺失 → 空对象；存在但损坏/结构异常 → 抛错。
+
+    关键区分（R9-06）：**"缺失"与"损坏"不是一回事**——损坏时既不能当空集，
+    也不能覆盖原件（否则负责人已记录的撤回会被静默抹掉）。
+    """
+    try:
+        raw = path.read_bytes()
+    except FileNotFoundError:
+        return {}
+    data = json.loads(raw.decode("utf-8"))  # 损坏 → ValueError，交由调用方显式处理
     if not isinstance(data, dict):
-        data = {}
-    if value not in data:
-        data[value] = {
+        raise ValueError(f"拒绝快照结构异常（应为对象）：{path}")
+    return {str(key): value for key, value in data.items()}
+
+
+def _write_snapshot(path: Path, data: dict[str, object]) -> None:
+    """**原子替换**写入（同目录临时文件 + `os.replace`），不会留下半截文件。"""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_suffix(path.suffix + f".tmp{os.getpid()}")
+    tmp.write_text(json.dumps(data, ensure_ascii=False, indent=2, sort_keys=True), encoding="utf-8")
+    os.replace(tmp, path)
+
+
+def record_rejection(db: Path, value: str, *, source: str = "exclude", operator: str = "") -> None:
+    """把**已应用的拒绝**写进快照（锁内读改写 + 原子替换；保留最早来源与完整历史）。"""
+    path = rejection_snapshot_path(db)
+    key = str(value).lower()
+    with _snapshot_lock(path):
+        data = _read_snapshot(path)
+        entry = data.get(key)
+        if isinstance(entry, dict) and str(entry.get("state", "rejected")) == "rejected":
+            return  # 已处于"撤回"状态：不覆盖最早记录
+        now = datetime.now(UTC).isoformat(timespec="seconds")
+        history = list(entry.get("history") or []) if isinstance(entry, dict) else []
+        first = entry.get("first_rejected") if isinstance(entry, dict) else ""
+        data[key] = {
+            "state": "rejected",
             "source": source,
             "operator": operator,
-            "at": datetime.now(UTC).isoformat(timespec="seconds"),
+            "at": now,
+            "first_rejected": first or now,
+            "history": [
+                *history,
+                {"state": "rejected", "at": now, "source": source, "operator": operator},
+            ],
         }
-        path.write_text(
-            json.dumps(data, ensure_ascii=False, indent=2, sort_keys=True), encoding="utf-8"
-        )
+        _write_snapshot(path, data)
+
+
+def record_approval(db: Path, value: str, *, source: str = "review", operator: str = "") -> None:
+    """**显式重新批准**（R9-05）：最新人工决定置为"放行"，**保留**此前拒绝历史。
+
+    与"普通重复导入"区分：普通导入必须**尊重**拒绝，只有这条路能撤销拒绝。
+    """
+    path = rejection_snapshot_path(db)
+    key = str(value).lower()
+    with _snapshot_lock(path):
+        data = _read_snapshot(path)
+        entry = data.get(key)
+        now = datetime.now(UTC).isoformat(timespec="seconds")
+        history = list(entry.get("history") or []) if isinstance(entry, dict) else []
+        first = entry.get("first_rejected") if isinstance(entry, dict) else ""
+        data[key] = {
+            "state": "approved",
+            "source": source,
+            "operator": operator,
+            "at": now,
+            "first_rejected": first or "",
+            "history": [
+                *history,
+                {"state": "approved", "at": now, "source": source, "operator": operator},
+            ],
+        }
+        _write_snapshot(path, data)
+
+
+def load_rejections_state(db: Path) -> tuple[set[str], str]:
+    """→ (当前被撤回的哈希集合, 读取状态：``ok`` / ``missing`` / ``corrupt``)。
+
+    "损坏/不可读"必须由调用方**显式报告**（记录不可用 ≠ 没有拒绝记录）。
+    """
+    path = rejection_snapshot_path(db)
+    if not path.is_file():
+        return set(), "missing"
+    try:
+        data = _read_snapshot(path)
+    except (OSError, ValueError):
+        return set(), "corrupt"
+    rejected = {
+        key
+        for key, entry in data.items()
+        if not isinstance(entry, dict) or str(entry.get("state", "rejected")) != "approved"
+    }
+    return {key.lower() for key in rejected}, "ok"
 
 
 def load_rejections(db: Path) -> set[str]:
-    """读取拒绝快照（文件缺失/损坏 → 空集；随后仍会叠加排除清单与停用行）。"""
-    try:
-        data = json.loads(rejection_snapshot_path(db).read_text(encoding="utf-8"))
-    except (OSError, ValueError):
-        return set()
-    return {str(key).lower() for key in data} if isinstance(data, dict) else set()
+    """读取**当前**处于"撤回"状态的哈希（最新决定为放行则不计入）。"""
+    return load_rejections_state(db)[0]
 
 
 def import_seeds(
@@ -239,19 +346,38 @@ def import_seeds(
     dry_run: bool,
     operator: str,
     excluded: set[str] | None = None,
+    reapproved: set[str] | None = None,
 ) -> tuple[int, int, int, int]:
-    """写入白名单；返回 (新增, 已存在(重复), 计算失败, 被排除清单跳过)。"""
+    """写入白名单；返回 (新增, 已存在(重复), 计算失败, 被排除清单跳过)。
+
+    - `seeds` 元素可为 3 元组，或 4 元组 `(path, source, note, 已验证的哈希十六进制)`——
+      后者用于**批准工具**：它已在同一份字节上校验过 SHA-256/dHash，这里不再二次读盘；
+    - `excluded`：负责人判"撤回"的哈希 → 停用既有行 + 写拒绝快照；
+    - `reapproved`（R9-05）：**显式重新批准**——只有这些哈希可以覆盖拒绝快照并重新启用；
+      普通重复导入（`excluded`/`reapproved` 都没提到、但快照里记着"撤回"的图）必须**尊重拒绝**。
+    """
     excluded = excluded or set()
+    reapproved = {value.lower() for value in (reapproved or set())}
+    persisted_rejected = load_rejections(db)
     added = duplicate = failed = skipped = 0
     con = None if dry_run else sqlite3.connect(db)
     try:
-        for path, source, note in seeds:
-            phash = dhash64_file(path)
-            if phash is None:
-                failed += 1
-                print(f"  [跳过] 无法计算哈希：{path.name}")
+        for seed in seeds:
+            path, source, note = seed[0], seed[1], seed[2]
+            precomputed = str(seed[3]).lower() if len(seed) > 3 and seed[3] else ""
+            if precomputed:
+                value = precomputed
+            else:
+                phash = dhash64_file(path)
+                if phash is None:
+                    failed += 1
+                    print(f"  [跳过] 无法计算哈希：{path.name}")
+                    continue
+                value = to_hex(phash)
+            if value in persisted_rejected and value not in reapproved and value not in excluded:
+                skipped += 1
+                print(f"  [尊重已记录的撤回] {value}（普通导入不得静默撤销人工结论）")
                 continue
-            value = to_hex(phash)
             if value in excluded:
                 skipped += 1
                 print(f"  [排除] 负责人在审核清单中判为撤回：{value} {path.name}")
@@ -280,6 +406,15 @@ def import_seeds(
                 added += 1
             else:
                 duplicate += 1
+                if value in reapproved:
+                    # R9-05：**显式重新批准**必须把此前被撤回的行重新启用——`INSERT OR IGNORE`
+                    # 只会"什么都不做"，于是"第三次放行"永远不生效。
+                    con.execute(
+                        "update image_allowlist set enabled=1, "
+                        "note = note || ';reapproved:2026-09-19' where phash = ? and enabled = 0",
+                        (value,),
+                    )
+                    print(f"  [重新批准] {value} 已重新启用（保留此前撤回历史）")
         if con is not None:
             # A05：即使该哈希不是本次种子（例如上一批已导入后才被判撤回），
             # 也必须按排除清单停用——保证"生效名单"与负责人结论一致。

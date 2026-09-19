@@ -1202,3 +1202,28 @@ ACTION_MODE 切换为 OFFICIAL、ONEBOT_ACTIONS_ENABLED=true、ONEBOT_ACTION_STA
     更正 CI 引用（`97d68d1` 对应 run `35344025260`，`35343211214` 的 head 是 `70c4422`）。
   - **仍未具备（不得以测试替代）**：Windows 实机全链回滚演练（未停生产服务、未在生产库演练）、
     固定 UTC 半开窗口的动作统计原件。**部署**：仍未部署。
+
+---
+
+## 决策 D-033：为已开启真实动作的群补齐归属/路由（B 方案，2026-09-19）
+
+日期：2026-09-19。背景：主审第八批复核（受审 `8299ce8`）指出 **R9-09**——`provider_group_settings.action_enabled=1`
+只是"配置位"，能否真正外发动作由 `app.core.routing.resolve_action_provider` 决定；本机只读核对确认：
+当时 67 个已开群里**只有 13 个**有归属/路由、真正可执行，另 **54 个既无 `group_action_owners` 也无
+`group_provider_routes` 行 → 运行时返回 `None`（fail-closed，不会外发动作）**。
+负责人 2026-09-19 明确选择 **B**：「补齐 owner/route 让它们真正生效」（真实动作范围 13 → 67 群）。
+
+- **执行方式**：新增 `scripts/authorize_group_routes.py`（provider 限定、`--authorized-by` 必填留档、
+  dry-run 先预览、一致性备份、**审计先落盘再提交**、提交前用与运行时同语义的 `route_ready` 逐群复核、
+  附逐行回滚 SQL）。
+- **只做一件事**：为缺失的群插入 `group_action_owners(provider='onebot')` 与
+  `group_provider_routes(message_provider='onebot', action_provider='onebot')`；**绝不**触碰其它 provider 的行；
+  遇到"同群已有别的 provider 归属/路由"的冲突 → **跳过并报告**，不为跑绿建立跨通道映射。
+- **执行结果**：op_id `658e9770b7f7`，新增归属 **54** 行、路由 **54** 行；审计
+  `docs/evidence/stats/authorize-groups-20260919T145306Z-658e9770b7f7.plan.json` /
+  `…-658e9770b7f7.applied.json`；变更前一致性备份 `data/backups/moderation-20260919T145306Z-923oh8zi.db`；
+  复核方式 = **运行时真实函数** `resolve_action_provider(session, 'onebot', 群)` → **67/67 返回 `onebot`**，
+  且 `provider_group_settings` 仍只有 `onebot`（67 开 / 3 关），另两个 provider 行数为 0（无跨通道影响）。
+- **不变量**：`ONEBOT_ACTION_STAGE` 仍为 **`recall_only`**（只撤回，禁言/警告仍被编排层跳过）；
+  `IMAGE_HASH_MODE=shadow`；enforce **未实现**；本次不改判定逻辑、不扩权限到其它 provider。
+- **回退**：按本次输出的 `ROLLBACK_SQL` 逐行删除这 54 行归属与路由即可（或从上述一致性备份恢复）。

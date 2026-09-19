@@ -1,52 +1,80 @@
-"""把负责人在审核批次里的结论落库（放行 → enabled=1；撤回 → 只进拒绝快照）。
+"""落库负责人对图片审核清单的结论（**可验证、失败即停**）。
 
-用法：
-    uv run python scripts/apply_review_decisions.py --batch <目录> [--dry-run]
+主审 R9-04 / R9-05 / R9-07 整改：
 
-约定：
-- 批次目录里必须有 `IMAGE_REVIEW.md`（含 `| 编号 | 状态 | 图片文件 | ...` 表）与 `DECISIONS.json`
-  （`{"decisions": {"01": "放行"|"撤回", ...}}`）；
-- **放行**：把该图片的 dHash 写入 `image_allowlist`（`enabled=1`）；
-- **撤回**：**不写行**，只写拒绝快照（`<db>.rejections.json`）——保证导出/回放的候选收集
-  不会再把它拉回来（R6-02-R）。
+- **绑定字节身份**（R9-04）：按清单里的完整 SHA-256（兼容前 12 位写法）与 dHash 校验磁盘上的图；
+  同名的图被换掉 → 明确失败，**绝不**把新字节批准进白名单；校验用**同一份字节**算出哈希，
+  不再"先校验再二次读取"；
+- **失败即停、不部分成功**（R9-04/R9-07）：原图缺失、编号不在清单、结论未定、
+  清单里有图没给结论 → 打印 `APPLY_FAILED` 并以非零退出，**不做任何写库**；
+- **编号是正整数**（R9-07）：第 100 张及以后（三位编号）同样能渲染、能落库；
+- **区分普通重复导入与显式重新批准**（R9-05）：本工具是"显式重新批准"的入口——
+  放行会写 `record_approval` 并重新启用既有行（保留撤回历史）；普通 seed 导入仍必须尊重拒绝。
 """
 
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import re
 import sys
 from pathlib import Path
-from typing import Any
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(ROOT / "scripts"))
 
-from app.moderation.image_hash import dhash64_file, to_hex  # noqa: E402
-from image_allowlist_seed import import_seeds, record_rejection  # noqa: E402
+from app.moderation.image_hash import dhash64, to_hex  # noqa: E402
+from image_allowlist_seed import (  # noqa: E402
+    import_seeds,
+    record_approval,
+    record_rejection,
+)
 
 REVIEW_ROOT = ROOT / "docs" / "evidence" / "image-review"
 DEFAULT_DB = ROOT / "data" / "moderation.db"
-ROW = re.compile(r"^\| (\d\d) \| (.*?) \| `(.*?)` \|")
+# 列序与 `image_review_export` 写的清单一致：
+# 编号 | 状态 | 图片文件 | 来源 | 文件 SHA-256 | 文件 dHash | 命中种子 dHash | 距离 | 命中次数 | ...
+ROW = re.compile(r"^\| (\d+) \| (.*?) \| `(.*?)` \|")
+OPERATOR = "负责人-2026-09-19"
 
 
-def load_batch(batch: Path) -> tuple[dict[str, str], dict[str, str]]:
-    """→ (编号→图片文件名, 编号→结论)"""
-    files: dict[str, str] = {}
+def load_manifest(batch: Path) -> dict[str, dict[str, str]]:
+    """→ ``{编号(规范化为整数字符串): {file, status, source, sha256, dhash}}``。
+
+    编号一律规范成整数写法（`01` 与 `1` 视为同一张），避免"清单写 01、结论写 1"互相找不到。
+    """
+    entries: dict[str, dict[str, str]] = {}
     for line in (batch / "IMAGE_REVIEW.md").read_text(encoding="utf-8").splitlines():
-        m = ROW.match(line)
-        if m:
-            files[m.group(1)] = m.group(3)
-    decisions: dict[str, str] = json.loads((batch / "DECISIONS.json").read_text(encoding="utf-8"))[
-        "decisions"
-    ]
-    return files, decisions
+        match = ROW.match(line)
+        if not match:
+            continue
+        cells = [cell.strip() for cell in line.split("|")]
+        no = str(int(match.group(1)))
+        entry = {
+            "file": match.group(3),
+            "status": match.group(2),
+            "source": cells[4] if len(cells) > 4 else "",
+            "sha256": (cells[5] if len(cells) > 5 else "").strip("`"),
+            "dhash": (cells[6] if len(cells) > 6 else "").strip("`"),
+        }
+        previous = entries.get(no)
+        if previous is not None and previous["sha256"] != entry["sha256"]:
+            raise ValueError(
+                f"清单里编号 {no} 重复且内容不一致（{previous['file']} / {entry['file']}）"
+            )
+        entries[no] = entry
+    return entries
+
+
+def load_decisions(batch: Path) -> dict[str, str]:
+    raw = json.loads((batch / "DECISIONS.json").read_text(encoding="utf-8"))["decisions"]
+    return {str(int(no)): str(verdict) for no, verdict in raw.items()}
 
 
 def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(description="落库负责人审核结论")
+    parser = argparse.ArgumentParser(description="落库负责人审核结论（可验证、失败即停）")
     parser.add_argument("--batch", default=None)
     parser.add_argument("--db", default=str(DEFAULT_DB))
     parser.add_argument("--dry-run", action="store_true")
@@ -57,46 +85,89 @@ def main(argv: list[str] | None = None) -> int:
         else max(REVIEW_ROOT.glob("batch-*"), key=lambda p: p.stat().st_mtime)
     )
     db = Path(args.db)
-    files, decisions = load_batch(batch)
+    try:
+        manifest = load_manifest(batch)
+        decisions = load_decisions(batch)
+    except (OSError, ValueError, KeyError) as exc:
+        print(f"APPLY_FAILED 无法读取批次：{type(exc).__name__}: {exc}")
+        return 4
 
-    approved: list[tuple[Path, str, str]] = []
+    problems: list[str] = []
+    approved: list[tuple[Path, str, str, str]] = []
     rejected: set[str] = set()
-    for no, verdict in sorted(decisions.items()):
-        name = files.get(no)
-        if not name:
-            print(f"  [跳过] 编号 {no} 在清单里找不到图片")
+    for no in sorted(decisions, key=int):
+        verdict = decisions[no]
+        entry = manifest.get(no)
+        if entry is None:
+            problems.append(f"编号 {no} 不在清单里（未知编号）")
             continue
-        path = batch / name
-        phash = dhash64_file(path)
+        picture = batch / entry["file"]
+        if not picture.is_file():
+            problems.append(f"编号 {no} 的原图缺失：{entry['file']}（**不得**算作成功）")
+            continue
+        try:
+            raw = picture.read_bytes()  # 只读一次：校验与哈希用**同一份字节**
+        except OSError as exc:
+            problems.append(f"编号 {no} 读取失败：{type(exc).__name__}")
+            continue
+        full_sha = hashlib.sha256(raw).hexdigest()
+        expected_sha = entry["sha256"]
+        # 前缀校验同时兼容"完整 64 位"与"前 12 位"两种清单写法
+        if expected_sha and expected_sha != "-" and not full_sha.startswith(expected_sha):
+            problems.append(
+                f"编号 {no} 的文件已被替换：清单 SHA-256={expected_sha[:12]}… "
+                f"实际={full_sha[:12]}…（拒绝批准）"
+            )
+            continue
+        phash = dhash64(raw)
         if phash is None:
-            print(f"  [跳过] 算不出哈希：{name}")
+            problems.append(f"编号 {no} 无法解码算哈希：{entry['file']}")
+            continue
+        value = to_hex(phash)
+        expected_dhash = entry["dhash"]
+        if expected_dhash and expected_dhash != "-" and value != expected_dhash:
+            problems.append(f"编号 {no} 的 dHash 与清单不一致：{expected_dhash} vs {value}")
             continue
         if verdict == "放行":
-            approved.append((path, "review-2026-09-19", f"{batch.name}:no={no}"))
+            approved.append((picture, "review-2026-09-19", f"{batch.name}:no={no}", value))
         elif verdict == "撤回":
-            rejected.add(to_hex(phash))
+            rejected.add(value)
         else:
-            print(f"  [未定] {no} = {verdict}（本次不动）")
+            problems.append(f"编号 {no} 的结论未定：{verdict}（要求处理但未处理）")
+
+    pending = [no for no in manifest if no not in decisions]
+    if pending:
+        problems.append(
+            f"清单里仍有 {len(pending)} 张未给结论：{','.join(sorted(pending, key=int))}"
+            "（不得宣称整批成功）"
+        )
+    if problems:
+        print("APPLY_FAILED 未做任何写入（不部分成功）：")
+        for item in problems:
+            print(f"  - {item}")
+        return 4
 
     print(f"批次 {batch.name}：放行 {len(approved)} 张、撤回 {len(rejected)} 张")
     if args.dry_run:
+        print("DRY_RUN_OK（未做任何改动）")
         return 0
-    result: tuple[int, int, int, int] = import_seeds(
+
+    result = import_seeds(
         db=db,
         seeds=approved,
         dry_run=False,
-        operator="负责人-2026-09-19",
+        operator=OPERATOR,
         excluded=rejected,
+        # 显式重新批准：只有这条路可以覆盖既有拒绝并重新启用
+        reapproved={seed[3] for seed in approved},
     )
+    for _picture, _source, _note, value in approved:
+        record_approval(db, value, source=f"review:{batch.name}", operator=OPERATOR)
     for value in sorted(rejected):
-        record_rejection(db, value, source=f"review:{batch.name}", operator="负责人-2026-09-19")
+        record_rejection(db, value, source=f"review:{batch.name}", operator=OPERATOR)
     added, duplicate, failed, skipped = result
     print(f"IMPORT_OK 新增={added} 已存在={duplicate} 失败={failed} 排除={skipped}")
     return 0
-
-
-def _noop(_value: Any) -> None:  # pragma: no cover - 类型锚点
-    return None
 
 
 if __name__ == "__main__":  # pragma: no cover
