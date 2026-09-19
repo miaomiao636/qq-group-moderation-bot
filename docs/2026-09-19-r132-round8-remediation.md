@@ -44,8 +44,13 @@ R6-04-R 采用主审允许的**方案 2**，因此第六批入库探针中的一
   `ruff check` + `format --check`、`mypy app`（89 源文件）全绿。
 - 说明：本轮期间曾出现 **1 次**未复现的失败（疑与随机用例顺序 / Windows 临时库 teardown 有关），
   随后两次全量（含本次）均为 0 失败；**我仍把它列为待钉死项**，不会当作已解决。
-- **CI**：`7a502b5`（本批最终代码 + 入库探针）三 job 见 PR #45（Ubuntu / Windows / clean runtime-deps）；
-  前序提交 `cae945a`、`1bdeace` 均已全绿。
+- **CI**：
+  - `cae945a` ✅ 三 job success；
+  - `7a502b5`、`47da96d` **曾因入库探针未过 `ruff format --check` 而失败**（格式检查步骤；
+    探针原包是单引号风格，与本仓库 double-quote 规范不同），已用 `ruff format tests` 修正
+    （**仅格式、未改任何断言**）；
+  - **`4e1cc72`（本批最终 SHA：代码 + 拒绝快照 + 入库探针 + 动图范围标注 + 格式修正）
+    三 job 全部 success**：[run 35439557536](https://github.com/miaomiao636/qq-group-moderation-bot/actions/runs/35439557536)。
 
 ## 五、仍然"未证明"（未因本轮整改改变）
 
