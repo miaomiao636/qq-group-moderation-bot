@@ -331,8 +331,12 @@ def main(argv: list[str] | None = None) -> int:
         seed_text = (
             "-" if int(entry["seed_hash"] or 0) == 0 else to_hex(int(entry["seed_hash"] or 0))
         )
+        # 逐行披露动图范围（主审：不能只留在在线 JSON / 只在头部计数）
+        label_text = str(entry["label"]) + (
+            "（动图:仅首帧）" if entry.get("frame_scope") == "first_frame" else ""
+        )
         lines.append(
-            f"| {order:02d} | `{target.name}` | {entry['label']} | {str(entry['file_sha256'])[:12]} | "
+            f"| {order:02d} | `{target.name}` | {label_text} | {str(entry['file_sha256'])[:12]} | "
             f"{to_hex(int(entry['file_dhash'] or 0))} | {seed_text} | "
             f"{dist_text} | {entry['count']} | **{entry['would_change']}** | "
             f"{verdicts} | {categories or '-'} | {samples or '-'} |  |"
