@@ -42,10 +42,17 @@
 
 - **本仓库全量**：**1719** 用例 / **0 failed / 0 error / 15 skipped**；`ruff check` + `format --check`、
   `mypy app`（89 源文件）全绿。
-- **CI**（GitHub Actions，三 job：Ubuntu / Windows / clean runtime-deps）：
-  - `e8e600e`（R6 前四项代码修复）：[run 35433655263](https://github.com/miaomiao636/qq-group-moderation-bot/actions/runs/35433655263) **三 job 全部 success**；
-  - `77e6ce0`（集合分离/归属 + 3 探针入库）：[run 35434168901](https://github.com/miaomiao636/qq-group-moderation-bot/actions/runs/35434168901) Ubuntu ✅ / clean runtime-deps ✅，Windows 结论见 PR 页面；
-  - `33b9b3b`（文档校准与原样入库探针的说明）：[run 35434359636](https://github.com/miaomiao636/qq-group-moderation-bot/actions/runs/35434359636)。
+- **CI**（GitHub Actions，三 job：Ubuntu / Windows / clean runtime-deps）——**链路上每个提交都全绿**：
+  - `e8e600e`（R6 四项代码修复）：[run 35433655263](https://github.com/miaomiao636/qq-group-moderation-bot/actions/runs/35433655263) 三 job success；
+  - `77e6ce0`（集合分离/归属 + 3 探针入库）：[run 35434168901](https://github.com/miaomiao636/qq-group-moderation-bot/actions/runs/35434168901) 三 job success；
+  - `33b9b3b`（文档校准）：[run 35434359636](https://github.com/miaomiao636/qq-group-moderation-bot/actions/runs/35434359636) 三 job success；
+  - **`b7d7e78`（本批送审 SHA：代码 + 3 探针入库 + 文档）**：
+    [run 35434586088](https://github.com/miaomiao636/qq-group-moderation-bot/actions/runs/35434586088)
+    —— **三个 job 全部 success**：
+    `Lint, Type-check & Test (ubuntu-latest)` `jobId=105874989425`、
+    `Lint, Type-check & Test (windows-latest)` `jobId=105874989387`、
+    `Runtime deps regression (clean install)` `jobId=105874989323`。
+    （本文件若在此后单独更新，属纯文档提交，不影响上述代码 SHA 的三 job 结论。）
 
 ## 四、仍然"未证明"的部分（不因本轮整改而改变）
 
