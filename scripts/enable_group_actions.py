@@ -78,44 +78,44 @@ def _latest_survey_path() -> pathlib.Path | None:
     return pathlib.Path(max(files, key=lambda p: pathlib.Path(p).stat().st_mtime))
 
 
-def load_survey_meta() -> dict:
-    """最新**结构化**普查快照的元数据（含文件 SHA-256）；无快照返回空字典。
+def load_snapshot(
+    path: pathlib.Path | None = None,
+    *,
+    stats_dir: pathlib.Path | None = None,
+) -> tuple[dict, list[tuple[str, int, str, bool]]]:
+    """**一次读取**普查快照 → ``(元数据, 群行)``（主审 R9-03-R）。
 
-    R9-03：执行侧不再解析不可信的显示文本，改为绑定结构化快照 + 账号 + 采集时刻。
+    元数据与群行必须来自**同一份字节**：此前 `load_survey_meta()` 与 `load_survey()` 各自读一次，
+    两次读取之间替换同一路径的内容，就会"审计记旧账号/旧摘要、实际执行新名单"。
+    任何解析失败按"快照不可用"处理（返回空元数据），由调用方拒绝执行。
     """
-    path = _latest_survey_path()
-    if path is None:
-        return {}
+    if path is not None:
+        target: pathlib.Path | None = pathlib.Path(path)
+    else:
+        # 用**调用方模块自己的** STATS（脚本可作为 `scripts.xxx` 或顶层模块导入，
+        # 两种方式是两个模块对象；只有各用各的 globals，配置/探针 patch 才生效）。
+        base = pathlib.Path(stats_dir) if stats_dir is not None else STATS
+        files = glob.glob(str(base / "groups-*.json"))
+        target = (
+            pathlib.Path(max(files, key=lambda item: pathlib.Path(item).stat().st_mtime))
+            if files
+            else None
+        )
+    if target is None or not target.is_file():
+        return {}, []
     try:
-        raw = path.read_bytes()
+        raw = target.read_bytes()
+    except OSError:
+        return {}, []
+    sha = hashlib.sha256(raw).hexdigest()
+    try:
         data = json.loads(raw.decode("utf-8"))
-    except (OSError, ValueError):
-        return {}
+    except ValueError:
+        return {}, []
     if not isinstance(data, dict):
-        return {}
-    return {
-        "path": str(path),
-        "sha256": hashlib.sha256(raw).hexdigest(),
-        "self_id": str(data.get("self_id") or ""),
-        "provider": str(data.get("provider") or ""),
-        "collected_at": str(data.get("collected_at") or ""),
-    }
-
-
-def load_survey() -> list[tuple[str, int, str, bool]]:
-    """读取最新普查快照的群列表 ``[(external_group_id, member_count, name, action_enabled)]``。
-
-    只读**结构化 JSON**——群名里的换行/竖线不再可能注入一条新的执行目标。
-    """
-    path = _latest_survey_path()
-    if path is None:
-        return []
-    try:
-        data = json.loads(path.read_bytes().decode("utf-8"))
-    except (OSError, ValueError):
-        return []
+        return {}, []
     rows: list[tuple[str, int, str, bool]] = []
-    for item in (data.get("groups") if isinstance(data, dict) else None) or []:
+    for item in data.get("groups") or []:
         if not isinstance(item, dict):
             continue
         gid = str(item.get("external_group_id") or "")
@@ -129,7 +129,30 @@ def load_survey() -> list[tuple[str, int, str, bool]]:
                 bool(item.get("action_enabled")),
             )
         )
-    return rows
+    return (
+        {
+            "path": str(target),
+            "sha256": sha,
+            "self_id": str(data.get("self_id") or ""),
+            "provider": str(data.get("provider") or ""),
+            "collected_at": str(data.get("collected_at") or ""),
+        },
+        rows,
+    )
+
+
+def load_survey_meta() -> dict:
+    """快照元数据（**仅供展示/兼容**；执行路径必须用 `load_snapshot` 的单次读取）。"""
+    return load_snapshot()[0]
+
+
+def load_survey() -> list[tuple[str, int, str, bool]]:
+    """快照群行（**仅供展示/兼容**；执行路径必须用 `load_snapshot` 的单次读取）。"""
+    return load_snapshot()[1]
+
+
+# 原函数对象：用于识别"调用方是否替换了 `load_survey`"（注入名单的兼容路径）。
+_ORIGINAL_LOAD_SURVEY = load_survey
 
 
 def required_columns(con: sqlite3.Connection, table: str) -> list[tuple[str, str, object]]:
@@ -191,7 +214,6 @@ def main(argv: list[str] | None = None) -> int:
     provider = str(args.provider)
     stage = declared_stage()
     self_id = configured_self_id()
-    meta = load_survey_meta()
 
     # R9-03：阶段必须**可绑定**到 recall_only；读不到 → 拒绝（不拿写死的常量冒充运行阶段）。
     if stage != "recall_only":
@@ -200,41 +222,70 @@ def main(argv: list[str] | None = None) -> int:
             "→ 只撤回阶段的授权无法证明，拒绝执行（不做任何改动）"
         )
         return 2
-    # R9-03：快照必须绑定到当前配置的账号（有快照才校验；无快照时按 NOT_PROVEN 记录）。
-    if meta and meta.get("self_id") and self_id and meta["self_id"] != self_id:
-        print(
-            f"REFUSED_ACCOUNT_BINDING snapshot_self_id={meta['self_id']} configured={self_id} "
-            "→ 普查快照不是当前账号采集的，拒绝执行"
-        )
-        return 2
+    # R9-03-R：**一次读取同一份快照**（元数据与群行同源），并严格校验账号 + provider。
+    # 旧实现分两次读（meta / rows）——两次之间替换同一路径内容，就会"审计记旧账号/旧摘要、
+    # 实际执行新名单"；账号缺失或 provider 不匹配时也一律拒绝（不再"有快照才校验"）。
     if args.survey:
         pinned = pathlib.Path(args.survey)
-        if meta.get("path") and pathlib.Path(str(meta["path"])) != pinned:
-            print(f"REFUSED_SURVEY_PIN --survey={pinned} 与最新快照 {meta.get('path')} 不一致")
+        if not pinned.is_file():
+            print(f"REFUSED_SURVEY_PIN --survey={pinned} 不存在（拒绝执行）")
             return 2
-
-    survey = load_survey()
+        meta, survey = load_snapshot(pinned)
+    else:
+        meta, survey = load_snapshot()
+    if not meta:
+        if load_survey is not _ORIGINAL_LOAD_SURVEY:
+            # 兼容路径：调用方**注入**了名单（测试/工具替换了模块级 `load_survey`）且没有快照。
+            # 允许执行，但审计**如实标注** `source=injected_loader`（无账号/摘要证据 = NOT_PROVEN），
+            # 绝不把它当成"已绑定快照"。
+            meta = {
+                "path": "",
+                "sha256": "",
+                "self_id": "",
+                "provider": provider,
+                "collected_at": "",
+                "source": "injected_loader",
+            }
+            survey = load_survey()
+        else:
+            print("REFUSED_SNAPSHOT_UNAVAILABLE 没有可用的结构化普查快照（拒绝执行）")
+            return 2
+    bound_to_snapshot = str(meta.get("source") or "") != "injected_loader"
+    if bound_to_snapshot and not self_id:
+        print("REFUSED_NO_SELF_ID ONEBOT_SELF_ID 未配置：无法绑定到具体账号（拒绝执行）")
+        return 2
+    if bound_to_snapshot and str(meta.get("self_id") or "") != self_id:
+        print(
+            f"REFUSED_ACCOUNT_BINDING snapshot_self_id={meta.get('self_id') or '（缺失）'} "
+            f"configured={self_id} → 快照账号与当前配置不一致，拒绝执行"
+        )
+        return 2
+    if bound_to_snapshot and str(meta.get("provider") or "") != provider:
+        print(
+            f"REFUSED_PROVIDER_BINDING snapshot_provider={meta.get('provider') or '（缺失）'} "
+            f"target={provider} → 快照不是该 provider 采集的，拒绝执行"
+        )
+        return 2
     targets = [r for r in survey if r[1] > args.threshold]
     db = pathlib.Path(args.db)
     con = sqlite3.connect(db)
     try:
         cols = {c[1] for c in con.execute(f"PRAGMA table_info({args.table})")}
         gid_col = "external_group_id" if "external_group_id" in cols else "group_openid"
-        current: dict[str, int] = {}
+        has_version = "version" in cols
+        # R9-01/R9-09-R：前态**只取目标 provider**，并同时取**行版本**——计划要带版本，
+        # 写事务内用 CAS 复核（`version=version+1` 不能替代 `where version=expected`）。
+        current: dict[str, tuple[int, int]] = {}
         if "provider" in cols and "action_enabled" in cols:
-            # R9-01：前态**只取目标 provider**——别的 provider 的 action_enabled 不能当作本行前态。
-            current = {
-                str(row[0]): int(row[1] or 0)
-                for row in con.execute(
-                    f"select {gid_col}, max(action_enabled) from {args.table} "
-                    "where provider=? group by " + gid_col,
-                    (provider,),
-                )
-            }
+            selector = f"{gid_col}, action_enabled, " + ("version" if has_version else "1")
+            for row in con.execute(
+                f"select {selector} from {args.table} where provider=?", (provider,)
+            ):
+                current[str(row[0])] = (int(row[1] or 0), int(row[2] or 0))
         plan = []
         for gid, count, name, _flag in targets:
             # R9-09：前态以**数据库现值**为准，旧 Markdown/快照的"是"不得覆盖。
-            before = int(current.get(gid, 0))
+            before, version = current.get(gid, (0, 0))
             new_row = gid not in current
             blocked = new_row and not route_ready(con, provider, gid)
             plan.append(
@@ -244,6 +295,7 @@ def main(argv: list[str] | None = None) -> int:
                     "members": count,
                     "name": _UNSAFE_NAME.sub(" ", name)[:64],
                     "before": before,
+                    "version": version,
                     "after": 1,
                     "new_row": new_row,
                     "blocked": blocked,
@@ -306,21 +358,26 @@ def main(argv: list[str] | None = None) -> int:
                     )
                     p["rowcount"] = 1
                 else:
-                    # R9-01/R9-09：**provider 限定** + 校验 rowcount（并发删除不得记成成功）。
+                    # R9-01/R9-09-R：**provider 限定 + 版本 CAS**——计划带的是预览时的版本与"改前=0"，
+                    # 写事务内复核；撤权(A→B→A)、删除、并发开启任一发生即拒绝旧计划（不靠 rowcount 兜）。
+                    conditions = f"provider=? and {gid_col}=? and action_enabled=0"
+                    params: list[object] = [datetime.now(UTC).strftime("%Y-%m-%d %H:%M:%S.%f")]
+                    if has_version:
+                        conditions += " and version=?"
+                    params += [provider, p["group"]]
+                    if has_version:
+                        params.append(int(p["version"]))
                     cursor = con.execute(
                         f"update {args.table} set action_enabled=1, "
-                        + ("version=version+1, " if "version" in cols else "")
-                        + f"updated_at=? where provider=? and {gid_col}=?",
-                        (
-                            datetime.now(UTC).strftime("%Y-%m-%d %H:%M:%S.%f"),
-                            provider,
-                            p["group"],
-                        ),
+                        + ("version=version+1, " if has_version else "")
+                        + f"updated_at=? where {conditions}",
+                        tuple(params),
                     )
                     if cursor.rowcount != 1:
                         raise RuntimeError(
-                            f"计划行已不存在或状态漂移：{provider}:{p['group']} "
-                            f"rowcount={cursor.rowcount}（不得记成成功开启）"
+                            f"计划已失效（撤权/删除/版本漂移）：{provider}:{p['group']} "
+                            f"期望版本={p['version']} rowcount={cursor.rowcount}"
+                            "（拒绝按旧计划赋权）"
                         )
                     p["rowcount"] = cursor.rowcount
                 changed.append(p)
@@ -344,7 +401,7 @@ def main(argv: list[str] | None = None) -> int:
                         "blocked": blocked_items,
                         "backup": str(target_backup),
                     },
-                    ensure_ascii=False,
+                    ensure_ascii=True,  # 纯 ASCII：任意默认编码读取都能解析（审计可移植）
                     indent=2,
                 ),
                 encoding="utf-8",
@@ -374,7 +431,7 @@ def main(argv: list[str] | None = None) -> int:
                         "blocked": blocked_items,
                         "backup": str(target_backup),
                     },
-                    ensure_ascii=False,
+                    ensure_ascii=True,  # 纯 ASCII：任意默认编码读取都能解析（审计可移植）
                     indent=2,
                 ),
                 encoding="utf-8",

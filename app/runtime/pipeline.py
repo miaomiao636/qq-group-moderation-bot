@@ -104,14 +104,17 @@ def _service_policy_values(ai_service: object) -> dict[str, float] | None:
 
 
 def _service_policy(ai_service: object) -> dict[str, float]:
-    """服务**实际生效**的判定政策三阈值——在线持久化与 shadow 判据**同源**。"""
-    values = _service_policy_values(ai_service)
-    return values if values is not None else dict(zip(_POLICY_KEYS, _POLICY_DEFAULTS, strict=True))
+    """服务**实际字段**里的三阈值；读不到 → **空字典**。
+
+    主审 R9-08-R：**默认值不是事实**——服务没有暴露政策时不得回填 0.90/0.60/0.90
+    （那会把"未知"包装成"已确认"，在线判据与离线解释都会据此误判"已消疑/本可放行"）。
+    """
+    return _service_policy_values(ai_service) or {}
 
 
 def _policy_source(ai_service: object) -> str:
-    """政策来源标签：``service``（读到服务实际字段）/ ``assumed_defaults``（服务未暴露字段）。"""
-    return "service" if _service_policy_values(ai_service) is not None else "assumed_defaults"
+    """``service``（读到真实字段）/ ``unknown``（未暴露 → 在线与离线一致按未知处理）。"""
+    return "service" if _service_policy_values(ai_service) is not None else "unknown"
 
 
 def _is_image(content_type: str) -> bool:
@@ -516,9 +519,11 @@ async def _run_pipeline(
 
                 policy = _service_policy(ai_service)
                 needs_attention = any(r.needs_review or r.degraded_reason for r in ai_results)
-                # R9-08：阈值与持久化的是**同一份**（服务实际字段；服务未暴露则为其实际生效的
-                # 文档化默认值，并在 `review_policy_source` 标注）——在线与离线不会分叉。
-                if (
+                # R9-08-R：**不填默认值**——读不到服务实际政策时，在线与离线一致按未知处理
+                # （观察里也不声称 would_allow），而不是拿"看起来像真值"的默认阈值下结论。
+                if not policy:
+                    extra_blockers.append("review_policy_unknown")
+                elif (
                     _attachment_reviews_unresolved(
                         ai_results,
                         decision,

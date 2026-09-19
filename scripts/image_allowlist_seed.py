@@ -18,7 +18,7 @@ import os
 import sqlite3
 import sys
 import time
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -173,10 +173,11 @@ def detail_blockers(detail: dict) -> list[str]:
     except Exception:  # noqa: BLE001 - **解析失败也不能静默变成空 blockers**
         blockers.append("unresolved_unknown")
         return blockers
-    # R6-01-R：**必须**用该判定落库时的**真实阈值**做解释；拿不到政策上下文一律 `unresolved_unknown`——
-    # 既不拿函数默认值（0.60/0.90）当"已消疑"，也不当"已否决"。
+    # R6-01-R / R9-08-R：**必须**用该判定落库时的**真实阈值**做解释，且**必须**能证明那是真实政策：
+    # 来源不是 `service`（例如服务未暴露政策、或旧记录缺来源）→ 一律 `unresolved_unknown`——
+    # 既不拿函数默认值当"已消疑"，也不当"已否决"。
     policy = detail.get("review_policy")
-    if not isinstance(policy, dict):
+    if not isinstance(policy, dict) or str(detail.get("review_policy_source") or "") != "service":
         blockers.append("unresolved_unknown")
         return blockers
     try:
@@ -331,7 +332,22 @@ def load_rejections_state(db: Path) -> tuple[set[str], str]:
         for key, entry in data.items()
         if not isinstance(entry, dict) or str(entry.get("state", "rejected")) != "approved"
     }
-    return {key.lower() for key in rejected}, "ok"
+    # R9-05-R/R9-06-R：**DB 是权威**（JSON 仅作派生/导出）——库里 `enabled=1` 的哈希即使
+    # JSON 里还标着"撤回"，也视为已被**更新的明确重新批准**覆盖，避免双存储长期互相矛盾
+    # （并发的撤回与重批都以"最后一次落库的决定"为准）。
+    masked: set[str] = set()
+    try:
+        con = sqlite3.connect(f"file:{db}?mode=ro", uri=True)
+        try:
+            masked = {
+                str(row[0]).lower()
+                for row in con.execute("select phash from image_allowlist where enabled=1")
+            }
+        finally:
+            con.close()
+    except sqlite3.Error:
+        masked = set()
+    return {key.lower() for key in rejected} - masked, "ok"
 
 
 def load_rejections(db: Path) -> set[str]:
@@ -347,6 +363,7 @@ def import_seeds(
     operator: str,
     excluded: set[str] | None = None,
     reapproved: set[str] | None = None,
+    pre_commit: Callable[[], None] | None = None,
 ) -> tuple[int, int, int, int]:
     """写入白名单；返回 (新增, 已存在(重复), 计算失败, 被排除清单跳过)。
 
@@ -358,6 +375,14 @@ def import_seeds(
     """
     excluded = excluded or set()
     reapproved = {value.lower() for value in (reapproved or set())}
+    if not dry_run:
+        # R9-06-R：拒绝快照**损坏/不可读**时，任何写入前就阻断——坏状态不得被当成空集。
+        _rejected_now, snapshot_state = load_rejections_state(db)
+        if snapshot_state == "corrupt":
+            raise ValueError(
+                f"拒绝快照损坏/不可读：{rejection_snapshot_path(db)}"
+                "（拒绝写入；先人工修复或隔离该文件）"
+            )
     persisted_rejected = load_rejections(db)
     added = duplicate = failed = skipped = 0
     con = None if dry_run else sqlite3.connect(db)
@@ -424,6 +449,10 @@ def import_seeds(
                     "where phash = ? and enabled = 1",
                     (value,),
                 )
+            if pre_commit is not None:
+                # R9-05-R/R9-06-R：**先让"决定/拒绝快照"落盘，再提交 DB**——
+                # 任一步失败都不会留下"已提交 enabled=1 但没有对应决定记录"的部分生效。
+                pre_commit()
             con.commit()
     finally:
         if con is not None:

@@ -38,10 +38,14 @@ from enable_group_actions import (  # noqa: E402
     STATS,
     configured_self_id,
     declared_stage,
+    load_snapshot,
     load_survey,
     load_survey_meta,
     route_ready,
 )
+
+# 兼容锚点：外部/探针仍可能 monkeypatch 这两个名字；执行路径已统一改为 `load_snapshot()` 单次读取。
+_COMPAT_SURVEY_LOADERS = (load_survey, load_survey_meta)
 
 DEFAULT_DB = ROOT / "data" / "moderation.db"
 TARGET_PROVIDER = "onebot"
@@ -57,6 +61,20 @@ def _conflicts(con: sqlite3.Connection, provider: str, gid: str) -> list[str]:
     ).fetchone()
     if owner is not None and str(owner[0]) != provider:
         problems.append(f"已有归属 provider={owner[0]}（与目标 {provider} 不一致）")
+    # B01：官方通道的**隐式默认**也是有效归属——`resolve_action_provider` 在"无 owner、
+    # 无 route 行"时对 `qq_official` 仍返回 `qq_official`。因此该群只要存在**其它 provider
+    # 的 settings 行**（官方通道在用），插入 OneBot 的共享 owner 就会把它从 `qq_official`
+    # 变成 `None` —— 即使没有 UPDATE 任何官方行，也改变了它的有效路由。
+    other_settings = con.execute(
+        "select count(*) from provider_group_settings "
+        "where provider<>? and external_group_id=? and action_enabled=1",
+        (provider, gid),
+    ).fetchone()[0]
+    if other_settings:
+        problems.append(
+            f"该群有其它 provider 的已启用 settings 行（{other_settings} 条）→"
+            " 共享 owner 会撤销其隐式默认归属"
+        )
     others = {
         str(row[0])
         for row in con.execute(
@@ -89,14 +107,33 @@ def main(argv: list[str] | None = None) -> int:
     provider = TARGET_PROVIDER
     stage = declared_stage()
     self_id = configured_self_id()
-    meta = load_survey_meta()
     if stage != "recall_only":
         print(f"REFUSED_STAGE_PROOF stage_declared={stage or '（读不到）'} → 拒绝执行")
         return 2
     if args.execute and not args.authorized_by.strip():
         print("REFUSED_NO_AUTHORIZATION 缺少 --authorized-by（负责人授权说明必须留档）")
         return 2
-    members = {gid: count for gid, count, _name, _flag in load_survey()}
+    # R9-03-R：与 enable 同一套**单次读取 + 严格身份绑定**（元数据与群行同源；账号/provider 缺失即拒绝）。
+    meta, snapshot_rows = load_snapshot(stats_dir=STATS)
+    if not meta:
+        print("REFUSED_SNAPSHOT_UNAVAILABLE 没有可用的结构化普查快照（拒绝执行）")
+        return 2
+    if not self_id:
+        print("REFUSED_NO_SELF_ID ONEBOT_SELF_ID 未配置：无法绑定到具体账号（拒绝执行）")
+        return 2
+    if str(meta.get("self_id") or "") != self_id:
+        print(
+            f"REFUSED_ACCOUNT_BINDING snapshot_self_id={meta.get('self_id') or '（缺失）'} "
+            f"configured={self_id} → 快照账号与当前配置不一致，拒绝执行"
+        )
+        return 2
+    if str(meta.get("provider") or "") != provider:
+        print(
+            f"REFUSED_PROVIDER_BINDING snapshot_provider={meta.get('provider') or '（缺失）'} "
+            f"target={provider} → 快照不是该 provider 采集的，拒绝执行"
+        )
+        return 2
+    members = {gid: count for gid, count, _name, _flag in snapshot_rows}
 
     db = pathlib.Path(args.db)
     con = sqlite3.connect(db)
@@ -110,7 +147,16 @@ def main(argv: list[str] | None = None) -> int:
             )
         ]
         targets, conflicts, already = [], [], []
+        planned_versions: dict[str, int] = {}
         for gid in enabled:
+            # R9-09-R：`--threshold` 与快照必须**真正参与选择**——不在快照内、或人数不达阈值
+            # 的群一律列阻塞（不能把"未来新增的 action_enabled 行"自动解释成本次旧授权）。
+            if gid not in members:
+                conflicts.append((gid, ["不在最新普查快照内（无法证明在批准的人数范围内）"]))
+                continue
+            if members[gid] <= args.threshold:
+                conflicts.append((gid, [f"快照人数 {members[gid]} <= 阈值 {args.threshold}"]))
+                continue
             found = _conflicts(con, provider, gid)
             if found:
                 conflicts.append((gid, found))
@@ -118,6 +164,15 @@ def main(argv: list[str] | None = None) -> int:
             if route_ready(con, provider, gid):
                 already.append(gid)
                 continue
+            row = con.execute(
+                "select action_enabled, version from provider_group_settings "
+                "where provider=? and external_group_id=?",
+                (provider, gid),
+            ).fetchone()
+            if row is None or int(row[0] or 0) != 1:
+                conflicts.append((gid, ["当前不是已启用状态（不在赋权范围）"]))
+                continue
+            planned_versions[gid] = int(row[1] or 0)
             targets.append(gid)
 
         missing_members = [gid for gid in targets if gid not in members]
@@ -148,6 +203,24 @@ def main(argv: list[str] | None = None) -> int:
         now = datetime.now(UTC).strftime("%Y-%m-%d %H:%M:%S.%f")
         inserted_owners, inserted_routes = [], []
         try:
+            # R9-09-R / B01：写事务内**逐目标重新复核**资格与完整归属——
+            # 预览→备份之间可能已被撤权（版本变化）或并发插入别的 provider 路由。
+            # 必须在**任何写入之前**完成，冲突先阻塞、绝不"先写 owner 把冲突消解"。
+            for gid in targets:
+                row = con.execute(
+                    "select action_enabled, version from provider_group_settings "
+                    "where provider=? and external_group_id=?",
+                    (provider, gid),
+                ).fetchone()
+                if (
+                    row is None
+                    or int(row[0] or 0) != 1
+                    or int(row[1] or 0) != planned_versions[gid]
+                ):
+                    raise RuntimeError(f"目标在预览后已被撤权/变更：{gid}（拒绝按旧计划补路由）")
+                found = _conflicts(con, provider, gid)
+                if found:
+                    raise RuntimeError(f"目标在预览后出现归属冲突：{gid}：{'；'.join(found)}")
             for gid in targets:
                 owner = con.execute(
                     f"select provider from {OWNERS} where external_group_id=?", (gid,)
@@ -203,7 +276,7 @@ def main(argv: list[str] | None = None) -> int:
                         ],
                         "verified_routable": len(targets),
                     },
-                    ensure_ascii=False,
+                    ensure_ascii=True,  # 纯 ASCII：任意默认编码读取都能解析（审计可移植）
                     indent=2,
                 ),
                 encoding="utf-8",
@@ -231,7 +304,7 @@ def main(argv: list[str] | None = None) -> int:
                             {"group": gid, "reasons": found} for gid, found in conflicts
                         ],
                     },
-                    ensure_ascii=False,
+                    ensure_ascii=True,  # 纯 ASCII：任意默认编码读取都能解析（审计可移植）
                     indent=2,
                 ),
                 encoding="utf-8",

@@ -39,8 +39,14 @@ select created_at, verdict, external_group_id,
        message_id
 from shadow_decisions
 where json_extract(detail_json, '$.image_hash') is not null
-order by created_at desc
 """
+
+# R9-10-R：WHERE 必须拼在 `order by` **之前**（旧实现把它们接在 `ORDER BY … DESC` 后面，
+# `--since/--until` 三种用法全部 SQL 语法错）；且所有计数共用**同一个** UTC 半开范围。
+_ORDER = " order by created_at desc"
+_RANGE = " and created_at >= ? and created_at < ?"
+_COUNT = "select count(*) from shadow_decisions"
+_COUNT_IMAGE = "select count(*) from shadow_decisions where kind='image'"
 
 
 def _cell(value: object) -> str:
@@ -59,18 +65,25 @@ def main(argv: list[str] | None = None) -> int:
     con = sqlite3.connect(f"file:{db}?mode=ro", uri=True)
     try:
         if args.since or args.until:
+            # 起点**含**、终点**不含**；观测、总数、图片数**同一范围**（窗外一律不计入）。
             lo, hi = args.since or "0000", args.until or "9999"
-            rows = con.execute(f"{SQL} and created_at >= ? and created_at < ?", (lo, hi)).fetchall()
-            scope = f"UTC 半开窗口 `{lo}` → `{hi}`（所有计数共用该范围）"
+            rows = con.execute(SQL + _RANGE + _ORDER, (lo, hi)).fetchall()
+            total = con.execute(
+                _COUNT + " where created_at >= ? and created_at < ?", (lo, hi)
+            ).fetchone()[0]
+            image_total = con.execute(
+                "select count(*) from shadow_decisions where kind='image'"
+                " and created_at >= ? and created_at < ?",
+                (lo, hi),
+            ).fetchone()[0]
+            scope = f"UTC 半开窗口 `{lo}` → `{hi}`（起点含、终点不含；所有计数共用该范围）"
             windowed = True
         else:
-            rows = con.execute(SQL).fetchall()
+            rows = con.execute(SQL + _ORDER).fetchall()
+            total = con.execute(_COUNT).fetchone()[0]
+            image_total = con.execute(_COUNT_IMAGE).fetchone()[0]
             scope = "**全库留存累计**（未按时间/账号/部署版本分离）"
             windowed = False
-        total = con.execute("select count(*) from shadow_decisions").fetchone()[0]
-        image_total = con.execute(
-            "select count(*) from shadow_decisions where kind='image'"
-        ).fetchone()[0]
     finally:
         con.close()
 

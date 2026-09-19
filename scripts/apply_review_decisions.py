@@ -18,6 +18,7 @@ import argparse
 import hashlib
 import json
 import re
+import sqlite3
 import sys
 from pathlib import Path
 
@@ -69,8 +70,20 @@ def load_manifest(batch: Path) -> dict[str, dict[str, str]]:
 
 
 def load_decisions(batch: Path) -> dict[str, str]:
+    """→ ``{规范编号: 结论}``。
+
+    R9-07-R：编号先规范化（`01` 与 `1` 是同一张），**规范化后冲突**（如 `01=撤回` 与
+    `1=放行` 同时出现）必须报错，不能静默 last-wins。
+    """
     raw = json.loads((batch / "DECISIONS.json").read_text(encoding="utf-8"))["decisions"]
-    return {str(int(no)): str(verdict) for no, verdict in raw.items()}
+    out: dict[str, str] = {}
+    for no, verdict in raw.items():
+        key = str(int(no))
+        previous = out.get(key)
+        if previous is not None and previous != str(verdict):
+            raise ValueError(f"结论里编号 {key} 出现冲突写法（{no}）：{previous} / {verdict}")
+        out[key] = str(verdict)
+    return out
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -111,9 +124,17 @@ def main(argv: list[str] | None = None) -> int:
             problems.append(f"编号 {no} 读取失败：{type(exc).__name__}")
             continue
         full_sha = hashlib.sha256(raw).hexdigest()
-        expected_sha = entry["sha256"]
-        # 前缀校验同时兼容"完整 64 位"与"前 12 位"两种清单写法
-        if expected_sha and expected_sha != "-" and not full_sha.startswith(expected_sha):
+        expected_sha = entry["sha256"].strip().lower()
+        # R9-04-R：**身份必须完整可验**——只接受 12 位或 64 位十六进制；
+        # 缺失、`-`、或任意长度（例如 1 位）一律拒绝：不得"跳过校验就当通过"。
+        if len(expected_sha) not in (12, 64) or any(
+            ch not in "0123456789abcdef" for ch in expected_sha
+        ):
+            problems.append(
+                f"编号 {no} 的清单 SHA-256 不可用（{entry['sha256'] or '空'}）→ 拒绝批准"
+            )
+            continue
+        if not full_sha.startswith(expected_sha):
             problems.append(
                 f"编号 {no} 的文件已被替换：清单 SHA-256={expected_sha[:12]}… "
                 f"实际={full_sha[:12]}…（拒绝批准）"
@@ -124,8 +145,11 @@ def main(argv: list[str] | None = None) -> int:
             problems.append(f"编号 {no} 无法解码算哈希：{entry['file']}")
             continue
         value = to_hex(phash)
-        expected_dhash = entry["dhash"]
-        if expected_dhash and expected_dhash != "-" and value != expected_dhash:
+        expected_dhash = entry["dhash"].strip().lower()
+        if len(expected_dhash) != 16 or any(ch not in "0123456789abcdef" for ch in expected_dhash):
+            problems.append(f"编号 {no} 的清单 dHash 不可用（{entry['dhash'] or '空'}）→ 拒绝批准")
+            continue
+        if value != expected_dhash:
             problems.append(f"编号 {no} 的 dHash 与清单不一致：{expected_dhash} vs {value}")
             continue
         if verdict == "放行":
@@ -152,6 +176,52 @@ def main(argv: list[str] | None = None) -> int:
         print("DRY_RUN_OK（未做任何改动）")
         return 0
 
+    def _persist_decisions() -> None:
+        for _picture, _source, _note, value in approved:
+            record_approval(db, value, source=f"review:{batch.name}", operator=OPERATOR)
+        for value in sorted(rejected):
+            record_rejection(db, value, source=f"review:{batch.name}", operator=OPERATOR)
+
+    def _prior_state() -> dict[str, int]:
+        """本次涉及哈希的**导入前状态**（-1 = 库里没有该行），供失败补偿复位。"""
+        state: dict[str, int] = {}
+        con = sqlite3.connect(f"file:{db}?mode=ro", uri=True)
+        try:
+            for value in [seed[3] for seed in approved] + sorted(rejected):
+                row = con.execute(
+                    "select enabled from image_allowlist where phash=?", (value,)
+                ).fetchone()
+                state[value] = -1 if row is None else int(row[0] or 0)
+        finally:
+            con.close()
+        return state
+
+    def _compensate(prior: dict[str, int]) -> None:
+        """R9-05-R/R9-06-R：快照落盘失败 → **补偿回滚**已提交的 DB 变更。
+
+        采用"先提交 DB（保住并发语义）+ 失败补偿"，等价于可恢复提交；
+        不把 DB 事务悬在快照写盘期间——那会让并发操作撞上 SQLite 写锁。
+        """
+        con = sqlite3.connect(db)
+        try:
+            for value, before in prior.items():
+                if before == -1:
+                    con.execute("delete from image_allowlist where phash=?", (value,))
+                else:
+                    con.execute(
+                        "update image_allowlist set enabled=?, "
+                        "note = replace(replace(note, ';reapproved:2026-09-19', ''), "
+                        "';excluded:2026-09-19', '') where phash=?",
+                        (before, value),
+                    )
+            con.commit()
+        finally:
+            con.close()
+        print(
+            f"COMPENSATED_APPROVAL_ROLLBACK hashes={len(prior)}（决定快照写盘失败，已复位 DB 状态）"
+        )
+
+    prior = _prior_state()
     result = import_seeds(
         db=db,
         seeds=approved,
@@ -161,10 +231,11 @@ def main(argv: list[str] | None = None) -> int:
         # 显式重新批准：只有这条路可以覆盖既有拒绝并重新启用
         reapproved={seed[3] for seed in approved},
     )
-    for _picture, _source, _note, value in approved:
-        record_approval(db, value, source=f"review:{batch.name}", operator=OPERATOR)
-    for value in sorted(rejected):
-        record_rejection(db, value, source=f"review:{batch.name}", operator=OPERATOR)
+    try:
+        _persist_decisions()
+    except (OSError, ValueError, RuntimeError):
+        _compensate(prior)
+        raise
     added, duplicate, failed, skipped = result
     print(f"IMPORT_OK 新增={added} 已存在={duplicate} 失败={failed} 排除={skipped}")
     return 0

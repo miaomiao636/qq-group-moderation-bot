@@ -107,6 +107,19 @@ class SyntheticModels:
     async def review_message(self, session, msg, decision, **kwargs):
         return merge_ai_evidence(decision, self.results), self.results
 
+    def policy_snapshot(self) -> dict[str, float]:
+        """**显式声明**本 fixture 的判定政策（主审 R9-08-R 建议的做法）。
+
+        这是一份双模型复核 fixture：它确实按"直判 0.90 / 灰区 0.60 / 二审 0.90"运行，
+        因此显式给出快照，而不是让生产路径去"猜默认值"——生产服务若没有这个访问器，
+        在线与离线都会按 `unknown` 处理（不声称已消疑）。
+        """
+        return {
+            "primary_direct_threshold": 0.90,
+            "secondary_review_low": 0.60,
+            "secondary_review_high": 0.90,
+        }
+
 
 async def execute(payload, models, engine=None):
     async with SessionLocal() as session:

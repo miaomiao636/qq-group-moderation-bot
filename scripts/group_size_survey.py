@@ -145,6 +145,16 @@ def _groups_from_onebot_http() -> list[dict[str, object]]:
 
 
 def _groups() -> list[dict[str, object]]:
+    """取群列表：**只用绑定配置账号的 OneBot HTTP**（主审 R9-03-R）。
+
+    旧实现会把 `_groups_from_onebot_http` 的"账号绑定失败"降级成 **未核账号的 WebUI 尝试**——
+    等于顶层旁路了账号绑定：匹配账号配置不存在时，仍可能返回**另一个账号**的群列表，
+    而 JSON 里标注的 self_id 只是配置声明。因此这里**不再降级**：拒绝即拒绝。
+    """
+    return _groups_from_onebot_http()
+
+
+def _groups_legacy_webui_unused() -> list[dict[str, object]]:  # pragma: no cover - 保留历史实现备查
     try:
         return _groups_from_onebot_http()
     except SystemExit as exc:
