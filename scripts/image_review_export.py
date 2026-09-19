@@ -312,14 +312,24 @@ def main(argv: list[str] | None = None) -> int:
         "> 请对**每张图**给一个结论（**放行 / 撤回**），我按你的结论增删白名单条目。",
         "> 图片就在本目录下（`img-XX_<hash>.jpg/png`），点开对照即可。",
         "",
-        "| 编号 | 图片文件 | 来源 | 文件 SHA-256（前 12） | 文件 dHash | 命中种子 dHash | 距离 | 命中次数 | 其中会改变判定 | 原判定分布 | 类别分布 | 样例消息 | 负责人结论（放行/撤回） |",
-        "| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |",
+        "| 编号 | 状态 | 图片文件 | 来源 | 文件 SHA-256（前 12） | 文件 dHash | 命中种子 dHash | 距离 | 命中次数 | 其中会改变判定 | 原判定分布 | 类别分布 | 样例消息 | 负责人结论（放行/撤回） |",
+        "| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |",
     ]
     with_images = 0
     copy_failures = 0
-    for order, (_index, entry) in enumerate(
-        sorted(groups.items(), key=lambda kv: -int(kv[1]["would_change"])), start=1
-    ):  # type: ignore[arg-type]
+
+    def _priority(item: tuple[tuple[int, str], dict[str, object]]) -> tuple[int, int]:
+        """审核优先级：①会改变判定 → ②无法判定（缺证据）→ ③候选（未在生效名单）→ ④命中不改变。"""
+        key, entry = item
+        if int(entry["would_change"]) > 0:
+            return (0, -int(entry["would_change"]))
+        if int(entry["unknown"]) > 0:
+            return (1, -int(entry["count"]))
+        if key[0] == -1:
+            return (2, -int(entry["count"]))
+        return (3, -int(entry["count"]))
+
+    for order, (_index, entry) in enumerate(sorted(groups.items(), key=_priority), start=1):  # type: ignore[arg-type]
         source = Path(str(entry["image"]))
         suffix = source.suffix.lower() or ".jpg"
         # 文件名写**该文件自己的** dHash + SHA-256 前缀（A04：不能再拿种子 dHash 冒充文件身份）
@@ -353,8 +363,16 @@ def main(argv: list[str] | None = None) -> int:
         )
         if int(entry["unknown"]) > 0:
             label_text += "（无法判定:证据不足）"
+        if int(entry["would_change"]) > 0:
+            status = "**会改变判定**"
+        elif int(entry["unknown"]) > 0:
+            status = "无法判定"
+        elif _index[0] == -1:
+            status = "候选（未在生效名单）"
+        else:
+            status = "命中（不改变）"
         lines.append(
-            f"| {order:02d} | `{target.name}` | {label_text} | {str(entry['file_sha256'])[:12]} | "
+            f"| {order:02d} | {status} | `{target.name}` | {label_text} | {str(entry['file_sha256'])[:12]} | "
             f"{to_hex(int(entry['file_dhash'] or 0))} | {seed_text} | "
             f"{dist_text} | {entry['count']} | **{entry['would_change']}** | "
             f"{verdicts} | {categories or '-'} | {samples or '-'} |  |"
