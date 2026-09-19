@@ -126,10 +126,17 @@ def test_other_account_or_provider_actions_do_not_enter_current_account_numerato
     data = collect(path)
     assert data["decisions_by_verdict"] == [("violation_high", 1)]
     assert data["other_account_decisions"] == 1
-    assert data["action_logs_by_action_ok"] == [("recall", 1, None, 1, 1)], (
-        "The current-account denominator excludes the other account/provider, but its action is still in the numerator"
+    # ⚠️ 契约变更（主审 R6-04-R 允许的"方案 2：全局动作统计与本账号判定分列"）：
+    # 旧断言要求"动作分子只含本账号"——但 action_logs.message_id 是**原始 ID**，两账号可重复，
+    # 无法无歧义归属；主审最小标准允许"保留完整全局动作统计，与判定分列，删除同一分子/分母称谓"。
+    # 因此这里改为断言**全局计数** + **无法归属行数单列**（不丢总账），判定仍为本账号范围。
+    assert data["action_logs_by_action_ok"] == [("recall", 1, None, 1, 2)], (
+        "R6-04-R：动作按全库统计并与本账号判定分列，不再冒充本账号分子"
     )
-    assert data["action_intents_by_status"] == [("SUCCEEDED", 1)]
+    assert data["action_intents_by_status"] == [("SUCCEEDED", 2)]
+    assert data["action_unattributed_rows"] == 1, (
+        "R6-04-R：无法无歧义归属的动作必须如实单列，而不是被删除或冒充本账号"
+    )
 
 
 def test_diagnostic_raw_action_message_identity_has_no_self_id():

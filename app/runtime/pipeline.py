@@ -439,6 +439,14 @@ async def _run_pipeline(
             "rule_version_ids": list(rule_version_ids),
             "ai_results": [r.model_dump() for r in ai_results],
             "evidence_vetoes": list(dict.fromkeys(evidence_vetoes)),
+            # R6-01-R：把**本次判定使用的复核阈值/政策上下文**随记录落库——离线工具（回放/导出）
+            # 必须按当时配置解释二审是否有效，不能拿函数默认值（0.60/0.90）当确定结论。
+            # 旧记录没有这个键时，离线一律标 `unresolved_unknown`（如实 unknown，不猜）。
+            "review_policy": {
+                "primary_direct_threshold": float(getattr(ai_service, "direct_threshold", 0.90)),
+                "secondary_review_low": float(getattr(ai_service, "secondary_review_low", 0.60)),
+                "secondary_review_high": float(getattr(ai_service, "secondary_review_high", 0.90)),
+            },
         }
         if msg.segments:
             # T-306：中立段摘要（含未知段元数据），供人工复核追溯

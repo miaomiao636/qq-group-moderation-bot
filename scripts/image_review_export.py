@@ -31,6 +31,7 @@ sys.path.insert(0, str(ROOT / "scripts"))
 from app.moderation.image_hash import best_match, dhash64_file, to_hex  # noqa: E402
 from image_allowlist_seed import (  # noqa: E402
     detail_blockers,
+    disabled_hashes,
     effective_hashes,
     effective_state,
     load_excluded,
@@ -148,6 +149,13 @@ def collect(
             if unmatched and candidates:
                 # 生效名单**非空**：不在名单内的图与本次审核无关（保持原行为）
                 continue
+            if unmatched:
+                # R6-02-R：候选收集必须套**同一份排除/停用快照**——负责人已明确拒绝
+                # （排除清单 / 自定义排除落库为 enabled=0）的图**不得**被重新拉出来。
+                if to_hex(phash) in load_excluded(EXCLUDE_FILE):
+                    continue
+                if to_hex(phash) in disabled_hashes(db):
+                    continue
             try:
                 file_sha = hashlib.sha256(path.read_bytes()).hexdigest()
                 file_size = path.stat().st_size
@@ -178,11 +186,18 @@ def collect(
             entry["categories"][str(category)] += 1  # type: ignore[index]
             if found is not None:
                 entry["distances"].append(found[1])  # type: ignore[union-attr]
-            if verdict != "allow" and not blocked:
+            # R6-02-R：**只有命中生效条目**才可能"因白名单改变判定"；候选（未匹配）一律为 0。
+            if found is not None and verdict != "allow" and not blocked:
                 entry["would_change"] = int(entry["would_change"]) + 1  # type: ignore[arg-type]
                 if len(entry["samples"]) < 5:  # type: ignore[arg-type]
                     entry["samples"].append(f"{message_id} @{created_at} ({group})")  # type: ignore[union-attr]
-    return {index: entry for index, entry in groups.items() if int(entry["would_change"]) > 0}  # type: ignore[arg-type]
+    # R6-02-R：返回过滤必须与计数同步——**候选行即使"会改变判定"为 0 也必须保留**
+    # （否则修完计数后合法候选会被整体滤掉）；只有"非候选且 would_change=0"的行不展示。
+    return {
+        index: entry
+        for index, entry in groups.items()
+        if int(entry["would_change"]) > 0 or index[0] == -1
+    }  # type: ignore[arg-type]
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -225,21 +240,21 @@ def main(argv: list[str] | None = None) -> int:
     # 不能悄悄把"读不到白名单"或"生效名单为空"补成候选后仍冒充同一次生效评估。
     _state, state_reason = effective_state(Path(args.db))
     labels = [source for _value, source in whitelist]
+    # R6-02-R：模式必须由**实际产出的行**决定（不能只看 builder 的 label），
+    # 否则会出现"头部说无候选、表格却有 1 张"的自相矛盾。
+    has_candidate_rows = any(key[0] == -1 for key in groups)
     if state_reason != "ok":
         set_mode = "candidate"
         mode_note = f"生效名单不可读（`{state_reason}`）→ 本清单是**候选**，不是生效评估"
+    elif has_candidate_rows:
+        set_mode = "candidate_referenced"
+        mode_note = (
+            "生效名单**为空** → 本清单是**候选收集**（每行标注『未在生效名单（候选）』），"
+            "**不是**生效名单评估"
+        )
     elif _state:
         set_mode = "active"
         mode_note = "按**生效名单**（`image_allowlist` 中 `enabled=1`）评估"
-    elif labels:
-        set_mode = "candidate_referenced"
-        # 生效名单为空时**只做候选收集**（不再把引用过的样本补进生效集合，R6-02）；
-        # 这里给出"判定里出现过的图"数量，让负责人知道本批次的来源范围。
-        mode_note = (
-            "生效名单**为空**（未导入 / 全被停用或排除）→ 标为候选："
-            f"`collect` 会列出判定里出现过的图（共 {len(_referenced_hashes(Path(args.db), Path(args.media_dir)))} 张哈希），"
-            "**这不是**生效名单评估"
-        )
     else:
         set_mode = "empty"
         mode_note = "生效名单为空且无候选"
@@ -265,8 +280,8 @@ def main(argv: list[str] | None = None) -> int:
         "> 请对**每张图**给一个结论（**放行 / 撤回**），我按你的结论增删白名单条目。",
         "> 图片就在本目录下（`img-XX_<hash>.jpg/png`），点开对照即可。",
         "",
-        "| 编号 | 图片文件 | 文件 SHA-256（前 12） | 文件 dHash | 命中种子 dHash | 距离 | 命中次数 | 其中会改变判定 | 原判定分布 | 类别分布 | 样例消息 | 负责人结论（放行/撤回） |",
-        "| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |",
+        "| 编号 | 图片文件 | 来源 | 文件 SHA-256（前 12） | 文件 dHash | 命中种子 dHash | 距离 | 命中次数 | 其中会改变判定 | 原判定分布 | 类别分布 | 样例消息 | 负责人结论（放行/撤回） |",
+        "| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |",
     ]
     with_images = 0
     copy_failures = 0
@@ -295,9 +310,14 @@ def main(argv: list[str] | None = None) -> int:
         distances = entry["distances"]  # type: ignore[assignment]
         samples = "<br>".join(str(x) for x in entry["samples"])  # type: ignore[union-attr]
         dist_text = f"{min(distances)}~{max(distances)}" if distances else "-"
+        # R6-02-R：未命中生效条目时**不能**用零哈希冒充"命中种子"，如实显示不适用；
+        # 同时把**每行的来源**（生效条目 / 候选）渲染出来，不能只留在内部字段里。
+        seed_text = (
+            "-" if int(entry["seed_hash"] or 0) == 0 else to_hex(int(entry["seed_hash"] or 0))
+        )
         lines.append(
-            f"| {order:02d} | `{target.name}` | {str(entry['file_sha256'])[:12]} | "
-            f"{to_hex(int(entry['file_dhash'] or 0))} | {to_hex(int(entry['seed_hash'] or 0))} | "
+            f"| {order:02d} | `{target.name}` | {entry['label']} | {str(entry['file_sha256'])[:12]} | "
+            f"{to_hex(int(entry['file_dhash'] or 0))} | {seed_text} | "
             f"{dist_text} | {entry['count']} | **{entry['would_change']}** | "
             f"{verdicts} | {categories or '-'} | {samples or '-'} |  |"
         )

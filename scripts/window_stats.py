@@ -82,40 +82,41 @@ def collect(*, db: Path, start: datetime, end: datetime) -> dict[str, object]:
         self_id,
         f"onebot:{self_id}:%",
     )
-    # R6-04：动作/意图的 `message_id` 是**原始 ID**，两个账号可重复——**不能**照搬判定表的
-    # 前缀过滤（会把真实日志整片过滤掉或错误归属）。这里用**可证明的归属**：同一 provider 下
-    # 若存在判定行、其 `external_message_id` 等于该原始 ID、且该判定复合键**属于别的账号**
-    # → 剔除（可证明不是本账号的）；否则（本账号判定命中，或**找不到判定行 = 无法归属**）
-    # **保留**并单独报数量——不"假装完成"历史账号归属。用 EXISTS 避免同一原始 ID 命中多行重复计数。
-    other_account_predicate = (
-        "select 1 from shadow_decisions d where d.provider = a.provider "
-        "and d.external_message_id = a.message_id and d.message_id not like ?"
-    )
+    # R6-04-R（主审给的最小方案 2：**保留完整全局动作统计、与本账号判定分列**）：
+    # 动作/意图的 `message_id` 是**原始 ID**，两个账号可重复。上一版"发现同 provider 同 raw ID
+    # 的不同账号判定就剔除"会把**本应保留的真实审计行**丢掉（碰撞/歧义不是归属证据）。
+    # 现在：**动作与意图一律全局统计**（不剔除任何行），另**如实单列**无法无歧义归属的行数；
+    # 判定表仍是本账号范围 → 报告**明确分列**，不再共用"分子/分母"称谓。
     intents = q(
-        "select i.status, count(*) from action_intents i "
-        "where i.created_at >= ? and i.created_at < ? and not exists ("
-        "  select 1 from shadow_decisions d where d.provider = i.provider "
-        "  and d.external_message_id = i.message_id and d.message_id not like ?) "
-        "group by i.status order by 2 desc",
+        "select status, count(*) from action_intents "
+        "where created_at >= ? and created_at < ? group by status order by 2 desc",
         lo,
         hi,
-        scope,
     )
     actions = q(
-        "select a.action, a.ok, a.err_code, a.attempts, count(*) from action_logs a "
-        "where a.created_at >= ? and a.created_at < ? and not exists ("
-        + other_account_predicate
-        + ") group by a.action, a.ok, a.err_code, a.attempts order by 5 desc",
+        "select action, ok, err_code, attempts, count(*) from action_logs "
+        "where created_at >= ? and created_at < ? "
+        "group by action, ok, err_code, attempts order by 5 desc",
+        lo,
+        hi,
+    )
+    # **无法无歧义归属**的行 = 不存在"完整身份（provider + 群 + 原始 message_id）匹配且属于本账号"
+    # 的判定，或同一完整身份下**同时**存在别的账号的判定（歧义）。
+    # 这类行**保留在总账里**（上面的全局统计），这里只给出数量，供报告如实标注。
+    unattributed_actions = q(
+        "select count(*) from action_logs a where a.created_at >= ? and a.created_at < ? "
+        "and not ("
+        "  exists (select 1 from shadow_decisions d where d.provider = a.provider "
+        "    and d.external_message_id = a.message_id "
+        "    and d.external_group_id = a.external_group_id and d.message_id like ?) "
+        "  and not exists (select 1 from shadow_decisions d2 where d2.provider = a.provider "
+        "    and d2.external_message_id = a.message_id "
+        "    and d2.external_group_id = a.external_group_id and d2.message_id not like ?)"
+        ")",
         lo,
         hi,
         scope,
-    )
-    unattributed_actions = q(
-        "select count(*) from action_logs a where a.created_at >= ? and a.created_at < ? "
-        "and not exists (select 1 from shadow_decisions d where d.provider = a.provider "
-        " and d.external_message_id = a.message_id)",
-        lo,
-        hi,
+        scope,
     )
     per_group = q(
         "select provider, external_group_id, "
@@ -193,8 +194,14 @@ def collect(*, db: Path, start: datetime, end: datetime) -> dict[str, object]:
 
 
 def _status_label(ok: object, code: object, attempts: object) -> str:
-    """A08：真实"发送前跳过"（attempts=0）不是请求失败；失败与超时必须分开写。"""
-    if int(attempts or 0) == 0:
+    """A08 / R7-P3：**先判 `None`（无法判定）再判 0（未发送）**——两处口径必须同义。
+
+    与目标边界集合一致：`attempts IS NULL` = 无法判定（不是"未发送"，也不是"失败"）；
+    `attempts = 0` = 未发送（急停/群开关/阶段拦截）；`attempts > 0` 才谈成功/失败/超时。
+    """
+    if attempts is None:
+        return "无法判定（attempts 缺失）"
+    if int(attempts) == 0:
         return "未发送（跳过/拦截）"
     if ok:
         return "成功"
@@ -223,7 +230,7 @@ def render(data: dict[str, object], *, deployment: str, prompt_version: str, db:
         + ", ".join(str(g) for g in data["authorized_action_groups"]),
         f"- 去重键：{data['dedupe']}",
         "",
-        "## 判定（分母）",
+        "## 本账号判定（`message_id like 'onebot:<self_id>:%'`）",
         "",
         "| verdict | 条数 |",
         "| --- | --- |",
@@ -235,7 +242,7 @@ def render(data: dict[str, object], *, deployment: str, prompt_version: str, db:
     lines += [f"| {s} | {c} |" for s, c in data["action_intents_by_status"]] or ["| （无） | 0 |"]
     lines += [
         "",
-        "## 动作结果（分子）",
+        "## 动作结果（**全库统计**，与本账号判定分列；含其它账号与不可归属行）",
         "",
         "| 动作 | 结果 | err_code | attempts | 条数 |",
         "| --- | --- | --- | --- | --- |",

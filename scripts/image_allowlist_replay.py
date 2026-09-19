@@ -33,6 +33,7 @@ from app.moderation.image_hash import (  # noqa: E402
 from image_allowlist_seed import (  # noqa: E402
     detail_blockers,
     effective_hashes,
+    effective_state,
     load_excluded,
     scan_history,
     scan_samples,
@@ -150,6 +151,9 @@ def replay(
         "matched_already_allow": matched_ok,
         "exceptions": exceptions,
         "would_change": would_change,
+        # R6-02-R：报告必须披露**生效名单的读取状态**（`ok`/`missing_table`/`bad_schema`/`unreadable`），
+        # 否则"表读不到"会被读成"生效名单就是空的、正常评估过了"。
+        "active_set_state": effective_state(db)[1],
     }
 
 
@@ -160,6 +164,12 @@ def render(result: dict[str, object], *, window: str, max_distance: int) -> str:
         f"- 生成时刻（UTC）：{datetime.now(UTC).isoformat(timespec='seconds')}",
         f"- 对比范围：{window}（最近 N 条图片判定）",
         f"- 白名单规模：{result['whitelist_size']} 条哈希；命中阈值：汉明距离 <= {max_distance}",
+        f"- **生效名单读取状态**：`{result.get('active_set_state', 'unknown')}`"
+        + (
+            "（正常读取）"
+            if result.get("active_set_state") == "ok"
+            else "（**不可读/缺迁移**：本报告是**候选**对比，**不是生效评估**）"
+        ),
         f"- 扫描记录：{result['scanned']} 条",
         "",
         "## 结论摘要",

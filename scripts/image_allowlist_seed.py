@@ -157,23 +157,39 @@ def detail_blockers(detail: dict) -> list[str]:
         blockers.append("unresolved")
     if not results:
         return blockers
-    review_evidence = any(
-        item.get("review_role") == "secondary" or item.get("review_reason") for item in results
-    )
+    # R6-01-R：缺**复核元数据**的旧记录无法判定是否已消疑 → 一律 `unresolved_unknown`
+    # （**不得**静默返回空 blockers 当成"已消疑"）。
     if any("review_role" not in item or "review_group" not in item for item in results):
-        if review_evidence:
-            blockers.append("unresolved_unknown")
+        blockers.append("unresolved_unknown")
         return blockers
     try:
         from app.moderation.ai import AIModerationResult, attachment_reviews_unresolved
 
         parsed = [AIModerationResult.model_validate(item) for item in results]
-    except Exception:  # noqa: BLE001 - 解析不了就不猜（有复核痕迹则保守计入例外）
-        if review_evidence:
-            blockers.append("unresolved_unknown")
+    except Exception:  # noqa: BLE001 - **解析失败也不能静默变成空 blockers**
+        blockers.append("unresolved_unknown")
         return blockers
-    if attachment_reviews_unresolved(parsed):
-        # local=None：只用结果里已持久化的 review_reason，不重算、不按默认阈值猜
+    # R6-01-R：**必须**用该判定落库时的**真实阈值**做解释；拿不到政策上下文一律 `unresolved_unknown`——
+    # 既不拿函数默认值（0.60/0.90）当"已消疑"，也不当"已否决"。
+    policy = detail.get("review_policy")
+    if not isinstance(policy, dict):
+        blockers.append("unresolved_unknown")
+        return blockers
+    try:
+        low = float(policy["secondary_review_low"])
+        high = float(policy["secondary_review_high"])
+        direct = float(policy["primary_direct_threshold"])
+    except (KeyError, TypeError, ValueError):
+        blockers.append("unresolved_unknown")
+        return blockers
+    if attachment_reviews_unresolved(
+        parsed,
+        None,
+        primary_direct_threshold=direct,
+        secondary_review_low=low,
+        secondary_review_high=high,
+    ):
+        # local=None：只用结果里已持久化的 review_reason，不重算
         blockers.append("unresolved_secondary")
     return blockers
 
