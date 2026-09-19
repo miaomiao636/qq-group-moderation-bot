@@ -6,20 +6,42 @@
 - 生效：运行时每条消息直读数据库（参照 emergency_stop 的跨进程模式，
   fresh 连接绕过调用方 WAL 快照），后台保存后下一条消息立即生效，无需重启；
 - fail-closed：读取失败返回空集——绝不因故障放松任何判定。
+
+成员白名单（负责人 2026-09-18，本模块下半部分）：
+- 按 ``provider + external_user_id`` **精确匹配**（NapCat 主通道即数字 QQ 号）；
+- 与关键词白名单**语义不同**：命中成员为全类别完全放行（负责人明确选择
+  "不守 B-2 底线"），因此绝不复用关键词的变体归一化；
+- 同样每消息直读、fail-closed、变更经 AdminAudit，并额外支持"整份文件导入/导出"。
 """
 
 from __future__ import annotations
 
 import json
+from collections.abc import Sequence
+from dataclasses import dataclass
+from datetime import UTC, datetime
+from typing import Any
 
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models import AdminAudit, AllowlistTerm
+from app.models import AdminAudit, AllowlistMember, AllowlistTerm
+from app.moderation.allowlist_members_io import (
+    InvalidLine,
+    MemberListParse,
+    ParsedMember,
+    parse_member_list,
+    validate_member_id,
+)
 from app.moderation.normalization import apply_variants
 
 MAX_TERM_LENGTH = 64
+# 成员白名单默认通道：NapCat/OneBot 主通道（数字 QQ 号）。官方通道是 openid，不适用。
+DEFAULT_MEMBER_PROVIDER = "onebot"
+# 全量同步的二次确认门槛：删除（停用）超过 5 条**且**超过当前启用数的 30%
+MEMBER_SYNC_MIN_ABSOLUTE = 5
+MEMBER_SYNC_RATIO = 0.30
 
 
 def normalize_term(term: str) -> str:
@@ -149,3 +171,415 @@ async def delete_term(session: AsyncSession, term_id: int, *, operator: str) -> 
     await session.delete(row)
     await session.commit()
     return term
+
+
+# ---------------- 成员白名单（按 QQ 号；负责人 2026-09-18） ----------------
+
+
+def match_allowlist_member(
+    provider: str, external_user_id: str, members: frozenset[tuple[str, str]]
+) -> str | None:
+    """精确匹配 ``(provider, QQ号)``；命中返回 QQ 号，未命中返回 None。
+
+    绝不做归一化：QQ 号是精确身份，与关键词白名单的谐音/大小写匹配语义不同。
+    provider 参与匹配，官方通道 openid 不会误命中 QQ 号白名单。
+    """
+    user_id = str(external_user_id).strip()
+    if not user_id or not members:
+        return None
+    return user_id if (str(provider), user_id) in members else None
+
+
+async def load_allowlist_members(session: AsyncSession) -> frozenset[tuple[str, str]]:
+    """每消息 fresh 读取启用中的成员白名单（跨进程立即生效；fail-closed 空集）。
+
+    同一 ``(provider, QQ号)`` 若存在多行（唯一约束上线前的历史残留），
+    **全部启用才生效**——不静默取更宽松值。
+    """
+    try:
+        async with AsyncSession(bind=session.bind) as reader:
+            rows = (
+                await reader.execute(
+                    select(
+                        AllowlistMember.provider,
+                        AllowlistMember.external_user_id,
+                        AllowlistMember.enabled,
+                    )
+                )
+            ).all()
+        effective: dict[tuple[str, str], bool] = {}
+        for provider, user_id, enabled in rows:
+            key = (str(provider).strip(), str(user_id).strip())
+            if not key[0] or not key[1]:
+                continue
+            effective[key] = effective.get(key, True) and bool(enabled)
+        return frozenset(key for key, ok in effective.items() if ok)
+    except Exception:  # noqa: BLE001 — 读不到就不放行任何成员（fail-closed）
+        return frozenset()
+
+
+async def list_members(
+    session: AsyncSession, *, provider: str = DEFAULT_MEMBER_PROVIDER
+) -> Sequence[AllowlistMember]:
+    """列出某通道下的全部成员白名单（含已停用，供后台展示与同步对账）。"""
+    return (
+        await session.scalars(
+            select(AllowlistMember)
+            .where(AllowlistMember.provider == provider)
+            .order_by(AllowlistMember.id)
+        )
+    ).all()
+
+
+async def add_member(
+    session: AsyncSession,
+    raw_id: str,
+    *,
+    operator: str,
+    provider: str = DEFAULT_MEMBER_PROVIDER,
+    note: str = "",
+) -> tuple[AllowlistMember, bool]:
+    """新增成员白名单（校验 + 精确去重）。返回 (行, 是否新建)；已存在时原样返回。"""
+    user_id = validate_member_id(raw_id)
+    existing = await session.scalar(
+        select(AllowlistMember).where(
+            AllowlistMember.provider == provider,
+            AllowlistMember.external_user_id == user_id,
+        )
+    )
+    if existing is not None:
+        return existing, False
+    row = AllowlistMember(
+        provider=provider,
+        external_user_id=user_id,
+        note=note.strip()[:64],
+        enabled=True,
+        created_by=operator[:64],
+    )
+    session.add(row)
+    session.add(
+        AdminAudit(
+            operator=operator[:64],
+            action="allowlist_member_add",
+            target_type="allowlist_member",
+            target_id=f"{provider}:{user_id}",
+            detail_json=json.dumps(
+                {"provider": provider, "user_id": user_id, "note": note}, ensure_ascii=False
+            ),
+        )
+    )
+    try:
+        await session.commit()
+    except IntegrityError:
+        # 并发写入同一 QQ 号：由唯一约束兜底，回滚后安全复用已有项
+        await session.rollback()
+        existing = await session.scalar(
+            select(AllowlistMember).where(
+                AllowlistMember.provider == provider,
+                AllowlistMember.external_user_id == user_id,
+            )
+        )
+        if existing is None:
+            raise
+        return existing, False
+    await session.refresh(row)
+    return row, True
+
+
+async def set_member_enabled(
+    session: AsyncSession, member_id: int, enabled: bool, *, operator: str
+) -> AllowlistMember:
+    """启用/停用单条（幂等 set；立即生效；审计含实际变更）。"""
+    row = await session.get(AllowlistMember, member_id)
+    if row is None:
+        raise ValueError("成员白名单不存在")
+    before = bool(row.enabled)
+    row.enabled = enabled
+    # 主审二轮 F05-R：**显式管理操作必须推进版本**——即便 enabled 值没变（例如对已停用行
+    # 再次明确停用），也要更新 `updated_at`，否则"批准后发生的撤权"在条件写入里看不出来，
+    # 旧计划仍会把成员复活。
+    row.updated_at = datetime.now(UTC)
+    session.add(
+        AdminAudit(
+            operator=operator[:64],
+            action="allowlist_member_enable" if enabled else "allowlist_member_disable",
+            target_type="allowlist_member",
+            target_id=f"{row.provider}:{row.external_user_id}",
+            detail_json=json.dumps(
+                {
+                    "user_id": row.external_user_id,
+                    "enabled": enabled,
+                    "before": before,
+                    "changed": before != enabled,
+                },
+                ensure_ascii=False,
+            ),
+        )
+    )
+    await session.commit()
+    return row
+
+
+async def delete_member(session: AsyncSession, member_id: int, *, operator: str) -> str:
+    """删除单条（立即生效；审计）。返回被删 QQ 号。"""
+    row = await session.get(AllowlistMember, member_id)
+    if row is None:
+        raise ValueError("成员白名单不存在")
+    user_id = row.external_user_id
+    session.add(
+        AdminAudit(
+            operator=operator[:64],
+            action="allowlist_member_delete",
+            target_type="allowlist_member",
+            target_id=f"{row.provider}:{user_id}",
+            detail_json=json.dumps({"user_id": user_id}, ensure_ascii=False),
+        )
+    )
+    await session.delete(row)
+    await session.commit()
+    return user_id
+
+
+@dataclass(frozen=True)
+class MemberSyncPlan:
+    """整份文件全量同步计划（预览对象；构造过程不写库）。"""
+
+    provider: str
+    to_add: tuple[ParsedMember, ...]
+    to_enable: tuple[tuple[int, str], ...]
+    to_disable: tuple[tuple[int, str], ...]
+    to_update_note: tuple[tuple[int, str, str], ...]
+    unchanged: int
+    enabled_before: int
+    total_valid: int
+    invalid: tuple[InvalidLine, ...]
+    # 预览时各"已存在且将被改动"行的版本（`updated_at`）。主审二轮 F05-R：
+    # 执行时必须用它做**条件写入**，否则批准与写入之间被其它会话撤权（含 ABA）会被覆盖。
+    row_versions: tuple[tuple[int, str, datetime], ...] = ()
+
+    @property
+    def has_changes(self) -> bool:
+        return bool(self.to_add or self.to_enable or self.to_disable or self.to_update_note)
+
+    @property
+    def needs_confirm(self) -> bool:
+        """停用数超过绝对下限**且**超过当前启用数的比例 → 必须二次确认。
+
+        防止"误传残缺文件/误删一大段"一次性清掉白名单。
+        """
+        disabled = len(self.to_disable)
+        if disabled <= MEMBER_SYNC_MIN_ABSOLUTE:
+            return False
+        return disabled > self.enabled_before * MEMBER_SYNC_RATIO
+
+
+async def plan_member_import(
+    session: AsyncSession, text: str, *, provider: str = DEFAULT_MEMBER_PROVIDER
+) -> MemberSyncPlan:
+    """解析文件并生成同步计划；**空列表直接拒绝**（不返回计划）。
+
+    语义：文件是完整列表（全量替换）。文件里没有而库中仍启用的条目 → 停用
+    （停用而非删除：保留备注与创建信息，便于回滚与重新启用）。
+    """
+    parsed: MemberListParse = parse_member_list(text)
+    if not parsed.valid:
+        raise ValueError("文件中没有有效的QQ号，已拒绝导入（防止误传空文件清空白名单）")
+    rows = await list_members(session, provider=provider)
+    by_id = {row.external_user_id: row for row in rows}
+    file_ids = {member.user_id for member in parsed.valid}
+
+    to_add: list[ParsedMember] = []
+    to_enable: list[tuple[int, str]] = []
+    to_update_note: list[tuple[int, str, str]] = []
+    unchanged = 0
+    for member in parsed.valid:
+        row = by_id.get(member.user_id)
+        if row is None:
+            to_add.append(member)
+            continue
+        changed = False
+        if not row.enabled:
+            to_enable.append((row.id, row.external_user_id))
+            changed = True
+        if member.note and member.note != row.note:
+            to_update_note.append((row.id, row.external_user_id, member.note))
+            changed = True
+        if not changed:
+            unchanged += 1
+
+    to_disable = [
+        (row.id, row.external_user_id)
+        for row in rows
+        if row.enabled and row.external_user_id not in file_ids
+    ]
+    touched = (
+        {member_id for member_id, _user_id in to_enable}
+        | {member_id for member_id, _user_id in to_disable}
+        | {member_id for member_id, _user_id, _note in to_update_note}
+    )
+    # 主审 N-F05-2-R：版本集合必须覆盖**文件内全部成员**（含预览时 unchanged 的成员），
+    # 不能只记录"被改动行"——否则"文件内的 A 在确认后被删除/停用/改备注"这种漂移
+    # 不可见，计划会带着旧差异继续执行并报 APPLIED。
+    row_versions = tuple(
+        (row.id, row.external_user_id, row.updated_at)
+        for row in rows
+        if (row.external_user_id in file_ids or row.id in touched) and row.updated_at is not None
+    )
+    return MemberSyncPlan(
+        provider=provider,
+        to_add=tuple(to_add),
+        to_enable=tuple(to_enable),
+        to_disable=tuple(to_disable),
+        to_update_note=tuple(to_update_note),
+        unchanged=unchanged,
+        enabled_before=sum(1 for row in rows if row.enabled),
+        total_valid=len(parsed.valid),
+        invalid=parsed.invalid,
+        row_versions=row_versions,
+    )
+
+
+class ConcurrentMemberChangeError(RuntimeError):
+    """名单在"批准"与"写入"之间被其它操作改动（含 ABA）→ 拒绝执行、要求重新预览。"""
+
+    def __init__(self, user_id: str) -> None:
+        super().__init__(f"成员 {user_id} 在确认期间被其它操作改动")
+        self.user_id = user_id
+
+
+class ConcurrentMemberSetChangeError(ConcurrentMemberChangeError):
+    """整表目标集合在执行期间漂移（主审 N-F05-2）——不是某一行，而是"全量集合"不一致。
+
+    场景：预览批准了文件 A/B，执行前另一名管理员**合法新增**了文件外的成员 C。旧的
+    行级版本条件只看"被改动行"（`row_versions` 只含 touched 行），因此 C 漂移不可见，
+    计划仍报 APPLIED，最终集合变成 A/B/C，与"整表同步"的承诺不符。
+    """
+
+    def __init__(self, summary: str) -> None:
+        RuntimeError.__init__(self, f"全量集合在确认期间被其它操作改动（{summary}）")
+        self.user_id = ""
+
+
+async def apply_member_import(
+    session: AsyncSession,
+    plan: MemberSyncPlan,
+    *,
+    operator: str,
+    commit: bool = True,
+    sync_file_text: str | None = None,
+) -> None:
+    """执行全量同步（新增/启用/停用/改备注）并审计；默认单事务提交，失败整体回滚。
+
+    **条件写入**（主审二轮 F05-R）：改动已存在的行时，`UPDATE` 必须带上"预览时的
+    `updated_at`"作为条件——期间被其它会话改动（包括"启用后又停用"的 ABA）会 0 行命中并抛
+    `ConcurrentMemberChangeError`，绝不覆盖他人的显式撤权。
+    `commit=False` 供调用方把"名单写入 + 导入审计 + 计划终态"放进**同一事务**
+    （主审要求：终态与名单原子）。
+
+    **全量集合复核**（主审 N-F05-2，`sync_file_text` 为被批准的文件原文）：行级版本条件
+    只看"被改动行"，无法发现"别人新增了文件外成员"这种集合漂移。传入文件原文后，写入前
+    会在**同一事务/写锁内**核对该集合——发现启用中的成员既不在文件里、也不在本次停用名单里
+    → 抛 `ConcurrentMemberSetChangeError` 整体回滚并重新预览（**不擅自停用**本次未批准的成员）。
+    """
+    if sync_file_text is not None:
+        parsed = parse_member_list(sync_file_text)
+        if not parsed.valid:
+            raise ValueError("文件中没有有效的QQ号，已拒绝导入（防止误传空文件清空白名单）")
+        file_ids = {member.user_id for member in parsed.valid}
+        still_enabled = {user_id for _id, user_id in plan.to_disable}
+        rows = await list_members(session, provider=plan.provider)
+        drifted = sorted(
+            row.external_user_id
+            for row in rows
+            if row.enabled and row.external_user_id not in file_ids | still_enabled
+        )
+        if drifted:
+            raise ConcurrentMemberSetChangeError("文件外成员当前为启用状态: " + ",".join(drifted))
+    # 主审 N-F05-2-R：逐行复核**批准时的行版本**（现已覆盖文件内全部成员，含 unchanged）——
+    # 期间被删除 / 停用 / 改备注 / ABA 的行都在这里拦下，绝不带着旧差异继续写入并报 APPLIED。
+    # 用 SQL 条件比对而不是 Python 侧比对象，避免时区/精度差异造成假拒绝。
+    for member_id, user_id, updated in plan.row_versions:
+        still_current = await session.execute(
+            select(AllowlistMember.id).where(
+                AllowlistMember.id == member_id,
+                AllowlistMember.updated_at == updated,
+            )
+        )
+        if still_current.first() is None:
+            raise ConcurrentMemberChangeError(user_id)
+    expected = {(member_id, user_id): updated for member_id, user_id, updated in plan.row_versions}
+    now = datetime.now(UTC)
+
+    def _guard(user_id: str, rowcount: int) -> None:
+        if rowcount != 1:
+            raise ConcurrentMemberChangeError(user_id)
+
+    for member in plan.to_add:
+        session.add(
+            AllowlistMember(
+                provider=plan.provider,
+                external_user_id=member.user_id,
+                note=member.note,
+                enabled=True,
+                created_by=operator[:64],
+            )
+        )
+    # 主审 Q01：`to_add` 的**同身份并发新增**（唯一约束冲突）是"名单已变化"的一种，
+    # 应当引导重新预览，而不是抛成 HTTP 500 并把计划留在 EXECUTING。只把**该唯一约束**
+    # 映射成并发拒绝；其它数据库异常一律照旧抛出，绝不吞成成功。
+    try:
+        await session.flush()
+    except IntegrityError as exc:
+        if "UNIQUE constraint failed: allowlist_members.provider" not in str(exc.orig):
+            raise
+        raise ConcurrentMemberSetChangeError("文件内成员在确认期间已被其它操作新增") from exc
+    # 主审 N-F05-1：同一成员本次批准的全部字段**合并成一次**带原版本条件 UPDATE。
+    # 分成多次会让第一次 UPDATE 自己推进 updated_at，第二次仍按旧版本匹配 → 0 行 →
+    # 把合法的"启用 + 改备注"组合操作误判为并发冲突并整体回滚。
+    staged: dict[int, tuple[str, dict[str, Any]]] = {}
+
+    def _stage(member_id: int, user_id: str, **values: Any) -> None:
+        if member_id not in staged:
+            staged[member_id] = (user_id, {})
+        staged[member_id][1].update(values)
+
+    for member_id, user_id in plan.to_enable:
+        _stage(member_id, user_id, enabled=True)
+    for member_id, user_id in plan.to_disable:
+        _stage(member_id, user_id, enabled=False)
+    for member_id, user_id, note in plan.to_update_note:
+        _stage(member_id, user_id, note=note)
+    for member_id, (user_id, values) in staged.items():
+        result = await session.execute(
+            update(AllowlistMember)
+            .where(
+                AllowlistMember.id == member_id,
+                AllowlistMember.updated_at == expected.get((member_id, user_id)),
+            )
+            .values(**values, updated_at=now)
+        )
+        _guard(user_id, result.rowcount)  # type: ignore[attr-defined]
+    session.add(
+        AdminAudit(
+            operator=operator[:64],
+            action="allowlist_members_import",
+            target_type="allowlist_member",
+            target_id=plan.provider,
+            detail_json=json.dumps(
+                {
+                    "provider": plan.provider,
+                    "valid": plan.total_valid,
+                    "added": [m.user_id for m in plan.to_add],
+                    "enabled": [uid for _id, uid in plan.to_enable],
+                    "disabled": [uid for _id, uid in plan.to_disable],
+                    "note_updated": [uid for _id, uid, _n in plan.to_update_note],
+                    "unchanged": plan.unchanged,
+                    "invalid_lines": len(plan.invalid),
+                    "enabled_before": plan.enabled_before,
+                },
+                ensure_ascii=False,
+            ),
+        )
+    )
+    if commit:
+        await session.commit()

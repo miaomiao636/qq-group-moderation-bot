@@ -24,10 +24,16 @@ from app.actions.orchestrator import (
 from app.core.contracts import MessageParseError, MessageSource, StandardMessage
 from app.core.dedup import begin_processing, mark_failed, mark_processed
 from app.moderation.ai import AIReviewService
-from app.moderation.allowlist import load_allowlist_terms
-from app.moderation.decision import POLICY_ALLOW_RULE_IDS, ModerationDecision
+from app.moderation.allowlist import load_allowlist_members, load_allowlist_terms
+from app.moderation.decision import (
+    ALLOWLIST_MEMBER_ALLOW_RULE_ID,
+    POLICY_ALLOW_RULE_IDS,
+    ModerationDecision,
+)
 from app.moderation.dynamic_rules import load_cached_active_snapshot
 from app.moderation.image_engine import ImageModerationEngine, MediaAnalysis, merge_decisions
+from app.moderation.image_hash import REVIEWED_MAX_DISTANCE, observe_shadow
+from app.moderation.image_hash import mode as image_hash_mode
 from app.moderation.media_engine import evaluate_file, evaluate_video, evaluate_voice
 from app.moderation.review_gate import ReviewGate
 from app.moderation.rules import TextRuleEngine
@@ -66,6 +72,49 @@ def _best_effort_identity(payload: dict[str, Any]) -> tuple[str, str, str]:
     )
     name = str(author.get("username") or sender.get("nickname") or sender.get("card") or "")
     return group, user, name
+
+
+_POLICY_KEYS = ("primary_direct_threshold", "secondary_review_low", "secondary_review_high")
+_POLICY_DEFAULTS = (0.90, 0.60, 0.90)
+
+
+def _service_policy_values(ai_service: object) -> dict[str, float] | None:
+    """服务**实际字段**里的三阈值；读不到返回 ``None``（调用方必须显式决定，不静默猜）。
+
+    主审 R9-08：此前读的是**不存在的属性名** `direct_threshold`，于是真配置 0.80/0.95
+    也总被写成默认 0.90。现在优先用 `AIReviewService.policy_snapshot()`，退化按**真实字段名**读。
+    """
+    snapshot = getattr(ai_service, "policy_snapshot", None)
+    if callable(snapshot):
+        try:
+            values = snapshot()
+        except Exception:  # noqa: BLE001 - 读政策失败 → 交由调用方按未知处理
+            values = None
+        if isinstance(values, dict) and all(
+            isinstance(values.get(key), (int, float)) for key in _POLICY_KEYS
+        ):
+            return {key: float(values[key]) for key in _POLICY_KEYS}
+    out: dict[str, float] = {}
+    for key in _POLICY_KEYS:
+        value = getattr(ai_service, key, None)
+        if not isinstance(value, (int, float)):
+            return None
+        out[key] = float(value)
+    return out
+
+
+def _service_policy(ai_service: object) -> dict[str, float]:
+    """服务**实际字段**里的三阈值；读不到 → **空字典**。
+
+    主审 R9-08-R：**默认值不是事实**——服务没有暴露政策时不得回填 0.90/0.60/0.90
+    （那会把"未知"包装成"已确认"，在线判据与离线解释都会据此误判"已消疑/本可放行"）。
+    """
+    return _service_policy_values(ai_service) or {}
+
+
+def _policy_source(ai_service: object) -> str:
+    """``service``（读到真实字段）/ ``unknown``（未暴露 → 在线与离线一致按未知处理）。"""
+    return "service" if _service_policy_values(ai_service) is not None else "unknown"
 
 
 def _is_image(content_type: str) -> bool:
@@ -240,23 +289,34 @@ async def _run_pipeline(
         rule_version_ids = rule_snapshot.version_ids
         # 全局白名单每消息直读（跨进程即时生效；读取失败 fail-closed 为空集）。
         allow_terms = await load_allowlist_terms(session)
+        # 成员白名单（负责人 2026-09-18，按 QQ 号）：同样每消息直读、fail-closed。
+        allow_members = await load_allowlist_members(session)
         if text_engine is None:
-            text_engine = TextRuleEngine(rule_snapshot=rule_snapshot)
+            text_engine = TextRuleEngine(rule_snapshot=rule_snapshot, allow_members=allow_members)
         else:
             text_engine.set_rule_snapshot(rule_snapshot)
         text_engine.set_allowlist(allow_terms)
+        text_engine.set_allowlist_members(allow_members)
         decision: ModerationDecision = text_engine.evaluate(msg)
         decision = gate.review(msg, decision)
+        # 成员白名单身份（D-037，负责人"名单内成员发的所有信息都通过"）：
+        # "内容不可判定"类健康信号**不得**把它降级为转人工（主审 F07）。
+        # 只抑制"我们看不懂这条内容"类 veto；配置/一致性异常（如同群多 provider 歧义）
+        # 仍照常记录——不能把全部 evidence_veto 一概关闭（那会扩大到非名单成员）。
+        member_policy_allow = decision.verdict == "allow" and any(
+            h.rule_id == ALLOWLIST_MEMBER_ALLOW_RULE_ID for h in decision.rule_hits
+        )
 
-        # T-306：无法解析的内容（未知消息段/合并转发骨架）绝不判正常，
-        # 也绝不作为处罚依据——强制降级人工复核。
-        if _contains_unreviewable_content(msg):
-            evidence_vetoes.append("包含无法解析的内容（未知消息段/合并转发）")
+        # T-306：无法解析的内容（未知消息段）绝不判正常，也绝不作为处罚依据——
+        # 强制降级人工复核。2026-09-18：**合并转发不再走此兜底**——负责人明确
+        # 口径为"合并转发一律撤回"，由规则引擎 R_FORWARD_RECORD 直接给出 violation_high。
+        if _contains_unreviewable_content(msg) and not member_policy_allow:
+            evidence_vetoes.append("包含无法解析的内容（未知消息段）")
             decision = decision.model_copy(
                 update={
                     "verdict": "record_only",
                     "reason": (decision.reason + "；" if decision.reason else "")
-                    + "包含无法解析的内容（未知消息段/合并转发），转人工",
+                    + "包含无法解析的内容（未知消息段），转人工",
                 }
             )
 
@@ -306,21 +366,38 @@ async def _run_pipeline(
                     # image/gif/其他 → 图片引擎
                     m = image_engine.analyze(local)
                     media_decisions.append(_media_decision_from(m, message_id, msg))
-                if not _is_image(att.content_type) and media_decisions[-1].verdict == "record_only":
+                if (
+                    not member_policy_allow
+                    and not _is_image(att.content_type)
+                    and media_decisions[-1].verdict == "record_only"
+                ):
                     # A vision call on another image cannot review this voice,
                     # video or document. Preserve the incomplete-evidence gate.
                     evidence_vetoes.append("包含尚未完成审核的语音/视频/文件")
 
-            if media_missing:
+            if media_missing and not member_policy_allow:
                 evidence_vetoes.append("媒体缺失/下载失败")
-
             if any(d.verdict == "violation_high" for d in media_decisions):
-                decision = merge_decisions(
-                    decision,
-                    MediaAnalysis("violation_high", 0.95, reason="媒体违规"),
-                )
-            elif media_missing:
+                if member_policy_allow:
+                    # D-037（负责人 2026-09-18："名单内成员发的所有信息都通过"）：
+                    # 成员白名单为**全类别完全放行**，媒体层独立违规信号只作证据，
+                    # 不升级、不处罚。若不拦截，merge_decisions 会把 allow 直接改成
+                    # violation_high，编排层随即产生真实撤回/禁言——等于白名单被旁路
+                    # （与保护角色同样免罚的待遇一致）。
+                    decision = decision.model_copy(
+                        update={
+                            "reason": (decision.reason + "；" if decision.reason else "")
+                            + "媒体层检出违规信号，按成员白名单完全放行（D-037）仅记录",
+                        }
+                    )
+                else:
+                    decision = merge_decisions(
+                        decision,
+                        MediaAnalysis("violation_high", 0.95, reason="媒体违规"),
+                    )
+            elif media_missing and not member_policy_allow:
                 # R-102-3 任意媒体缺失/下载失败 → 不放行
+                # （成员白名单身份 D-037 例外：身份确定即可放行，主审 F07）
                 decision = decision.model_copy(
                     update={
                         "verdict": "record_only",
@@ -375,18 +452,15 @@ async def _run_pipeline(
                     "reason": "；".join(dict.fromkeys(evidence_vetoes)) + "，转人工",
                 }
             )
-        # 校园墙图后广告文字豁免（负责人 2026-09-17 口径 C）：2 分钟窗口内同成员
-        # 校园墙确认图之后的任意广告文字不撤回，降为 record_only 转记录
-        # （不再要求相似度/紧邻/一图一条）。
-        from app.moderation.wall_pair import maybe_wall_text_pairing
+        # 图后窗口豁免（负责人 2026-09-17 口径 C；2026-09-18 晚扩展为"文字与图片"）：
+        # 2 分钟窗口内同成员在"视觉确认放行图"之后发的内容不撤回，降为 record_only
+        # 转记录（不再要求相似度/紧邻/一图一条）；色情/暴力/刷屏不豁免。
+        # 前置过滤与豁免函数共用 is_pairing_candidate，避免两处条件漂移。
+        from app.moderation.wall_pair import is_pairing_candidate, maybe_wall_text_pairing
         from app.runtime.pairing_context import load_pending_pairing_messages
 
         pending_messages: tuple[StandardMessage, ...] = ()
-        if (
-            msg.kind == "text"
-            and decision.verdict == "violation_high"
-            and decision.category == "ad"
-        ):
+        if is_pairing_candidate(msg, decision):
             pending_messages = await load_pending_pairing_messages(
                 session, msg, event_key=claim_key
             )
@@ -408,6 +482,13 @@ async def _run_pipeline(
             "rule_version_ids": list(rule_version_ids),
             "ai_results": [r.model_dump() for r in ai_results],
             "evidence_vetoes": list(dict.fromkeys(evidence_vetoes)),
+            # R6-01-R：把**本次判定使用的复核阈值/政策上下文**随记录落库——离线工具（回放/导出）
+            # 必须按当时配置解释二审是否有效，不能拿函数默认值（0.60/0.90）当确定结论。
+            # 旧记录没有这个键时，离线一律标 `unresolved_unknown`（如实 unknown，不猜）。
+            "review_policy": _service_policy(ai_service),
+            # 来源标签：`service` = 读到服务真实字段；`assumed_defaults` = 服务未暴露阈值，
+            # 用的是判据函数里**文档化的默认值**（如实标注，绝不与"已配置的真实阈值"混同）。
+            "review_policy_source": _policy_source(ai_service),
         }
         if msg.segments:
             # T-306：中立段摘要（含未知段元数据），供人工复核追溯
@@ -415,6 +496,72 @@ async def _run_pipeline(
                 {"kind": s.kind, "text": s.text[:80], "attachment_index": s.attachment_index}
                 for s in msg.segments
             ]
+        # 图片感知哈希白名单 **shadow 观察**（负责人 2026-09-19）：
+        # `IMAGE_HASH_MODE=off`（默认）时完全不读白名单、不写字段——线上行为零变化；
+        # `shadow` 时只把"是否命中 / 本可放行"写进判定明细，**不改变判定**（enforce 未实现）。
+        # A06：把"全证据"层面的例外也算进来（严重类别 / 未定论 / 附件缺失 / 否决），
+        # 否则 would_allow 会高估"本可放行"。
+        # A03-R：**先判模式**——`off` / 非法值**不做任何观察专属 I/O**（连 stat 都不做，
+        # 保证"默认 off 零运行影响"），且"准备 blockers + 观察"整体放在独立异常边界内：
+        # 任何异常只记 `unavailable`，**不得**中断原判定、持久化与动作编排。
+        observation_mode = image_hash_mode()
+        image_hash_observation: dict[str, object] | None = None
+        if observation_mode != "off":
+            try:
+                extra_blockers: list[str] = []
+                if evidence_vetoes:
+                    extra_blockers.append("evidence_veto")
+                if any(str(r.category or "") in ("porn", "violence") for r in ai_results):
+                    extra_blockers.append("attachment_category")
+                # A06-R：未定论必须复用**已有**的附件复核判据（含二审异类/低置信/非独立模型/
+                # 孤儿二审），并透传服务实际阈值——不再按两个布尔字段另写一套简化判断。
+                from app.moderation.ai import _attachment_reviews_unresolved
+
+                policy = _service_policy(ai_service)
+                needs_attention = any(r.needs_review or r.degraded_reason for r in ai_results)
+                # R9-08-R：**不填默认值**——读不到服务实际政策时，在线与离线一致按未知处理
+                # （观察里也不声称 would_allow），而不是拿"看起来像真值"的默认阈值下结论。
+                if not policy:
+                    extra_blockers.append("review_policy_unknown")
+                elif (
+                    _attachment_reviews_unresolved(
+                        ai_results,
+                        decision,
+                        primary_direct_threshold=policy["primary_direct_threshold"],
+                        secondary_review_low=policy["secondary_review_low"],
+                        secondary_review_high=policy["secondary_review_high"],
+                    )
+                    or needs_attention
+                ):
+                    extra_blockers.append("unresolved")
+                for att in msg.attachments:
+                    if not str(att.content_type).startswith("image/"):
+                        continue
+                    try:
+                        missing = not (MEDIA_DIR / Path(str(att.filename)).name).is_file()
+                    except OSError:
+                        missing = True
+                    if missing:
+                        extra_blockers.append("media_missing")
+                        break
+                image_hash_observation = await observe_shadow(
+                    session,
+                    attachments=msg.attachments,
+                    media_dir=MEDIA_DIR,
+                    verdict=decision.verdict,
+                    category=decision.category or "",
+                    rule_ids=[hit.rule_id for hit in decision.rule_hits],
+                    max_distance=REVIEWED_MAX_DISTANCE,
+                    additional_blockers=extra_blockers,
+                )
+            except Exception:  # noqa: BLE001 - 观察失败只记录，不影响审核
+                logger.warning("图片哈希观察失败（已忽略，不影响判定）", exc_info=True)
+                image_hash_observation = {
+                    "mode": observation_mode,
+                    "unavailable": "observer_error",
+                }
+        if image_hash_observation is not None:
+            detail["image_hash"] = image_hash_observation
         record = await upsert_shadow_decision(
             session,
             message_id=claim_key,
@@ -450,10 +597,15 @@ async def _run_pipeline(
 
 
 def _contains_unreviewable_content(msg: StandardMessage) -> bool:
-    """消息是否包含无法自动判定的内容（T-306：未知段/合并转发）。"""
-    if msg.kind in ("unknown", "forward_record"):
+    """消息是否包含无法自动判定的内容（T-306：未知消息段）。
+
+    2026-09-18（负责人口径）：``forward_record`` **不再**列入本兜底——合并转发由
+    规则引擎 `R_FORWARD_RECORD` 判定为"一律撤回"，若在此强制 record_only 会把撤回
+    降级掉。未知消息段仍然强制转人工（未被识别的结构不得作为处罚依据）。
+    """
+    if msg.kind == "unknown":
         return True
-    return any(s.kind in ("unknown", "forward_record") for s in msg.segments)
+    return any(s.kind == "unknown" for s in msg.segments)
 
 
 def _media_decision_from(

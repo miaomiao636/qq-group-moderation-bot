@@ -1,6 +1,106 @@
 # Agent交接记录
 
-## 当前交接：2026-09-16（三项负责人政策 + R-114 复验整改全部落地）
+## 当前交接：2026-09-18（D-037 成员白名单 + D-038 合并转发/群名片一律撤回）
+
+**任务**：落实负责人 2026-09-18 决策——①白名单除词语外支持**按群成员 QQ 号**添加，名单内成员**所有消息都放行**且**优先级最高**，名单用**一份文本文件**维护、上传即整表同步；②**合并转发与群名片一律撤回**，但**群主、管理员、白名单成员不撤回**；③成员白名单**选 A**（不守 B-2 底线，全类别放行）。
+
+**已实现（代码完成，未部署）**：
+- 数据层：`app/models.py::AllowlistMember`（provider + external_user_id 唯一、`sqlite_autoincrement`）+ 迁移 `alembic/versions/c9a1f4d27e30_add_allowlist_members.py`（可完整 downgrade）。
+- 运行时：`app/moderation/allowlist.py` 新增 `load_allowlist_members` / `match_allowlist_member` / `add_member` / `set_member_enabled` / `delete_member` / `plan_member_import` / `apply_member_import`（每消息 fresh 直读、fail-closed、全程审计）；`app/moderation/allowlist_members_io.py` 纯函数解析/格式化（BOM、注释、`QQ号,备注`、重复与非法行逐行报错）。
+- 规则：`app/moderation/rules.py` 判定链改为「成员白名单 → 保护角色 → **合并转发/群名片一律撤回** → 关键词白名单 → 常规」；`decision.py` 新增 `POLICY_ALLOWLIST_MEMBER_ALLOW`（并入 `POLICY_ALLOW_RULE_IDS`）与 `FULL_ALLOW_NO_UPGRADE_RULE_IDS`（DR 合并用的完全放行集合，**刻意不含 D-031 办证**）；`review_gate.py` 把 `R_FORWARD_RECORD` / `R_GROUP_CARD` 计入独立硬证据（**结构性规则编号不得落在内置 `R0xx` 段**）；`pipeline.py` 装载成员白名单并停止把 `forward_record` 计入转人工兜底。
+- 解析：`app/core/contracts.py::ShareCardInfo.is_group_card` + `app/adapters/onebot/parser.py` 群名片多信号判定与群名提取。
+- 后台：`app/web/routes.py` 白名单页新增成员区块、文件导入预览页、导入/导出/单条增删启停路由（`UploadFile`，`python-multipart` 已是既有依赖）。
+- 文档：`DECISIONS.md` **D-037 / D-038**；`PROJECT_CONTEXT.md` 当前阶段与置信度原则；`PROGRESS.md`； `NEXT_TASKS.md`。
+
+**实现后自查（发现并修复 1 个真实漏洞）**：
+- **媒体层可旁路成员白名单**：`image_engine.merge_decisions` 在媒体判 `violation_high` 时会把 `allow` 直接改写为 `violation_high`（并给出 recall/mute/warn），AI 合并分支对 `violation_high` 亦直接放行 → 白名单成员发违规图片仍会被**真实撤回/禁言**，与"所有信息都通过"的负责人口径相悖。修复：`pipeline` 在合并媒体违规**之前**判断成员白名单政策标记，命中即只记录不升级（与保护角色同样免罚的待遇一致）；并补对照回归证明**非白名单成员同一张违规图仍照常判违规**（未放松媒体防线）。
+- 另修：同一条消息含多张卡片时，若其中任一为群名片则整体标记为群名片（避免被前面的普通卡片掩盖而漏撤）。
+- **未发现其他问题**：迁移实跑核对 DDL 为 `id INTEGER PRIMARY KEY AUTOINCREMENT` + `UNIQUE(provider, external_user_id)`，upgrade → downgrade → upgrade 可逆；群主/管理员分支、复核门硬证据、审计、fail-closed 均按预期。
+
+**验证（本机，未部署）**：`uv run pytest` → **1350 passed / 15 skipped / 0 failed**（新增 `tests/test_r116_member_allowlist.py` 30 项）；`uv run ruff check app tests alembic`、`uv run ruff format --check app tests alembic`（231 文件）、`uv run mypy app`（88 源文件）全部通过。为对齐负责人口径，同步更新 `tests/test_moderation_rules.py`（合并转发由"不误判"改为"一律撤回"）与 `tests/test_onebot_ws.py`（合并转发由"降级人工"改为"一律撤回"），并把 `tests/test_r115_admin_migration.py` 的 `NEW` 由硬编码改为 `get_head_revision()`（否则新增迁移必然让 `alembic check` 失败）。
+
+**未验证 / 遗留（不得宣称已通过）**：
+1. **已部署并取生效证据（2026-09-18 14:36）**，但本决策**不构成实机验收**：W2/W3/W4/W5 与 24×7 整机验收仍按 `docs/windows-delivery-checklist.md`；**急停状态（本句为当时记录，已被后续事实覆盖）**：14:34 开启 → **2026-09-18 14:49 已由负责人解除**（见下方"负责人解除急停与真实动作复核"），当前真实动作（撤回）按原配置生效。
+2. **群名片识别未用真实样本验证**：当前判定基于工程推断的 `com.tencent.qun.share` / `meta.group` 等信号；需抓一条真实群名片（脱敏）确认字段，必要时收窄，并确认是否要覆盖"万能校园墙"等允许来源。
+3. **合并转发/群名片的处罚档次**：走标准高置信阶梯（`record_violation` 规划 recall+mute+warn，当前 `recall_only` 阶段线上只撤回）；负责人只要求"撤回"，若要永久"只撤回不入违规阶梯"，需另立政策改处罚阶梯。
+4. **初始名单已导入（5 条）**：由负责人 Desktop 的 `白名单.txt` 经"与后台导入同一代码路径"写入并留审计；真实 QQ 号只落在数据库，**未写入仓库任何文件**。后续加减人员仍在同一个文件里改，再由后台「白名单」页上传（预览→确认）。
+5. **主审复验未做**：D-037 的"不守 B-2 底线"是高风险政策，建议送主审复验全链路不可升级与审计/回滚边界。
+
+**下一步建议**：①~~观察影子判定后按需解除急停~~（**已于 2026-09-18 14:49 完成**，本条为历史记录，不再是遗留动作）；②抓真实样本（群名片/合并转发/撤回通知各一条，脱敏）→ 收窄群名片识别；③送主审复验 D-037/D-038；④后续加减白名单人员继续用同一份文本文件、经后台「白名单」页上传核对。
+
+**✅ 已于 2026-09-18 14:36 部署生效（负责人授权"直接执行"）**：按 `docs/deploy-runbook-d037-d038.md` 执行——急停开启（审计 `emergency_stop`，UTC 06:34:05）→ 在线备份 `data/backups/moderation-20260918T063411Z-sb9t2a82.db`（50,860,032 字节，`quick_check=ok`，异地副本 `E:\qqbot-backups\`）→ 提权停服 → `alembic upgrade head`（`b8d4f2a05e31 → c9a1f4d27e30`，`alembic check` 零漂移）→ 新表校验（AUTOINCREMENT + 唯一约束）→ 提权启服（两服务 Running）→ healthz `status=ok / onebot=ready / connected=true / queue_backlog=0`、`processed_total=1`（新代码已处理真实消息）→ 导入成员白名单 5 条（`provider=onebot`，审计 `allowlist_members_import`，UTC 06:37:02）→ 引擎级功能校验（白名单成员诈骗文本 `allow`+政策标记、白名单成员合并不撤回、非白名单合并转发 `violation_high + ['recall','mute','warn']`）。完整原始输出见 `docs/evidence/2026-09-18-deploy-d037-d038.md`。
+
+**负责人解除急停与真实动作复核（14:49）**：负责人在后台按两步流程解除急停（`plan_create → plan_approve → emergency_resume`，审计 UTC 06:49:14–17）。复核结果：解除后 `action_intents` **全部 `SUCCEEDED`**（7 条撤回；`action_logs.ok=1`、`status_code=0`、无错误）；判定分布 allow 6 / record_only 20 / violation_high 7；急停期间另有 4 条 `SKIPPED`（按设计不重放，非缺陷）。
+
+**⚠️ 部署后核查发现并修复 1 个缺陷（编号冲突，14:56 修复并重启）**：结构性规则最初误用内置规则的 `R0xx` 段——`R007` 与内置 `contextual_ad_terms` **撞号**，并被一并加入"独立硬证据"集合，后果是**内置规则**被复核门当成硬证据、其自动处罚门槛被放宽。实测影响：部署后 **3 条**判定被放宽（均"仅 R007、无其它硬证据"且 `violation_high`），**全部落在急停窗口内、动作 `SKIPPED`，真实撤回 0 次**。修复：编号改为语义前缀 `R_FORWARD_RECORD` / `R_GROUP_CARD`（脱离 `R0xx` 段）；复核门集合改为"内置三项 + decision.py 导出的结构性常量"；新增 2 条回归（编号不得匹配 `R0\d\d`、硬证据集合不得含 `R002/R004/R005/R007`）。已提权重启加载并复验：`_HARD_EVIDENCE_RULES = [R001,R003,R006,R_FORWARD_RECORD,R_GROUP_CARD]`、`R007` 不在其中、合并转发判定 `violation_high` 且通过复核门、重启后 R007-only 放宽数 **0**；全量 **1352 passed / 15 skipped / 0 failed**。详见 DECISIONS D-038 与 `docs/evidence/2026-09-18-deploy-d037-d038.md`。
+
+**当前运行状态（2026-09-18 14:57 起）**：`QQBotWeb` / `QQBotRuntime` Running；healthz `status=ok / onebot=state=ready / connected=true / connect_count=1 / queue_backlog=0`，已在处理真实消息；**急停已解除 → 真实动作（撤回）按原配置生效**（13 个授权群、`recall_only` 阶段只撤回、不禁言）。合并转发/群名片目前**尚无真实样本命中**（重启后新规则命中数 0），群名片识别仍待真实样本验证。
+
+**负责人反馈"带小程序码图片被撤回"的诊断（2026-09-18，只读未改动）**：见 `docs/review-2026-09-18-image-exemption-failure.md`。结论：**本次案例符合现有口径**（逐张抽查 4 张原图均为真广告；负责人截图那条"支付宝亲密号"属严重类别，按 B-2"不因校园墙外观豁免"本应撤回）；**但存在 5 个缺陷**——①**本地图片黑白名单当前完全失效**（`data/t002_media` 被 15 天清理策略删除且哈希未持久化，运行器每次启动告警 `image lists empty`，而仓库内**无样本副本可恢复**）；②`_CAMPUS_WALL_MARKERS` 校园墙文案放行信号是**死代码**（从未调用）；③微信小程序码**不可解码**，二维码白名单机制对其天然失效；④今日 237 条图片处罚中 **201 条（85%）由单主视觉模型直接决定**（无二审，与 PROJECT_CONTEXT"单模型只提供软证据"原则不一致，现由 D-022 覆盖）；⑤校园墙白名单命中只到 `record_only` 而非"放行"。另 **32 条** `category=ad` 且证据提到校园墙/小程序的记录**待人工复核**。修复需负责人决策：重新提供 8 张样本 + 是否收紧单模型自动处罚。
+
+**D-039 已实现并落盘（2026-09-18 晚，负责人指令"带小程序二维码的都通过"），⚠️ 待重启生效**：
+- 代码：`app/moderation/ai.py` 新增严格布尔字段 `has_miniprogram_code`（仅视觉通道有效、非布尔拒收）+
+  `_miniprogram_qr_allow()`（命中即 `allow` + `POLICY_MINIPROGRAM_QR_ALLOW`）；`decision.py` 新增该政策标记
+  （**刻意不加入 `POLICY_ALLOW_RULE_IDS`**，因为要保留例外）；`PROMPT_VERSION` 升 `t204-v14`。
+- 提示词：`config/ai_prompt_rules.txt` 新增「小程序二维码·一律通过」规则并要求逐次如实输出该字段，
+  同时明确区分"QQ群二维码/个人名片码/普通链接二维码**不是**小程序码"（SHA256 `414D3809…C4D68D`）。
+- 配置：`.env` `AI_PROMPT_VERSION=t204-v13 → t204-v14`。
+- 保留例外：①**色情 / 暴力违禁品**（**诈骗不再例外**——负责人 2026-09-18 晚修订，含小程序码的诈骗
+  内容同样放行）；②本地硬证据（R001/R003/R006/`DR_`，防"配一张带码图绕过全部本地规则"）。
+- 回归：`tests/test_r116_miniprogram_allow.py`（12 项）；全量 **1364 passed / 15 skipped / 0 failed**；ruff/mypy 通过。
+- **部署状态（2026-09-18 16:24 重启，负责人授权 UAC）**：✅ **"诈骗不再例外"修订已真实生效**——
+  Web 进程 `364`、Runtime 进程 `5196`/`25160`（16:24:31 / 16:24:37，晚于 16:03 的 `ai.py` 与
+  `config/ai_prompt_rules.txt` 改动）；healthz `status=ok / mode=SAFE / onebot=ready+connected`
+  （08:24:55Z 重连，`processed_total=2 / failed_total=0`）；提示词 SHA256
+  `45B87843736FA4F4CC96C7D59D32576021407F2A8819EB5AA5471A5096299D9E`。
+  日志无启动错误（Web：`Started server process [364]`→`Uvicorn running on 127.0.0.1:8001`；
+  Runtime：`connected, shadow mode`；err 日志中的 `KeyboardInterrupt` 为旧进程被正常停止的痕迹）。
+- ✅ **第二次重启已完成（2026-09-18 17:06，负责人授权 UAC）**：提示词版本号 `t204-v15` 与
+  **配对来源前缀扩展**一并生效——QQBotWeb `49924` / QQBotRuntime `52132`（17:06:57 / 17:07:02，
+  晚于 17:03 的 `wall_pair.py`、16:26 的 `ai.py`/`.env` 改动）；healthz
+  `status=ok / mode=SAFE / onebot=ready+connected`（09:07:20Z 重连）。
+- **配对规则现状（口径 C = D-036 + 两个补丁，2026-09-18 17:18 起生效）**：同成员在
+  **视觉确认放行图**之后 **120 秒内**发的**文字与图片都不撤回**（降 `record_only`，转人工记录）。
+  来源图前缀同时接受「校园墙白名单」**和**「小程序码通过」（D-039 联动修复；修复前只认前者，
+  实测 2026-09-18 16:55–16:58 有 3 条文字因此被真实撤回）。
+  **不豁免**：色情（`porn`）、暴力违禁品（`violence`）、**刷屏（`flood`，刻意保留——行为规则，
+  豁免等于关掉刷屏防护）**；**结构性规则不受影响**（合并转发/群名片仍"一律撤回"，`video` 等
+  未列类型不豁免）。**诈骗（`fraud`）现纳入窗口豁免**（降 `record_only` + 转人工，**非静默放行**）
+  ——依据负责人两次"严重类别 = 色情/暴力"口径推定，**待负责人书面确认**；若要改回"诈骗照常撤"，
+  改 `PAIR_BLOCKED_CATEGORIES` 一处即可。
+- **视觉探针（负责人 2026-09-18 提供的两张原图：桌面 `0605a15a…jpg` / `2f167dc8…jpg`）**：
+  用生产同款配置（`deepseek-flash` + v15 提示词）实跑，两张图均返回 `category=None`、
+  `confidence=1.0`、`needs_review=False`、`has_miniprogram_code=True` → **判定放行**；
+  证据前缀为「小程序码通过|校园墙白名单|文案:…」与「小程序码通过|文案:…」。
+  即：**这两张图在当前口径下不会再被撤回**；历史上被撤是旧口径（诈骗仍为例外 + 配对前缀不匹配）所致。
+- 附注：`/readyz` 不存在（404），健康检查以 `/healthz` 为准；本机全量测试 **1364 passed / 15 skipped / 0 failed**。
+- **线上核查（2026-09-18 16:50，只读，诊断脚本用后已删）**：逐条解析最近 4000 条判定 →
+  **只要视觉模型置 `has_miniprogram_code=true` 就全部放行（0 例外）**；被撤记录中命中
+  `POLICY_MINIPROGRAM_QR_ALLOW` 的 **0 条**；模型自述"小程序码通过"的 8 条与字段值**完全一致**
+  （不存在"说了通过但字段 false"的矛盾）。
+  **被撤的图片类记录，模型给的都是 `has_miniprogram_code=false`**（证据原文如"未见校园墙特征，
+  也未见小程序码"、"这是 QQ 群名片/QQ 扫码，不是微信小程序码"）。**今日 29 条 `fraud` 撤回
+  全部发生在 16:24 重启前**（14:00–16:00 档 22 条），且**没有一条带小程序码标记** →
+  这类图在本轮修订后**仍会被撤**。
+  **结论："同图有时被撤"的根因不在规则链路，而在远程模型对小程序码的识别不稳定/漏判**
+  （QQ 群码、个人名片码本就不属小程序码）。根治方向：① 用负责人手上"确定是小程序码"的原图
+  做样本校准并固化回归；② **图片感知哈希白名单**（认哈希不认模型，同图二次发送直接放行）——
+  该项此前因 `data/t002_media` 被清理而无样本，**需负责人重新提供原图**（见 D-039 遗留）。
+- **线上运行快照（2026-09-18 16:50）**：16 个群中 **13 个启用真实动作**（3 个只审核不动手）；
+  今日动作 SUCCEEDED 599 / SKIPPED 182（急停 115 + 群动作禁用 67）/ FAILED 13（均为 QQ 侧
+  `recallMsg` 超时 code 1200）；累计 SUCCEEDED 1732 / SKIPPED 984 / FAILED 49。
+  急停 14:34 被部署脚本置 active、14:49 由人工恢复（审计 #796 / #800），**当前非急停状态**。
+- **主审 r132 三轮复验整改（2026-09-18 深夜，`7ec5553`）**：主审结论"一轮 42 + 二轮 40 全过，
+  新增 23 项 4 failed / 19 passed"；四项代码/手册问题已全部修完（F02-R-2 QR 入口阈值透传、
+  N01-R 同条消息内全部来源、N-F05-1 组合字段合成一次条件 UPDATE、N-F05-2 执行写锁内全量集合核对），
+  F06-R 落成 `scripts/rollback_preflight.py` + `scripts/rollback_d037_d038.ps1`（`.Status` 属性、
+  真实备份、可再导入名单导出与回读校验、每步退出码、失败不到达 downgrade/start）。
+  **主审 23 项整改后 23/23 通过**；全量 **1509 passed / 15 skipped / 0 failed**（收集 1524）；ruff/mypy 通过。
+  **仍未具备**：Windows 实机全链回滚演练证据（未停生产服务、未在生产库演练）——如实登记为待补。
+  **部署：未部署**（生产仍是 17:18 加载的 `t204-v15`，本次未重启；是否部署待负责人授权）。
+  违规类别累计：ad 1595 / fraud 64 / porn 20 / other 9（**撤回绝大多数是广告类**）。
+
+## 上轮交接：2026-09-16（三项负责人政策 + R-114 复验整改全部落地）
 
 **SHA 口径**：最新 main `c66820a`（PR #22 合并）。本日链：`a944fd8`（办证 A + 止血）→ `b087857`（卡片 D-032）→ `5162ec3`（R-114 F01/F02/F03）→ `8ae1633`（R-114 F02 残余）→ `61febee`（白名单）+ `bc3a58a`（D-033）→ `c66820a`。**Windows 实际运行 = `c66820a`**（服务已重启加载；白名单后台可用、当前 0 词）。
 

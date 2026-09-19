@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 
-from sqlalchemy import Boolean, DateTime, Integer, String, Text
+from sqlalchemy import Boolean, DateTime, Integer, String, Text, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db import Base
@@ -151,6 +151,38 @@ class AllowlistTerm(Base):
     )
 
 
+class AllowlistMember(Base):
+    """成员白名单（负责人 2026-09-18）：命中成员的全部消息放行，优先级最高。
+
+    - 身份：``provider + external_user_id``。NapCat 主通道的 ``external_user_id``
+      就是 OneBot 数字 QQ 号，本表按**精确相等**匹配，绝不做归一化（数字与关键词
+      的变体归一化语义完全不同）；官方通道用 openid，不匹配 QQ 号，两通道隔离。
+    - 政策：负责人 2026-09-18 明确选择"不守 B-2 底线"——成员白名单为**全类别完全
+      放行**（诈骗/色情/暴力/刷屏同样放行）。开关语义由规则引擎与
+      ``POLICY_ALLOW_RULE_IDS`` 全链路保护共同保证，AI/动态规则/媒体层不得升级。
+    - 生效：运行时每条消息直读本表（跨进程立即生效，参照 ``AllowlistTerm``）。
+    ``sqlite_autoincrement``：删除后 ID 不复用（旧表单不能操作替代对象）；
+    ``(provider, external_user_id)`` 唯一约束防止并发重复写入。
+    """
+
+    __tablename__ = "allowlist_members"
+    __table_args__ = (
+        UniqueConstraint("provider", "external_user_id", name="uq_allowlist_member_identity"),
+        {"sqlite_autoincrement": True},
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    provider: Mapped[str] = mapped_column(String(16), default="onebot", server_default="onebot")
+    external_user_id: Mapped[str] = mapped_column(String(32))
+    note: Mapped[str] = mapped_column(String(128), default="")
+    enabled: Mapped[bool] = mapped_column(Boolean, default=True)
+    created_by: Mapped[str] = mapped_column(String(64), default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=_utcnow, onupdate=_utcnow
+    )
+
+
 class AdminChangePlan(Base):
     """Immutable, short-lived management plan approved by a logged-in human."""
 
@@ -164,6 +196,27 @@ class AdminChangePlan(Base):
     approved_by: Mapped[str] = mapped_column(String(64), default="")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
     expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+
+
+class ImageAllowlist(Base):
+    """图片感知哈希白名单（负责人 2026-09-19）：命中即视为「负责人认可的图」。
+
+    与 ``allowlist_members`` 同为"人工认可的放行来源"，但**作用域不同**：本表只描述
+    **图片外观**，且**不豁免**色情/暴力与本地硬证据（由调用方按既有例外口径处理）。
+    ``phash`` 存 64 位 dHash 的十六进制字符串；(phash) 唯一，重复导入不会产生重复行。
+    """
+
+    __tablename__ = "image_allowlist"
+    __table_args__ = (UniqueConstraint("phash", name="uq_image_allowlist_phash"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    phash: Mapped[str] = mapped_column(String(16))
+    note: Mapped[str] = mapped_column(String(64), default="")
+    source: Mapped[str] = mapped_column(String(16), default="")
+    hit_count: Mapped[int] = mapped_column(Integer, default=0)
+    enabled: Mapped[bool] = mapped_column(Boolean, default=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
+    created_by: Mapped[str] = mapped_column(String(64), default="")
 
 
 class SystemSetting(Base):

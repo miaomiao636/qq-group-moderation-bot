@@ -61,6 +61,39 @@ def _gif_content_type(data: Mapping[str, Any]) -> str:
     return "image/jpeg"
 
 
+def _is_group_card(card: Mapping[str, Any]) -> bool:
+    """是否 QQ 群名片（分享群卡片）——**只认结构化信号**。
+
+    主审 F03（2026-09-18）：早期实现还用「desc/prompt 里出现"群名片"/"推荐群"」做
+    兜底子串判定，结果普通**新闻卡**（"新版 QQ 群名片设置使用教程"）和**音乐卡**
+    （"推荐群友听一首好歌"）会被判成群名片并触发"一律撤回"（R_GROUP_CARD 是硬证据）。
+    结构化信号不足时**保持 False**（宁少撤一张群名片，也不误撤普通卡片）；
+    真实 NapCat 群名片样本到位后按 schema 收窄/扩充（见 NEXT_TASKS）。
+    """
+    app = str(card.get("app") or card.get("appName") or "").strip().lower()
+    view = str(card.get("view") or "").strip().lower()
+    meta = card.get("meta")
+    # 主审二轮 F03-R：**禁止 app 名子串判定**——`com.example.groupbuy` / `com.example.quniversity`
+    # 这类普通卡片会因此被当成群名片并触发"一律撤回"。只接受**结构化身份字段**：
+    # ① meta.group 且含可识别字段（群号/群名等）；② app 恰为 QQ 群分享且 view=group 的明确组合。
+    if isinstance(meta, dict):
+        group = meta.get("group")
+        if isinstance(group, dict) and any(
+            group.get(key) for key in ("groupCode", "groupName", "groupUin", "memberNum")
+        ):
+            return True
+    return app == "com.tencent.qun.share" and view == "group"
+
+
+def _group_card_name(card: Mapping[str, Any]) -> str:
+    """从群名片 JSON 的内嵌 meta.group 提取群名称（取不到返回空串）。"""
+    meta = card.get("meta")
+    group = meta.get("group") if isinstance(meta, dict) else None
+    if not isinstance(group, dict):
+        return ""
+    return str(group.get("groupName") or group.get("name") or "")
+
+
 def _share_card_from_json(raw: str) -> ShareCardInfo | None:
     """从 OneBot json 卡片段提取中立分享卡片摘要；解析失败返回 None。"""
     try:
@@ -74,6 +107,10 @@ def _share_card_from_json(raw: str) -> ShareCardInfo | None:
     prompt = str(card.get("prompt") or card.get("desc") or "")
     tag = str(card.get("tag") or "")
     preview = str(card.get("preview") or card.get("url") or card.get("jump_url") or "")
+    is_group_card = _is_group_card(card)
+    if is_group_card:
+        # 群名在 meta.group.groupName；取到就优先展示，便于后台与报告识别
+        title = _group_card_name(card) or title
     if not (title or prompt or source or preview):
         return None
     return ShareCardInfo(
@@ -82,6 +119,7 @@ def _share_card_from_json(raw: str) -> ShareCardInfo | None:
         prompt=prompt[:200],
         tag=tag[:60],
         preview_url=preview[:500],
+        is_group_card=is_group_card,
     )
 
 
@@ -284,9 +322,16 @@ class OneBotMessageSource:
                     neutral_segments.append(seg_unknown)
                     texts.append(marker)
                 else:
-                    share_card = share_card or card
+                    if share_card is None:
+                        share_card = card
+                    elif card.is_group_card and not share_card.is_group_card:
+                        # 同一条消息内只要出现任一"群名片"，整体即按群名片处理
+                        # （R_GROUP_CARD 一律撤回）：中立契约只保留首张卡片，若不做标记
+                        # 合并，群名片会被前面的普通卡片掩盖而漏撤。
+                        share_card = share_card.model_copy(update={"is_group_card": True})
                     neutral_segments.append(MessageSegment(kind="share_card"))
-                    texts.append(f"[卡片:{card.title[:40]}]")
+                    card_label = "群名片" if card.is_group_card else "卡片"
+                    texts.append(f"[{card_label}:{card.title[:40]}]")
             elif seg_type == "share":
                 card = _share_card_from_share(data)
                 if card is None:

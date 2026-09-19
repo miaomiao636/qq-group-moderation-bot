@@ -9,6 +9,10 @@ from typing import Any
 import pytest
 from app.adapters.qq_official.contract import Attachment, Sender, ShareCardInfo, StandardMessage
 from app.adapters.qq_official.parser import parse_group_message
+from app.moderation.decision import (
+    FORWARD_RECORD_RECALL_RULE_ID,
+    GROUP_CARD_RECALL_RULE_ID,
+)
 from app.moderation.rules import TextRuleEngine
 
 FIXTURE_DIR = Path(__file__).parent / "fixtures" / "qq_official"
@@ -216,14 +220,23 @@ def test_spam_fixture_text_flagged() -> None:
 
 
 def test_forward_and_card_not_misjudged_by_text_engine() -> None:
-    """转发记录/卡片骨架不产生高置信违规（多模态证据由 T-201/T-202 处理）。"""
+    """转发记录/卡片骨架的判定（2026-09-18 负责人口径更新）。
+
+    - **合并转发**：负责人 2026-09-18 明确"一律撤回"，由本地确定性规则
+      `R_FORWARD_RECORD` 给出高置信 + recall（无需展开内容）；群主/管理员与成员
+      白名单成员除外。
+    - **分享卡片**：文本引擎不得仅凭卡片骨架判高置信（多模态证据由 T-201/T-202
+      处理）；"群名片"（is_group_card）另行由 `R_GROUP_CARD` 一律撤回。
+    """
     engine = TextRuleEngine()
-    for name in (
-        "group_message_create_forward_record.json",
-        "group_message_create_share_card.json",
-    ):
-        decision = engine.evaluate(fixture_message(name))
-        assert decision.verdict != "violation_high" or decision.category in ("ad", "fraud")
+    forward = engine.evaluate(fixture_message("group_message_create_forward_record.json"))
+    assert forward.verdict == "violation_high"
+    assert forward.recommended_actions[0] == "recall"
+    assert any(h.rule_id == FORWARD_RECORD_RECALL_RULE_ID for h in forward.rule_hits)
+
+    card = engine.evaluate(fixture_message("group_message_create_share_card.json"))
+    assert card.verdict != "violation_high" or card.category in ("ad", "fraud")
+    assert not any(h.rule_id == GROUP_CARD_RECALL_RULE_ID for h in card.rule_hits)
 
 
 # ---------- 离线评测报告 ----------

@@ -138,7 +138,13 @@ class Settings(BaseSettings):
     ai_timeout_seconds: float = Field(default=5.0, ge=0.2, le=60.0, alias="AI_TIMEOUT_SECONDS")
     ai_daily_budget_cents: int = Field(default=0, ge=0, alias="AI_DAILY_BUDGET_CENTS")
     ai_per_minute_limit: int = Field(default=30, ge=1, le=600, alias="AI_PER_MINUTE_LIMIT")
-    ai_prompt_version: str = Field(default="t204-v6", alias="AI_PROMPT_VERSION")
+    # 主审 F09b：默认值必须与 app/moderation/ai.py 的 PROMPT_VERSION、.env.example 保持一致，
+    # 否则新部署（未设置 AI_PROMPT_VERSION 时）会把审计版本标签写成历史版本。
+    ai_prompt_version: str = Field(default="t204-v16", alias="AI_PROMPT_VERSION")
+    # 图片感知哈希白名单模式：off（默认，不读不写）/ shadow（只观察不改变判定）/ enforce（未实现）。
+    # 必须放在**应用配置**里：`.env` 由 pydantic-settings 装载、不进 os.environ，
+    # 只读环境变量会导致写在 .env 里的模式读不到。
+    image_hash_mode: str = Field(default="off", alias="IMAGE_HASH_MODE")
     # 业务规则片段文件（相对仓库根）。与 SYSTEM_PROMPT 分离，避免把业务词硬编码进
     # 通用提示词；为空则不追加。见 config/ai_prompt_rules.txt。
     ai_prompt_rules_file: str = Field(default="", alias="AI_PROMPT_RULES_FILE")

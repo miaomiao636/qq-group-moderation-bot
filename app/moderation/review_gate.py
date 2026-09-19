@@ -14,10 +14,24 @@ import time
 from dataclasses import dataclass
 
 from app.core.contracts import StandardMessage
-from app.moderation.decision import ModerationDecision
+from app.moderation.decision import (
+    FORWARD_RECORD_RECALL_RULE_ID,
+    GROUP_CARD_RECALL_RULE_ID,
+    ModerationDecision,
+)
 
 AUTO_PUNISH_THRESHOLD = 0.90
-_HARD_EVIDENCE_RULES = {"R001", "R003", "R006"}  # 黑名单词 / 联系方式 / 分享卡片（独立硬证据）
+# 内置独立硬证据规则：黑名单词 / 联系方式 / 分享卡片。
+_BUILTIN_HARD_EVIDENCE_RULES = frozenset({"R001", "R003", "R006"})
+# 结构性确定性规则（负责人 2026-09-18）：合并转发 / 群名片——消息结构本身就是证据，
+# 不依赖文本软信号，必须计入硬证据，否则复核门会把"一律撤回"重新降级为转人工。
+#
+# **只允许加入 decision.py 导出的结构性规则常量**。内置规则的 `R0xx` 编号段绝不能
+# 出现在这里：曾把结构性规则误编为 R007，与内置 `contextual_ad_terms` 撞号，导致
+# 复核门把该内置规则当成独立硬证据、放宽了自动处罚门槛（2026-09-18 事件）。
+_HARD_EVIDENCE_RULES = _BUILTIN_HARD_EVIDENCE_RULES | frozenset(
+    {FORWARD_RECORD_RECALL_RULE_ID, GROUP_CARD_RECALL_RULE_ID}
+)
 
 
 def _is_hard_evidence(rule_id: str) -> bool:
