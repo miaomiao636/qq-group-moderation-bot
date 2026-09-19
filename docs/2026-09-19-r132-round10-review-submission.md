@@ -16,6 +16,7 @@
 | `mypy app` | **89 源文件**无问题 |
 | **同 SHA CI（`dbd80a5`）** | [run 35451072498](https://github.com/miaomiao636/qq-group-moderation-bot/actions/runs/35451072498) —— `Lint, Type-check & Test (ubuntu-latest)` `jobId=105918202246`、`Lint, Type-check & Test (windows-latest)` `jobId=105918202333`、`Runtime deps regression (clean install)` `jobId=105918202302`，**三 job 全部 success** |
 | 本轮新增回归 | `tests/test_r132_review_group_survey_account_binding.py`（平台无关地钉住 R9-03 账号绑定契约） |
+| 本文档所在提交 `e3f321c` 的 CI | [run 35451698502](https://github.com/miaomiao636/qq-group-moderation-bot/actions/runs/35451698502) —— Windows `jobId=105919868577`、Ubuntu `jobId=105919868783`、clean runtime-deps `jobId=105919868729`，**三 job 全部 success** |
 
 ---
 
