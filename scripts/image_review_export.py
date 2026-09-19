@@ -28,7 +28,12 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(ROOT / "scripts"))
 
-from app.moderation.image_hash import best_match, dhash64_file, to_hex  # noqa: E402
+from app.moderation.image_hash import (  # noqa: E402
+    best_match,
+    dhash64_file,
+    frame_scope_of,
+    to_hex,
+)
 from image_allowlist_seed import (  # noqa: E402
     detail_blockers,
     disabled_hashes,
@@ -178,6 +183,9 @@ def collect(
                     "file_dhash": phash,
                     "file_sha256": file_sha,
                     "file_size": file_size,
+                    # R7（主审）：动图范围必须在**离线清单**里可见——多帧图只按**首帧**参与哈希，
+                    # 命中不代表整段动图等价（在线观察侧已有 `frame_scope`，这里补到导出侧）。
+                    "frame_scope": frame_scope_of(path.read_bytes()),
                     "count": 0,
                     "would_change": 0,
                     "verdicts": Counter(),
@@ -274,6 +282,8 @@ def main(argv: list[str] | None = None) -> int:
         f"- **集合来源构成**：{source_mix}",
         f"- 命中阈值：汉明距离 <= {args.max_distance}；扫描范围：最近 {args.limit} 条图片判定",
         f"- 待审核图片：**{len(groups)} 张**（唯一图片；同图的多条消息已折叠）",
+        f"- **动图范围**：{sum(1 for e in groups.values() if e.get('frame_scope') == 'first_frame')} 张为"
+        "多帧图（**仅按首帧参与哈希**——命中不代表整段动图等价，请据此判断是否可放行）",
         "",
     ]
     if set_mode != "active":

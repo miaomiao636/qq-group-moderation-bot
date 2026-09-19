@@ -23,17 +23,30 @@ from tests.test_r132_review_image_tool_set_consistency import (
 
 def _collect(db, media, samples):
     return export_tool.collect(
-        db=db, media_dir=media,
+        db=db,
+        media_dir=media,
         whitelist=export_tool.build_whitelist(samples, db, media),
-        max_distance=2, limit=100,
+        max_distance=2,
+        limit=100,
     )
 
 
 def _report(db, media, samples, out):
-    assert export_tool.main([
-        "--db", str(db), "--media-dir", str(media),
-        "--samples-dir", str(samples), "--out", str(out),
-    ]) == 0
+    assert (
+        export_tool.main(
+            [
+                "--db",
+                str(db),
+                "--media-dir",
+                str(media),
+                "--samples-dir",
+                str(samples),
+                "--out",
+                str(out),
+            ]
+        )
+        == 0
+    )
     paths = list(out.glob("batch-*/IMAGE_REVIEW.md"))
     assert len(paths) == 1
     return paths[0].read_text(encoding="utf-8")
@@ -62,13 +75,27 @@ def test_candidate_collection_preserves_explicit_rejection(sandbox, tmp_path, re
     elif rejection == "custom_exclude":
         custom = tmp_path / "explicit-rejection.txt"
         custom.write_text(to_hex(value) + "\n", encoding="utf-8")
-        assert seed_tool.main([
-            "--db", str(db), "--samples-dir", str(samples),
-            "--media-dir", str(media), "--exclude-file", str(custom),
-        ]) == 0
+        assert (
+            seed_tool.main(
+                [
+                    "--db",
+                    str(db),
+                    "--samples-dir",
+                    str(samples),
+                    "--media-dir",
+                    str(media),
+                    "--exclude-file",
+                    str(custom),
+                ]
+            )
+            == 0
+        )
     else:
         seed_tool.import_seeds(
-            db=db, seeds=seed_tool.scan_samples(samples), dry_run=False, operator="synthetic",
+            db=db,
+            seeds=seed_tool.scan_samples(samples),
+            dry_run=False,
+            operator="synthetic",
         )
         with sqlite3.connect(db) as con:
             con.execute("UPDATE image_allowlist SET enabled=0")
@@ -102,7 +129,10 @@ def test_nonempty_active_set_does_not_absorb_unmatched_candidate(sandbox):
     other = dhash64_file(rejected)
     assert other is not None and hamming64(approved, other) > 2
     seed_tool.import_seeds(
-        db=db, seeds=seed_tool.scan_samples(samples), dry_run=False, operator="synthetic",
+        db=db,
+        seeds=seed_tool.scan_samples(samples),
+        dry_run=False,
+        operator="synthetic",
     )
     add_decision(db, rejected.name)
     assert len(export_tool.build_whitelist(samples, db, media)) == 1
@@ -117,10 +147,23 @@ def test_replay_candidate_report_discloses_unavailable_active_set(sandbox, tmp_p
     with sqlite3.connect(db) as con:
         con.execute("DROP TABLE image_allowlist")
     out = tmp_path / "replay"
-    assert replay_tool.main([
-        "--db", str(db), "--media-dir", str(media), "--samples-dir", str(samples),
-        "--max-distance", "2", "--out", str(out),
-    ]) == 0
+    assert (
+        replay_tool.main(
+            [
+                "--db",
+                str(db),
+                "--media-dir",
+                str(media),
+                "--samples-dir",
+                str(samples),
+                "--max-distance",
+                "2",
+                "--out",
+                str(out),
+            ]
+        )
+        == 0
+    )
     reports = list(out.glob("*.md"))
     assert len(reports) == 1
     report = reports[0].read_text(encoding="utf-8")

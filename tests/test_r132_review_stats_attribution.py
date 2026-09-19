@@ -29,22 +29,32 @@ def _write_audit(path, *, message_id="701", group="1001"):
         try:
             async with AsyncSession(engine, expire_on_commit=False) as session:
                 msg = parsed("10000001", message_id, group)
-                intent = await _create_intent(session, msg, "recall", {}, "synthetic", provider="onebot")
+                intent = await _create_intent(
+                    session, msg, "recall", {}, "synthetic", provider="onebot"
+                )
                 intent.status = "SUCCEEDED"
                 await session.commit()
-                await _log_action_result(session, intent, ActionResult(action="recall", ok=True, attempts=1))
+                await _log_action_result(
+                    session, intent, ActionResult(action="recall", ok=True, attempts=1)
+                )
         finally:
             await engine.dispose()
+
     asyncio.run(exercise())
     _normalize_action_times(path)
 
 
-@pytest.mark.parametrize("other_group,has_own_decision", [
-    ("1001", True),  # Same raw id and group; both accounts are candidates.
-    ("2002", True),  # Another group's message is not evidence about this action.
-    ("2002", False), # Own decision pruned/absent; keep the un-attributable row.
-])
-def test_raw_id_collision_does_not_prove_action_belongs_to_other_account(db, other_group, has_own_decision):
+@pytest.mark.parametrize(
+    "other_group,has_own_decision",
+    [
+        ("1001", True),  # Same raw id and group; both accounts are candidates.
+        ("2002", True),  # Another group's message is not evidence about this action.
+        ("2002", False),  # Own decision pruned/absent; keep the un-attributable row.
+    ],
+)
+def test_raw_id_collision_does_not_prove_action_belongs_to_other_account(
+    db, other_group, has_own_decision
+):
     path, engine = db
     with Session(engine) as session:
         if has_own_decision:
@@ -87,7 +97,9 @@ def test_positive_attempt_targets_include_success_failure_and_timeout(db, ok, co
     assert data["boundary_check"]["action_targets_outside_authorized"] == ["onebot:2002"]
     assert data["action_not_sent_targets"] == []
     assert data["action_unknown_attempt_targets"] == []
-    expected = "成功" if ok else ("超时（最终效果未知）" if code == 1200 else "失败（最终效果未知）")
+    expected = (
+        "成功" if ok else ("超时（最终效果未知）" if code == 1200 else "失败（最终效果未知）")
+    )
     assert stats._status_label(ok, code, 1) == expected
 
 
@@ -104,7 +116,10 @@ def test_null_attempts_remains_unknown_in_both_results_and_target_sections(tmp_p
           CREATE TABLE action_intents(status TEXT, provider TEXT, message_id TEXT, created_at TEXT);
           CREATE TABLE action_logs(action TEXT, ok INTEGER, err_code INTEGER, attempts INTEGER, provider TEXT, external_group_id TEXT, message_id TEXT, created_at TEXT);
         """)
-        con.execute("INSERT INTO action_logs VALUES ('recall', 0, NULL, NULL, 'onebot', '2002', '701', ?)", (INSIDE.replace(tzinfo=None).isoformat(sep=" "),))
+        con.execute(
+            "INSERT INTO action_logs VALUES ('recall', 0, NULL, NULL, 'onebot', '2002', '701', ?)",
+            (INSIDE.replace(tzinfo=None).isoformat(sep=" "),),
+        )
     data = stats.collect(db=path, start=START, end=END)
     assert data["boundary_check"]["action_targets_outside_authorized"] == []
     assert data["action_not_sent_targets"] == []
