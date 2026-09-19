@@ -76,6 +76,24 @@ def load_excluded(path: Path) -> set[str]:
     return excluded
 
 
+def effective_hashes(db: Path) -> set[str] | None:
+    """**生效名单**：已导入且 ``enabled=1`` 的哈希集合（A05-R）。
+
+    导入 / 回放 / 导出 / shadow **必须读同一集合**：有生效名单就用它；
+    没有（尚未导入）时离线工具只能输出**候选**，不得声称"已批准 / 可直接启用"。
+    """
+    try:
+        con = sqlite3.connect(f"file:{db}?mode=ro", uri=True)
+        try:
+            rows = con.execute("select phash from image_allowlist where enabled=1").fetchall()
+        finally:
+            con.close()
+    except sqlite3.Error:
+        return None
+    values = {str(row[0]).lower() for row in rows}
+    return values or None
+
+
 def import_seeds(
     *,
     db: Path,

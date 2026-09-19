@@ -28,7 +28,12 @@ sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(ROOT / "scripts"))
 
 from app.moderation.image_hash import best_match, dhash64_file, to_hex  # noqa: E402
-from image_allowlist_seed import load_excluded, scan_history, scan_samples  # noqa: E402
+from image_allowlist_seed import (  # noqa: E402
+    effective_hashes,
+    load_excluded,
+    scan_history,
+    scan_samples,
+)
 
 # A05：回放/导出必须与导入共用**同一套集合**（含负责人排除清单）
 EXCLUDE_FILE = ROOT / "docs" / "evidence" / "image-review" / "exclude_hashes.txt"
@@ -38,14 +43,20 @@ HARD_EVIDENCE = {"R001", "R003", "R006"}
 
 
 def build_whitelist(samples_dir: Path, db: Path, media_dir: Path) -> list[tuple[int, str]]:
-    """生效名单 = 样本 + 历史放行图 **减去** 负责人排除清单（与导入共用同一集合）。"""
+    """**生效名单优先**（已导入且 enabled=1，与 shadow 读取完全一致，A05-R）。
+
+    没有生效名单（尚未导入）时退化为**候选**：样本 + 历史放行图 − 排除清单。
+    """
+    approved = effective_hashes(db)
+    if approved is not None:
+        return [(int(value, 16), "db:enabled") for value in sorted(approved)]
     excluded = load_excluded(EXCLUDE_FILE)
     seen: dict[int, str] = {}
     for path, source, note in scan_samples(samples_dir) + scan_history(db, media_dir):
         phash = dhash64_file(path)
         if phash is None or to_hex(phash) in excluded:
             continue
-        seen.setdefault(phash, f"{source}:{note}")
+        seen.setdefault(phash, f"candidate:{source}:{note}")
     return list(seen.items())
 
 
