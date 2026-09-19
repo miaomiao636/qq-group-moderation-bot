@@ -188,7 +188,8 @@ def test_member_migration_downgrade_preserves_existing_tables(tmp_path):
         db.execute(
             "INSERT INTO system_settings (key,value,updated_at) VALUES ('r132-probe','keep','2026-09-18 00:00:00')"
         )
-    migrate(database, "c9a1f4d27e30")
+    # 升级到**当前 head**（不写死具体 revision：新增迁移后 `alembic check` 要求库在 head）。
+    migrate(database, "head")
     migrate(database, None, operation="check")
     with sqlite3.connect(database) as db:
         ddl = db.execute("SELECT sql FROM sqlite_master WHERE name='allowlist_members'").fetchone()[
@@ -208,6 +209,6 @@ def test_member_migration_downgrade_preserves_existing_tables(tmp_path):
         assert db.execute(
             "SELECT value FROM system_settings WHERE key='r132-probe'"
         ).fetchone() == ("keep",)
-    migrate(database, "c9a1f4d27e30")
+    migrate(database, "head")
     with sqlite3.connect(database) as db:
         assert db.execute("SELECT count(*) FROM allowlist_members").fetchone() == (0,)
