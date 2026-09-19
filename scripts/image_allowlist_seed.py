@@ -194,6 +194,44 @@ def detail_blockers(detail: dict) -> list[str]:
     return blockers
 
 
+def rejection_snapshot_path(db: Path) -> Path:
+    """拒绝快照文件路径（与库同目录、按库名区分）。
+
+    R6-02-R：负责人明确判"撤回"的哈希必须有一份**可被所有工具读到**的记录——
+    导入侧曾"只跳过 INSERT"，导出/回放看不到这次拒绝，候选就会把已排除的图又列出来。
+    """
+    return db.with_suffix(db.suffix + ".rejections.json")
+
+
+def record_rejection(db: Path, value: str, *, source: str = "exclude", operator: str = "") -> None:
+    """把**已应用的拒绝**写进快照（已存在则不覆盖，保留最早来源与时间）。"""
+    path = rejection_snapshot_path(db)
+    try:
+        data = json.loads(path.read_text(encoding="utf-8")) if path.is_file() else {}
+    except (OSError, ValueError):
+        data = {}
+    if not isinstance(data, dict):
+        data = {}
+    if value not in data:
+        data[value] = {
+            "source": source,
+            "operator": operator,
+            "at": datetime.now(UTC).isoformat(timespec="seconds"),
+        }
+        path.write_text(
+            json.dumps(data, ensure_ascii=False, indent=2, sort_keys=True), encoding="utf-8"
+        )
+
+
+def load_rejections(db: Path) -> set[str]:
+    """读取拒绝快照（文件缺失/损坏 → 空集；随后仍会叠加排除清单与停用行）。"""
+    try:
+        data = json.loads(rejection_snapshot_path(db).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return set()
+    return {str(key).lower() for key in data} if isinstance(data, dict) else set()
+
+
 def import_seeds(
     *,
     db: Path,
@@ -225,6 +263,8 @@ def import_seeds(
                         "where phash = ? and enabled = 1",
                         (value,),
                     )
+                    # R6-02-R：同时写**拒绝快照**（导出/回放的候选收集与它共用一份）。
+                    record_rejection(db, value, source="exclude", operator=operator)
                 continue
             if dry_run:
                 added += 1

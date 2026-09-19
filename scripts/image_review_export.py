@@ -35,6 +35,7 @@ from image_allowlist_seed import (  # noqa: E402
     effective_hashes,
     effective_state,
     load_excluded,
+    load_rejections,
     scan_history,
     scan_samples,
 )
@@ -107,6 +108,8 @@ def collect(
 ) -> dict[int, dict[str, object]]:
     """按"命中的白名单哈希"聚合出需要负责人审核的图片。"""
     candidates = [(index, value) for index, (value, _label) in enumerate(whitelist)]
+    # R6-02-R：拒绝快照（导入侧记录）与排除清单、停用行一起构成"负责人已拒绝"的同一份事实。
+    rejected = load_rejections(db)
     con = sqlite3.connect(f"file:{db}?mode=ro", uri=True)
     rows = con.execute(
         "select message_id, created_at, verdict, category, external_group_id, detail_json "
@@ -150,11 +153,14 @@ def collect(
                 # 生效名单**非空**：不在名单内的图与本次审核无关（保持原行为）
                 continue
             if unmatched:
-                # R6-02-R：候选收集必须套**同一份排除/停用快照**——负责人已明确拒绝
-                # （排除清单 / 自定义排除落库为 enabled=0）的图**不得**被重新拉出来。
-                if to_hex(phash) in load_excluded(EXCLUDE_FILE):
+                # R6-02-R：候选收集必须套**同一份拒绝快照**——负责人已明确拒绝的图
+                # （排除清单 / 自定义排除（拒绝快照）/ 库内 enabled=0）**不得**被重新拉出来。
+                value = to_hex(phash)
+                if value in rejected:
                     continue
-                if to_hex(phash) in disabled_hashes(db):
+                if value in load_excluded(EXCLUDE_FILE):
+                    continue
+                if value in disabled_hashes(db):
                     continue
             try:
                 file_sha = hashlib.sha256(path.read_bytes()).hexdigest()
