@@ -29,7 +29,7 @@
 | 仓库全量（本机） | **1895 用例 / 0 failed / 0 error / 15 skipped** |
 | 静态 | `ruff check` ✓、`ruff format --check` ✓（**307 文件**）、`mypy app` ✓（89 文件） |
 | 生产身份链（修复后只读复跑） | `IDENTITY_OK allowed=68 (mismatch 0) rejected=1 (mismatch 0) snapshot_state=ok` → `docs/evidence/image-review/identity-20260920T093858Z.{md,json}` |
-| 同 SHA CI | 见文末（推送后回填 jobId） |
+| **同 SHA CI（`0827fda`，含本批全部代码+测试+文档）** | [run 35503172408](https://github.com/miaomiao636/qq-group-moderation-bot/actions/runs/35503172408)，attempt 1：`ubuntu-latest` `jobId=106058432652`、`windows-latest` `jobId=106058432439`、`clean runtime-deps` `jobId=106058432539` —— **三 job 全部 success** |
 
 ---
 
