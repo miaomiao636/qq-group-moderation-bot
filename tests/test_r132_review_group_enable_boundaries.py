@@ -111,10 +111,29 @@ def test_official_enabled_flag_does_not_skip_disabled_onebot_group(setup):
 
 
 def test_stale_survey_enabled_flag_does_not_override_actual_db_state(setup, monkeypatch):
-    path, engine, _ = setup
+    path, engine, stats = setup
     add_group(engine)
-    monkeypatch.setattr(enable, "load_survey", lambda: [("1001", 300, "Synthetic", True)])
+    # 主审第十一轮（T01 附属）小修：原用例替换的是**已不在执行路径**的 `load_survey`
+    # （实际快照里仍是默认 false）→ 并没有覆盖它命名的"快照说已开、DB 实际关闭"前提。
+    # 现改为**真实输入 seam**：把夹具快照里的 `action_enabled` 改成 true 并 UTF-8 回写，
+    # 同时确认解析器**真的读到了 True**；业务断言（结果必须仍是 1）逐字保留。
+    snapshot = stats / "groups-synthetic.json"
+    document = json.loads(snapshot.read_text(encoding="utf-8"))
+    document["groups"][0]["action_enabled"] = True
+    snapshot.write_text(json.dumps(document), encoding="utf-8")
+    original_loader = enable.load_snapshot
+    observed = []
+
+    def capture(*args, **kwargs):
+        meta, rows = original_loader(*args, **kwargs)
+        observed.extend(rows)
+        return meta, rows
+
+    monkeypatch.setattr(enable, "load_snapshot", capture)
     assert execute(path) == 0
+    assert len(observed) == 1 and observed[0][3] is True, (
+        "the stale flag must actually reach the parser, otherwise this control proves nothing"
+    )
     assert enabled(path) == 1, (
         "A stale Markdown flag must not make a disabled row appear already enabled"
     )
