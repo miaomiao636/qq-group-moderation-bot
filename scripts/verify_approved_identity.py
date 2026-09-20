@@ -12,6 +12,17 @@
   不 last-wins（与写入工具同一契约）；
 - 拒绝快照 `corrupt` → 非零退出；**missing** 如实报告为"没有拒绝记录"，
   并声明本报告不覆盖拒绝链（不得写成"所有决定都已证明"）。
+
+主审第十一轮（C04-R）追加：
+
+- **dHash 只能找候选，不能首匹配替代身份**：provenance 的批次就是被核对的批次时，
+  `(batch, no)` 是精确身份 → 必须核对那一行，缺失或 dHash 不符即失败，**不得改绑**；
+  来源批次与 provenance 不同（合法重编号/重新批准链）时，先用候选集合，
+  候选里只要存在**相反决定**就报歧义（不按行顺序取第一个）；全部候选一致才算明确，
+  多个候选全放行记 `multiple_approved_identities`（多个批准身份，而非"唯一原图"）；
+- **状态是枚举**：`state` 只认 `approved` / `rejected`（缺省键沿用历史默认 `rejected`），
+  `null`/`true`/`7`/`""` 一律拒绝——否则同一条目能同时给放行与撤回开出 mismatch=0 的证明；
+- **来源必须唯一可解释**：`review:甲;review:乙` 这类多批次来源报歧义，不取第一段。
 """
 
 from __future__ import annotations
@@ -38,6 +49,43 @@ OUT_DIR = ROOT / "docs" / "evidence" / "image-review"
 NOTE = re.compile(r"(batch-\d{8}T\d{6}Z):no=(\d+)")
 ROW = re.compile(r"^\| (\d+) \| (.*?) \| `(.*?)` \|")
 HEX = re.compile(r"^[0-9a-f]+$")
+BATCH_TOKEN = re.compile(r"(batch-\d{8}T\d{6}Z)")
+# C04-R（主审第十一轮）：快照状态是**枚举**，不是"非 approved 即 rejected"。
+STATE_ENUM = ("approved", "rejected")
+
+
+def _state_of(entry: object) -> tuple[str, str]:
+    """→ ``(状态, 问题)``——拒绝快照条目的状态**契约判定**。
+
+    - 条目不是对象 → 问题（身份不完整，不能当"没有条目"）；
+    - 缺少 `state` 键 → 沿用历史兼容默认 `rejected`（既有快照写的就是这个语义）；
+    - 显式给出 `state` → 只认 `approved` / `rejected`；`null`/`true`/`7`/`""`/任意字符串
+      一律**拒绝**，不能"在放行分支不报错、在撤回分支当撤回"（那样同一条目可以同时给
+      放行与撤回开出 mismatch=0 的证明）。
+    """
+    if not isinstance(entry, dict):
+        return "", "拒绝快照条目非法（不是对象）→ 身份不完整"
+    if "state" not in entry:
+        return "rejected", ""
+    raw = entry.get("state")
+    if raw not in STATE_ENUM:
+        return "", f"拒绝快照状态非法（{raw!r}）→ 既不证明放行也不证明撤回"
+    return str(raw), ""
+
+
+def _source_batches(source: str) -> tuple[list[str], str]:
+    """→ (来源里的**全部**批次名, 问题)。
+
+    C04-R：来源必须**唯一可解释**——`re.search` 取第一段会把
+    `review:批次甲;review:批次乙` 当成"完整来源通过"，从而忽略第二段的相反结论。
+    """
+    found = BATCH_TOKEN.findall(source or "")
+    if not found:
+        return [], "来源缺失/不可解析"
+    unique = sorted(set(found))
+    if len(unique) > 1:
+        return unique, f"来源含多个批次（{'、'.join(unique)}）→ 无法唯一确定批次"
+    return unique, ""
 
 
 def _clean(cell: str) -> str:
@@ -147,9 +195,26 @@ def main(argv: list[str] | None = None) -> int:
         return cache[batch]
 
     def verify_by_hash(
-        phash: str, batch: Path | None, expect: str, *, source_note: str, no_hint: str | None
+        phash: str,
+        batch: Path | None,
+        expect: str,
+        *,
+        source_note: str,
+        no_hint: str | None,
+        honor_hint: bool = False,
     ) -> dict[str, object]:
-        """在该批次里**按哈希**定位当前图，再走完整链条（找不到 → 问题）。"""
+        """在该批次里定位当前图，再走完整链条（定位不唯一 → 问题）。
+
+        C04-R（主审第十一轮）定位契约：
+
+        - `honor_hint=True`（provenance 的批次**就是**被核对的批次）：`(batch, no)`
+          是精确身份 → **必须核对该行**；该行缺失或 dHash 不符 → 失败，
+          **不得**因为"同批次里还有一张 dHash 相同的图"就自动改绑到别的行；
+        - `honor_hint=False`（来源批次与 provenance 批次不同，属合法重编号/重新批准链）：
+          先形成**候选集合**（同批次内 dHash 相同的所有行），只要候选里存在**相反决定**
+          就报歧义（不按行顺序取第一个）；全部候选结论一致才算身份明确，
+          候选多于一个时记 `multiple_approved_identities`（多个批准身份，而非"唯一原图"）。
+        """
         item: dict[str, object] = {
             "phash": phash,
             "expect": expect,
@@ -180,15 +245,43 @@ def main(argv: list[str] | None = None) -> int:
                 f"DECISIONS.json 声明的批次（{declared or '缺失'}）与目录名（{batch.name}）不一致"
             )
         target_no: str | None = None
-        for candidate, entry in entries.items():
-            if _clean(entry["dhash"]) == phash.lower():
-                target_no = candidate
-                break
-        if target_no is None:
-            problems.append("该批次清单里找不到这张图（按 dHash 匹配）")
-            return item
-        if no_hint and target_no != str(int(no_hint)):
-            item["renumbered_from"] = str(int(no_hint))
+        if honor_hint and no_hint:
+            target_no = str(int(no_hint))
+            hinted = entries.get(target_no)
+            if hinted is None:
+                problems.append(
+                    f"provenance 指向的编号 {target_no} 不在该批次清单里"
+                    "（不得按 dHash 自动改绑到别的行）"
+                )
+                return item
+            if _clean(hinted["dhash"]) != phash.lower():
+                problems.append(
+                    f"provenance 指向的编号 {target_no} 的 dHash 与生效行不一致"
+                    "（不得按 dHash 自动改绑）"
+                )
+        else:
+            candidates = sorted(
+                (no for no, row in entries.items() if _clean(row["dhash"]) == phash.lower()),
+                key=int,
+            )
+            if not candidates:
+                problems.append("该批次清单里找不到这张图（按 dHash 匹配）")
+                return item
+            reversed_rows = [no for no in candidates if decisions.get(no) not in (None, expect)]
+            if reversed_rows:
+                problems.append(
+                    "同哈希候选含相反决定（"
+                    + "、".join(f"{no}={decisions.get(no)}" for no in reversed_rows)
+                    + "）→ 不能用行顺序取第一个作为批准身份"
+                )
+                return item
+            matching = [no for no in candidates if decisions.get(no) == expect]
+            target_no = matching[0] if matching else candidates[0]
+            item["candidate_identities"] = len(candidates)
+            if len(candidates) > 1:
+                item["multiple_approved_identities"] = candidates
+            if no_hint:
+                item["no_hint_not_bound"] = str(int(no_hint))
         item["no"] = target_no
         entry = entries[target_no]
         item["file"] = entry["file"]
@@ -229,29 +322,35 @@ def main(argv: list[str] | None = None) -> int:
         match = NOTE.search(note or "")
         batch = REVIEW_ROOT / match.group(1) if match else None
         no_hint = str(int(match.group(2))) if match else None
-        item = verify_by_hash(key, batch, "放行", source_note=note or "", no_hint=no_hint)
+        item = verify_by_hash(
+            key, batch, "放行", source_note=note or "", no_hint=no_hint, honor_hint=True
+        )
         item["created_at"] = created_at
         entry = snapshot_raw.get(key)
-        if entry is not None:
-            if not isinstance(entry, dict):
-                item["problems"].append("拒绝快照条目非法（不是对象）→ 身份不完整")  # type: ignore[union-attr]
+        # C04-R：**键存在**与"条目为 null"必须区分——`get()` 都返回 None，
+        # 但显式 null 是非法条目（不得当成"没有拒绝记录"）。
+        if key in snapshot_raw:
+            state, state_problem = _state_of(entry)
+            if state_problem:
+                item["problems"].append(state_problem)  # type: ignore[union-attr]
             else:
-                state = str(entry.get("state", "rejected"))
+                assert isinstance(entry, dict)
                 source = str(entry.get("source") or "")
                 item["snapshot_state"] = state
                 if state == "approved":
-                    match_source = re.search(r"(batch-\d{8}T\d{6}Z)", source)
-                    if not source or match_source is None:
+                    batches, source_problem = _source_batches(source)
+                    if source_problem:
                         item["problems"].append(  # type: ignore[union-attr]
-                            "快照记『已重新批准』但**来源缺失/不可解析** → 身份不完整"
+                            f"快照记『已重新批准』但 {source_problem} → 身份不完整"
                         )
                     else:
                         chip = verify_by_hash(
                             key,
-                            REVIEW_ROOT / match_source.group(1),
+                            REVIEW_ROOT / batches[0],
                             "放行",
                             source_note=source,
-                            no_hint=no_hint,
+                            no_hint=None,
+                            honor_hint=False,
                         )
                         item["reapproval_chain"] = {
                             "batch": chip.get("batch"),
@@ -270,25 +369,28 @@ def main(argv: list[str] | None = None) -> int:
 
     reject_findings: list[dict[str, object]] = []
     for phash, entry in sorted(snapshot_raw.items()):
-        if not isinstance(entry, dict):
-            reject_findings.append({"phash": phash, "problems": ["快照条目非法（不是对象）"]})
+        state, state_problem = _state_of(entry)
+        if state_problem:
+            reject_findings.append({"phash": phash, "problems": [state_problem]})
             continue
-        if str(entry.get("state", "rejected")) == "approved":
+        if state == "approved":
             continue
+        assert isinstance(entry, dict)
         source = str(entry.get("source") or "")
-        match = re.search(r"(batch-\d{8}T\d{6}Z)", source)
-        if not source or match is None:
+        batches, source_problem = _source_batches(source)
+        if source_problem:
             reject_findings.append(
-                {"phash": phash, "problems": ["撤回条目缺少可解析的来源 → 身份不完整"]}
+                {"phash": phash, "problems": [f"撤回条目{source_problem} → 身份不完整"]}
             )
             continue
         reject_findings.append(
             verify_by_hash(
                 phash.lower(),
-                REVIEW_ROOT / match.group(1),
+                REVIEW_ROOT / batches[0],
                 "撤回",
                 source_note=source,
                 no_hint=None,
+                honor_hint=False,
             )
         )
 
@@ -307,8 +409,9 @@ def main(argv: list[str] | None = None) -> int:
         f"`{rejection_snapshot_path(db).name}`）；逐条核验："
         f"**{len(reject_findings) - len([f for f in reject_findings if f['problems']])}/"
         f"{len(reject_findings)} 一致**",
-        "- 定位方式：**按 dHash 在该批次里找当前图**（编号可合法变更），再核 清单 SHA-256 / "
-        "dHash → 磁盘字节 → `DECISIONS.json`（声明批次 + 结论）",
+        "- 定位方式：provenance 给出编号时**核对那一行**（不得改绑）；来源无编号时用**候选集合**"
+        "并要求**无相反决定**（全放行 = 多个批准身份），再核 清单 SHA-256 / dHash → "
+        "磁盘字节 → `DECISIONS.json`（声明批次 + 结论）",
     ]
     if rejection_state == "missing":
         lines.append(

@@ -364,6 +364,7 @@ def import_seeds(
     excluded: set[str] | None = None,
     reapproved: set[str] | None = None,
     pre_commit: Callable[[], None] | None = None,
+    write_credential: dict[str, tuple[int, int, str] | None] | None = None,
 ) -> tuple[int, int, int, int]:
     """写入白名单；返回 (新增, 已存在(重复), 计算失败, 被排除清单跳过)。
 
@@ -371,10 +372,15 @@ def import_seeds(
       后者用于**批准工具**：它已在同一份字节上校验过 SHA-256/dHash，这里不再二次读盘；
     - `excluded`：负责人判"撤回"的哈希 → 停用既有行 + 写拒绝快照；
     - `reapproved`（R9-05）：**显式重新批准**——只有这些哈希可以覆盖拒绝快照并重新启用；
-      普通重复导入（`excluded`/`reapproved` 都没提到、但快照里记着"撤回"的图）必须**尊重拒绝**。
+      普通重复导入（`excluded`/`reapproved` 都没提到、但快照里记着"撤回"的图）必须**尊重拒绝**；
+    - `write_credential`（C03-R1，主审第十一轮）：在**同一个写事务内**回填每个涉及的哈希
+      「写入后的完整行状态」（``(id, enabled, note)``／行不存在 → ``None``）。
+      这是"这一行确实由本次操作写入"的**凭据**——提交后另起连接读到的状态可能已被
+      外部或后续写入替换，不能当归属证明。
     """
     excluded = excluded or set()
     reapproved = {value.lower() for value in (reapproved or set())}
+    touched: set[str] = set(excluded)
     if not dry_run:
         # R9-06-R：拒绝快照**损坏/不可读**时，任何写入前就阻断——坏状态不得被当成空集。
         _rejected_now, snapshot_state = load_rejections_state(db)
@@ -399,6 +405,7 @@ def import_seeds(
                     print(f"  [跳过] 无法计算哈希：{path.name}")
                     continue
                 value = to_hex(phash)
+            touched.add(value)
             if value in persisted_rejected and value not in reapproved and value not in excluded:
                 skipped += 1
                 print(f"  [尊重已记录的撤回] {value}（普通导入不得静默撤销人工结论）")
@@ -449,6 +456,17 @@ def import_seeds(
                     "where phash = ? and enabled = 1",
                     (value,),
                 )
+            if write_credential is not None:
+                # C03-R1：**写事务内**记录写入后的行状态（凭据），供失败补偿做归属判定。
+                for value in sorted(touched):
+                    row = con.execute(
+                        "select id, enabled, note from image_allowlist where phash=?", (value,)
+                    ).fetchone()
+                    write_credential[value] = (
+                        None
+                        if row is None
+                        else (int(row[0] or 0), int(row[1] or 0), str(row[2] or ""))
+                    )
             if pre_commit is not None:
                 # R9-05-R/R9-06-R：**先让"决定/拒绝快照"落盘，再提交 DB**——
                 # 任一步失败都不会留下"已提交 enabled=1 但没有对应决定记录"的部分生效。

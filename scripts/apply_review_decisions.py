@@ -212,28 +212,33 @@ def main(argv: list[str] | None = None) -> int:
 
     def _compensate(
         prior: dict[str, tuple[int, int, str] | None],
-        after: dict[str, tuple[int, int, str] | None],
+        credential: dict[str, tuple[int, int, str] | None],
     ) -> None:
-        """C03/P2（主审第十轮）：**只撤销本操作拥有的那一份变更**。
+        """C03/P2（主审第十/十一轮）：**只撤销本操作确实写入的那一份**。
 
         仍采用"先提交 DB（保住并发语义）+ 失败补偿"，但补偿必须满足：
-        ① 该行**仍等于本操作写入后的状态**（`after`）才动手——后来的同值/不同值写入、
-           外部删除/重建都会被识别为"不属于本操作"，**跳过并标冲突**；
-        ② 拒绝快照里已有**别的 source** 的决定 → 有更晚的成功决定，**不得覆盖**；
-        ③ 恢复**精确的原 note 字符串**（不做全局删后缀）；恢复不完整如实报告，不假称已回滚。
+        ① **归属凭据**（R1）：该行必须仍等于**本次写事务内**记录的状态（`credential`）才动手。
+           `credential` 是写入事务自己看到的最终状态；提交后另起连接读到的三元组**不是**
+           归属证明（外部删除/重建会被误认为"自己写的"）；
+        ② 拒绝快照里已有矛盾决定 → 有更晚的成功决定，**不得覆盖**；
+        ③ **提交前再校验**（R2）：恢复期间快照是否出现"后续成功决定"（DB 已提交、只剩 JSON
+           写盘的另一次审核）→ 出现即 `ROLLBACK` 本次恢复并报冲突，不覆盖后续结果；
+        ④ 恢复**精确的原 note 字符串**；恢复不完整如实报告，不假称已回滚。
         """
         reverted: list[str] = []
         conflicts: list[str] = []
         con = sqlite3.connect(db, timeout=10)
         try:
             con.execute("BEGIN IMMEDIATE")
+            # 决策依据：**恢复开始前**读到的快照决定状态（提交前会再读一次比对漂移）。
+            observed = {value: _snapshot_state(value) for value in prior}
             for value, before in prior.items():
-                if _row_state(con, value) != after.get(value):
-                    conflicts.append(f"{value}:行已被本操作之外的写入改动")
+                if _row_state(con, value) != credential.get(value):
+                    conflicts.append(f"{value}:行状态不等于本次写入凭据（外部/后续写入，不撤销）")
                     continue
                 # ② 若快照里的**现存决定**与"回滚后应有的状态"矛盾，说明有更晚的成功决定 → 不覆盖。
                 target_enabled = 0 if before is None else int(before[1])
-                entry_state = _snapshot_state(value)
+                entry_state = observed[value]
                 if (entry_state == "approved" and target_enabled != 1) or (
                     entry_state == "rejected" and target_enabled != 0
                 ):
@@ -247,7 +252,17 @@ def main(argv: list[str] | None = None) -> int:
                         (before[1], before[2], value),
                     )
                 reverted.append(value)
-            con.commit()
+            # ③ 提交前再校验：恢复期间是否被**后续成功决定**改写（例如 DB 已提交、只剩 JSON 写盘的审核）。
+            drifted = [value for value in reverted if _snapshot_state(value) != observed[value]]
+            if drifted:
+                con.rollback()
+                reverted = []
+                conflicts.extend(
+                    f"{value}:恢复期间快照出现后续决定（已放弃本次恢复，保留后续结果）"
+                    for value in drifted
+                )
+            else:
+                con.commit()
         finally:
             con.close()
         print(
@@ -258,6 +273,7 @@ def main(argv: list[str] | None = None) -> int:
             print("COMPENSATION_CONFLICT " + "；".join(conflicts) + "（未完全回滚，需人工确认）")
 
     prior = _states()
+    credential: dict[str, tuple[int, int, str] | None] = {}
     result = import_seeds(
         db=db,
         seeds=approved,
@@ -266,12 +282,13 @@ def main(argv: list[str] | None = None) -> int:
         excluded=rejected,
         # 显式重新批准：只有这条路可以覆盖既有拒绝并重新启用
         reapproved={seed[3] for seed in approved},
+        # C03-R1：写事务内产出归属凭据（不是提交后另读的近似状态）
+        write_credential=credential,
     )
-    after = _states()
     try:
         _persist_decisions()
     except (OSError, ValueError, RuntimeError):
-        _compensate(prior, after)
+        _compensate(prior, credential)
         raise
     added, duplicate, failed, skipped = result
     print(f"IMPORT_OK 新增={added} 已存在={duplicate} 失败={failed} 排除={skipped}")

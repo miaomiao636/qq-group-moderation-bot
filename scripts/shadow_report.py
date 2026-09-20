@@ -69,6 +69,11 @@ def _parse_utc(text: str) -> str:
         ) from exc
     if parsed.tzinfo is not None:
         parsed = parsed.astimezone(UTC)
+    # C05-R（主审第十一轮）：**受支持的精度必须保留**——只写 `%S` 会把 `.500000`
+    # 悄悄截成 `.000000`，窗口被无声改变（必选集合错、计数还可能恰好相同）。
+    # 非零小数秒原样写回字符串；整秒（含库里的整秒写法）保持原格式，比较语义不变。
+    if parsed.microsecond:
+        return parsed.strftime("%Y-%m-%d %H:%M:%S.%f")
     return parsed.strftime("%Y-%m-%d %H:%M:%S")
 
 
@@ -134,9 +139,16 @@ def main(argv: list[str] | None = None) -> int:
         f"- 生成时刻（UTC）：{datetime.now(UTC).isoformat(timespec='seconds')}",
         f"- 数据库：`{db.name}`（只读连接）",
         f"- **统计范围**：{scope}",
-        "- **口径警示**：本报告**不是**「窗口内覆盖率」的证据 —— 默认口径下分子（观察条数）与"
-        f"分母（全库留存判定 {total} 条、其中图片判定 {image_total} 条）**不同范围**，"
-        "不得相除得出覆盖率或命中率；需要窗口口径请用 `--since/--until` 重出。",
+        "- **口径警示**：本报告**不是**「窗口内覆盖率」的证据 —— "
+        + (
+            f"窗口口径下分子（窗口内观察 {len(rows)} 条）与分母（**同一 UTC 半开范围**的判定 "
+            f"{total} 条、其中图片判定 {image_total} 条）**范围相同**，可以相除得到**窗口内**"
+            "的比例；但它仍不等于业务命中率（观察样本不是全量判定）。"
+            if windowed
+            else f"默认口径下分子（观察条数）与分母（全库留存判定 {total} 条、其中图片判定 "
+            f"{image_total} 条）**不同范围**，不得相除得出覆盖率或命中率；"
+            "需要窗口口径请用 `--since/--until` 重出。"
+        ),
         f"- **有 `image_hash` 观察的判定**：{len(rows)} 条"
         + (
             f"（窗口内判定 {total} 条，其中图片判定 {image_total} 条；**同一 UTC 半开范围**）"
