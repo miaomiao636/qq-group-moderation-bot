@@ -6,7 +6,7 @@ r132 第十一批复验整改回评（基线 6505a79）
 
 二、证据
 - 原 31 项：31 passed（现已入库）。
-- 本轮 24 项：入库时本机复现 13 failed / 11 passed -> 整改后 24 passed（其中 23 项业务探针入库）。
+- 本轮 24 项：入库时本机复现 13 failed / 11 passed -> 整改后 24 passed（其中 23 项业务探针入库）。【校准】该"24 passed"的执行版本是 228f276（仅代码修复阶段）；最终 HEAD 上的正确口径是 23 项业务项通过 + 1 项历史 AST 审计"不适用"（stale-true 修正后不再相等，按您的意见登记、不入永久套件）。
 - 仓库全量：1882 用例 / 0 failed / 0 error / 15 skipped；ruff check + format --check（298 文件）、mypy app（89 文件）通过。
 - C03 子包：您 C03 新 4 项 4 passed（含 2 个原失败反例 + 2 个正控）。
 - 生产身份链（修复后只读复跑）：IDENTITY_OK allowed=68 (mismatch 0) rejected=1 (mismatch 0) snapshot_state=ok。报告：docs/evidence/image-review/identity-20260920T053215Z.{md,json}。

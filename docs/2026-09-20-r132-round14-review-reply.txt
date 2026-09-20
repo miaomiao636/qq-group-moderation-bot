@@ -1,0 +1,38 @@
+r132 第十二批复验整改回评（基线 166a1ab）
+
+一、先改两处校准（您 §4 都成立）
+- 格式检查文件数：您说的 304 正确（我写的 298 是入库 6 个测试文件之前的数）；本批再增 2 文件，现为 307。
+- 上轮"24 passed"实际执行于 228f276（仅代码修复阶段）；最终 HEAD 上正确口径是 23 项业务项通过 + 1 项历史 AST 审计"不适用"。我独立复核：194eb0b 与最终 HEAD 该文件都是 14 个函数，只有 test_stale_survey_enabled_flag_does_not_override_actual_db_state 的 AST 不同，已登记、不入永久套件。
+
+二、C03-R2-2：采用方案 B（跨进程串行化），未增表、未加迁移
+- 新增 scripts/image_allowlist_seed.py::decision_lock：覆盖范围 = 前态读取 -> DB 变更 -> 决定快照发布 -> 失败补偿（apply_review_decisions 整段临界区在锁内；import_seeds 作为写入口也在锁内）。
+- 跨进程：O_CREAT|O_EXCL 锁文件 <db>.review.lock（Windows 与 POSIX 均可用），不只挡线程、也不依赖 SQLite 写锁——您指出的"BEGIN IMMEDIATE 挡不住已提交 DB、只剩 JSON 写盘的写者"正是本锁要覆盖的。
+- 可重入：同进程同线程嵌套只累加计数（apply -> import_seeds 不成自锁）。
+- 超时即显式失败：等待 30s 后抛 RuntimeError 且本次不做任何改动；锁文件超 120s 视为崩溃残留回收。
+- 锁顺序：本锁（外）-> 拒绝快照锁（内），不得反向（已写进 docstring）。
+- 跨进程证据：新增 tests/test_r132_decision_lock_cross_process.py（真实子进程持锁 -> 本进程超时 RuntimeError -> 不误删对方锁 -> 释放后可获取）。
+
+三、调度适配（按您的授权登记，只改调度、不改最终状态/报告断言；未为跑探针放松锁）
+1) tests/test_r132_review_r9_write_residuals.py：原"第二次操作在第一次发布中同时执行" -> 改为"第二次被可靠阻塞、待第一次完成后顺序执行"；最终不变式（不得同时 enabled 且 rejected）逐字保留。
+2) tests/test_r132_review_round11_c03_operation_identity.py：原在 A 的补偿读里放行 B -> 改为 B 被阻塞；最终断言（JSON=rejected、DB 行未 enabled）逐字保留。
+3) tests/test_r132_review_round12_c03_second_snapshot_commit.py（本批原件，2 参数）：两个参数在新机制下同一结局，合并为 1 个场景，断言阻塞 + 顺序完成 + 最终一致（IMPORT_OK=2）；原文"必须打印 COMPENSATION_CONFLICT"属您的验收口径 2，在 A 的窗口不可穿越后不再适用，A 的补偿报告行仍断言。
+如实记录：在当前 SHA 原样跑您本包 probes/ = 11 passed / 2 failed（11 项 C04 全过；2 项 C03 因 B 被锁阻塞、原到达点在 5s 等待后不可达而失败），这就是不可达情形，不是业务回退。您说的"不能靠第三次、第四次读取关闭"我接受：读—判定—提交与别处的 JSON 发布没有共同边界，本批把边界改成同一把跨进程锁，补偿不再依赖"读到的字节是否最新"。
+
+四、C04-R2：每个候选都走完整身份链
+- 抽出 verify_entry(no)：清单行 -> 文件名 -> SHA-256 等级（12/64）-> 磁盘实际字节（前缀比对）-> 实际 dHash（可解码性）-> DECISIONS 人工结论。
+- 候选集合路径对**每个**候选都调用（不再只核 matching[0]）；缺结论不再当"一致"（decision != expect 即不完整）。
+- 任一候选缺证据/矛盾 -> 报具体编号与原因（"候选 N：…"）并非零；相反决定另有汇总说明；全部候选完整且一致才通过，多于一个记 multiple_approved_identities（多个批准身份，不宣称唯一原图）。
+- 穿透到报告（您的第 4 点）：逐候选结果进 item["candidates"]，并同步进 reapproval_chain（candidate_identities / multiple_approved_identities / candidates）；Markdown 逐条结果在多候选时追加"（候选 N 行：编号…）"。
+- 正控保持：全候选有效（approved/rejected 两路）与合法重批换号均通过；真实数据复核仍 68/68 + 1/1、mismatch=0。
+
+五、证据
+- 本轮新 13 项：整改前 9 failed / 4 passed -> C04 相关 11/11 通过；C03 两项按上面登记为"阻塞后顺序执行且最终正确"。
+- 上一批原件 54 项：54 passed。仓库 reviewer：250 -> 262（+11 C04 原件 verbatim +1 C03 适配版）。新增回归文件 1 个（跨进程锁）。
+- 仓库全量：1895 用例 / 0 failed / 0 error / 15 skipped；ruff check + format --check（307 文件）、mypy app（89 文件）通过。
+- 生产身份链（修复后只读复跑）：IDENTITY_OK allowed=68 (mismatch 0) rejected=1 (mismatch 0) snapshot_state=ok。
+
+六、仍未证明
+A09 前 6 秒、历史授权快照 NOT_PROVEN、导出多查询一致性读事务、Windows 回滚全链实机演练、一次未复现失败、enforce 最终批准与阈值校准、B 的实际动作效果。
+
+七、边界
+未启用 enforce、未执行回滚、未改判定逻辑、未扩大授权、未动生产开关；生产仍 67 群可路由 / recall_only / IMAGE_HASH_MODE=shadow。

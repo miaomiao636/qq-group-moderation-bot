@@ -26,11 +26,11 @@
 | 检查 | 结果 |
 | --- | --- |
 | 主审原 31 项（`previous31/` 三个原文件） | **31 passed**；本批**真正入库**为 3 个测试文件 |
-| 主审本轮 24 项（23 业务 + 1 AST 审计） | 入库时本机复现 **13 failed / 11 passed** → 整改后 **24 passed** |
+| 主审本轮 24 项（23 业务 + 1 AST 审计） | 入库时本机复现 **13 failed / 11 passed** → 整改后 **24 passed**；【校准 2026-09-20】该 24 passed 的执行版本是 **`228f276`（仅代码修复阶段）**；在最终 HEAD 上正确口径是 **23 项业务项通过 + 1 项历史 AST 审计"不适用"**（stale-true 修正后该历史审计不再相等，按主审意见登记、不入永久套件） |
 | 入库一致性 | 6 个新入库文件与您的原件 **AST 逐节点一致**（`ruff format` 只规范空白/引号风格；唯一差异 = 按您要求未入库的那 1 项 AST 审计函数） |
-| 仓库 reviewer 收集数 | **250**（196 + 31 + 23） |
-| 仓库全量（本机） | **1882 用例 / 0 failed / 0 error / 15 skipped** |
-| 静态 | `ruff check` ✓、`ruff format --check` ✓（298 文件）、`mypy app` ✓（89 文件） |
+| 仓库 reviewer 收集数 | **250**（196 + 31 + 23）；本批再增 12 项 → **262** |
+| 仓库全量（本机） | **1882 用例 / 0 failed / 0 error / 15 skipped**（本批后 **1895**） |
+| 静态 | `ruff check` ✓、`ruff format --check` ✓（**304 文件**，【校准】原写 298 是入库 6 个测试文件之前的数）、`mypy app` ✓（89 文件） |
 | C03 子包 | 您 C03 新 4 项 **4 passed**（2 个原失败反例 + 2 个正控） |
 | 生产身份链（**修复后**只读复跑） | `IDENTITY_OK allowed=68 (mismatch 0) rejected=1 (mismatch 0) snapshot_state=ok` → `docs/evidence/image-review/identity-20260920T053215Z.{md,json}` |
 | **同 SHA CI（`3252f7d`，含本批全部代码+测试+文档）** | [run 35492179873](https://github.com/miaomiao636/qq-group-moderation-bot/actions/runs/35492179873)，attempt 1：`ubuntu-latest` `jobId=106028899903`、`windows-latest` `jobId=106028899883`、`clean runtime-deps` `jobId=106028899737` —— **三 job 全部 success** |
