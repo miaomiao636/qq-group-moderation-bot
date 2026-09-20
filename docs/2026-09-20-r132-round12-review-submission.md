@@ -14,6 +14,7 @@
 | `ruff check` + `format`、`mypy app`（89 文件） | 全绿 |
 | 生产身份关联（**收紧后**的工具） | `IDENTITY_OK allowed=68 (mismatch 0) rejected=1 (mismatch 0) snapshot_state=ok` |
 | 收尾 SHA CI | `3a0f3de` [run 35455925261](https://github.com/miaomiao636/qq-group-moderation-bot/actions/runs/35455925261)：Ubuntu `105931053235` / Windows `105931053266` / clean `105931053132` 全 success（该提交为**测试超时修改 + 回评文档**，已按您更正登记） |
+| **本批整改 SHA CI** | **`6505a79`** [run 35457796682](https://github.com/miaomiao636/qq-group-moderation-bot/actions/runs/35457796682)：`ubuntu-latest` `jobId=105936065773`、`windows-latest` `jobId=105936065788`、`clean runtime-deps` `jobId=105936065651` —— **三 job 首跑全部 success**（本轮无超时复现） |
 
 > CI 更正：`194eb0b` attempt 1 的 Windows 失败 job 是 `105927237916`，attempt 2 的成功 job 是 **`105929274765`**；不再沿用误写。超时按您的措辞登记为"**疑似 CI 环境瞬时超时、重跑未复现**"，不作为已证明的根因。
 

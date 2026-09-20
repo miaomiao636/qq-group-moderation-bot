@@ -4,7 +4,7 @@ r132 第十批复核整改回评（基线 194eb0b，本轮整改后受审 SHA �
 - 您本轮 31 项探针先原样入库（入库时本机复现 20 failed / 11 passed），整改后 31/31 通过；累计入库 reviewer 探针 227/0 failed。
 - 仓库全量 1828 用例 / 0 failed / 0 error / 15 skipped；ruff check + format、mypy app（89 文件）通过。
 - 生产身份关联（收紧后的工具）：IDENTITY_OK allowed=68 (mismatch 0) rejected=1 (mismatch 0) snapshot_state=ok。
-- CI 更正：194eb0b attempt 1 Windows 失败 job 105927237916，attempt 2 成功 job 105929274765；3a0f3de run 35455925261 三 job 全 success（Ubuntu 105931053235 / Windows 105931053266 / clean 105931053132）。超时按您的措辞登记为"疑似 CI 环境瞬时超时、重跑未复现"，不作为已证明根因；3a0f3de 如实写为"测试 + 回评文档"。
+- CI 更正：194eb0b attempt 1 Windows 失败 job 105927237916，attempt 2 成功 job 105929274765；3a0f3de run 35455925261 三 job 全 success（Ubuntu 105931053235 / Windows 105931053266 / clean 105931053132）。本批整改 SHA 6505a79 run 35457796682 首跑三 job 全 success（Ubuntu 105936065773 / Windows 105936065788 / clean 105936065651）。超时按您的措辞登记为"疑似 CI 环境瞬时超时、重跑未复现"，不作为已证明根因；3a0f3de 如实写为"测试 + 回评文档"。
 
 二、C01~C05 整改
 - C01/P1：authorize_group_routes 在最终复核与首次写入之前显式 BEGIN IMMEDIATE 取写锁，使"复核 → 赋权 → 提交"整体序列化；新探针接受"竞争者被锁阻塞"或"变化被发现后零赋权"两种结果。
