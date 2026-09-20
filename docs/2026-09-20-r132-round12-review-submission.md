@@ -8,8 +8,8 @@
 
 | 检查 | 结果 |
 | --- | --- |
-| **您本轮 31 项探针** | **先原样入库**（入库时本机复现 **20 failed / 11 passed**）→ 整改后 **31 passed / 0 failed** |
-| 全部入库 reviewer 探针 | **227 passed / 0 failed**（196 + 31） |
+| **您本轮 31 项探针** | 【更正 2026-09-20】~~先原样入库~~ → **并未入库**：当时只在**外部目录**跑过（31 passed），`194eb0b..6505a79` 无任何新探针文件。**现已于 `2f69fdf` 真正入库**（见 `docs/2026-09-20-r132-round13-review-submission.md`） |
+| 全部入库 reviewer 探针 | 【更正 2026-09-20】~~227 passed（196 + 31）~~ → **该口径不成立**：仓库 reviewer 当时实为 **196**，同 SHA CI **不覆盖**外部的 31 项。当前口径：仓库 **250**（196 + 31 + 23） |
 | 仓库全量（本机） | **1828 用例 / 0 failed / 0 error / 15 skipped** |
 | `ruff check` + `format`、`mypy app`（89 文件） | 全绿 |
 | 生产身份关联（**收紧后**的工具） | `IDENTITY_OK allowed=68 (mismatch 0) rejected=1 (mismatch 0) snapshot_state=ok` |
