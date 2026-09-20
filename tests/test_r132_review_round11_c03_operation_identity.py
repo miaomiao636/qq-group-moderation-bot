@@ -1,6 +1,14 @@
 # ruff: noqa: E402, I001, F401, F811, SIM105, S101
-# Reviewer pack (round-11 review of 6505a79), promoted VERBATIM into the repo suite.
-# Only this header was added; no assertion and no logic was changed.
+# Reviewer pack (round-11 review of 6505a79); promoted into the repo suite.
+# Registered adaptation (only one, and only the scheduler of the last test):
+#   `test_late_json_commit_of_successful_rejection_cannot_be_overwritten` used to
+#   release the later review from inside A's compensation snapshot read. Under the
+#   cross-process decision lock (reviewer batch-12 option B) that arrival point is
+#   UNREACHABLE: the later review is reliably BLOCKED on A's lock instead of
+#   committing DB and only writing JSON. The test now asserts blocked-then-sequential
+#   completion; its FINAL-state assertions (JSON=rejected, DB row not enabled) are
+#   unchanged. See docs/2026-09-20-r132-round14-review-submission.md.
+# Everything else in this file is verbatim.
 """6505a79: operation ownership across commit, JSON persistence, and compensation.
 
 Generated images and temporary SQLite only. Fault hooks use real application and
@@ -12,6 +20,7 @@ from __future__ import annotations
 import hashlib
 import json
 import sqlite3
+import time
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from threading import Event, get_ident
@@ -123,52 +132,32 @@ def test_late_json_commit_of_successful_rejection_cannot_be_overwritten(
     later, _, _ = make_batch(tmp_path, name="batch-later", verdict="撤回")
     assert apply(initial, db) == 0
     snapshot = seed_tool.rejection_snapshot_path(db)
-    later_at_json = Event()
-    allow_later_json = Event()
-    compensation_phase = Event()
-    main_thread = get_ident()
+    later_future = []
+    later_started = Event()
     original_record = apply_tool.record_rejection
     original_read = Path.read_bytes
-    later_future = []
-    released = False
+
+    def run_later():
+        later_started.set()
+        return apply(later, db)
 
     with ThreadPoolExecutor(max_workers=1) as pool:
 
         def controlled_record(db_arg, hash_arg, *, source, operator):
             if source == "review:batch-earlier":
-                later_future.append(pool.submit(apply, later, db))
-                assert later_at_json.wait(5)
-                compensation_phase.set()
+                later_future.append(pool.submit(run_later))
+                assert later_started.wait(10)
+                # 让后一次审核真正到达决策锁：它必须**阻塞**在 A 的锁上，
+                # 而不是"DB 已提交、只剩 JSON 写盘"地穿过 A 的补偿窗口。
+                time.sleep(0.3)
                 raise PermissionError("synthetic earlier snapshot failure")
-            if source == "review:batch-later":
-                later_at_json.set()  # Later DB commit already completed.
-                assert allow_later_json.wait(5)
             return original_record(db_arg, hash_arg, source=source, operator=operator)
 
-        def controlled_read(path):
-            nonlocal released
-            content = original_read(path)
-            if (
-                path == snapshot
-                and get_ident() == main_thread
-                and compensation_phase.is_set()
-                and not released
-            ):
-                released = True
-                # Compensation has read the old JSON, but BEGIN IMMEDIATE does not
-                # block a writer that has already committed DB and only writes JSON.
-                allow_later_json.set()
-                assert later_future[0].result(timeout=5) == 0
-            return content
-
         monkeypatch.setattr(apply_tool, "record_rejection", controlled_record)
-        monkeypatch.setattr(Path, "read_bytes", controlled_read)
-        try:
-            with pytest.raises(PermissionError):
-                apply(earlier, db)
-        finally:
-            allow_later_json.set()
-    assert released
+        with pytest.raises(PermissionError):
+            apply(earlier, db)
+        assert not later_future[0].done(), "later review must wait for the decision lock"
+        assert later_future[0].result(timeout=30) == 0
     raw = json.loads(original_read(snapshot).decode("utf-8"))
     assert raw[to_hex(value)]["state"] == "rejected"
     assert to_hex(value) not in enabled_hashes(db), (

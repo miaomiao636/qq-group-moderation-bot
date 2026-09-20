@@ -1,6 +1,14 @@
 # ruff: noqa: E402, I001, F401, F811, SIM105, S101
-# Reviewer round-9 probe pack (dbd80a5), promoted VERBATIM into the repo suite.
-# Only this header was added; no assertion and no logic was changed.
+# Reviewer round-9 probe pack (dbd80a5); promoted into the repo suite.
+# Registered adaptation (only one, scheduler only):
+#   `test_concurrent_reject_and_reapprove_share_one_authoritative_state` used to run
+#   the second operation WHILE the first was paused inside its snapshot publish. With
+#   the cross-process decision lock (reviewer batch-12 option B) that interleaving is
+#   UNREACHABLE: the second operation is reliably BLOCKED until the first finishes.
+#   The test now asserts blocking + sequential completion; its FINAL assertion
+#   ("two successful operations must not leave the hash enabled and rejected at the
+#   same time") is unchanged. See docs/2026-09-20-r132-round14-review-submission.md.
+# Everything else in this file is verbatim.
 """dbd80a5: synthetic-only residual checks for reviewer R9-04 through R9-07."""
 
 from __future__ import annotations
@@ -10,6 +18,7 @@ import importlib
 import json
 import subprocess
 import sys
+import time
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from threading import Event
@@ -152,14 +161,21 @@ def test_concurrent_reject_and_reapprove_share_one_authoritative_state(
         return original(*args, **kwargs)
 
     monkeypatch.setattr(apply_tool, "record_rejection", paused_rejection)
-    with ThreadPoolExecutor(max_workers=1) as pool:
+    with ThreadPoolExecutor(max_workers=2) as pool:
         task = pool.submit(apply, reject_batch, db)
+        second = None
         try:
-            assert rejecting_committed.wait(5)
-            assert apply(approve_batch, db) == 0
+            assert rejecting_committed.wait(10)
+            # 主审第十二轮（方案 B，已登记适配）：审核已全链串行化（前态读取 → DB 变更 →
+            # 快照发布 → 补偿），"B 暂停在发布中、A 同时完整执行"的交错**不可达**。
+            # 这里验证第二操作被**可靠阻塞**，待第一操作完成后再顺序执行。
+            second = pool.submit(apply, approve_batch, db)
+            time.sleep(0.5)
+            assert not second.done(), "second operation must wait for the decision lock"
         finally:
             finish_rejection.set()
-        assert task.result(timeout=5) == 0
+        assert task.result(timeout=30) == 0
+        assert second is not None and second.result(timeout=30) == 0
     assert not (enabled_hashes(db) & seed_tool.load_rejections(db)), (
         "Two successful operations left the same hash enabled and currently rejected."
     )
