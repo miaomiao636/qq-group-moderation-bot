@@ -1,0 +1,39 @@
+r132 方案 A 提案请您评估（未实现、未迁移、未部署）
+
+一、这是什么
+- 文件：docs/2026-09-20-r132-image-decision-authority-proposal.md（基线 c42157a）。
+- 您的答复第 1 条首选路线：决定/source/操作版本/enabled 同库事务权威保存，JSON 仅作可重试导出。
+- 本文件只是提案：未写任何代码、未建迁移文件、未执行迁移或部署、未动生产库/开关/授权。
+
+二、核心设计（详见提案 §2-§4）
+- 唯一权威 = 一个 SQLite 事务内的 (决定状态, 来源, 操作版本, 生效位)；导出在事务外，失败即"决定已生效、导出待重试"。
+- 补偿机制整体删除：不再有"撤销已生效决定"这条路径，您三轮反例所属的那一类问题从根上消失。
+- 运行时判定路径完全不变（仍读 image_allowlist.enabled=1）。
+
+三、数据模型建议（推荐 A2：扩展 image_allowlist）
+- 新增 5 列：decision_state / decision_source / decision_operator / decision_version / decided_at + 1 索引（SQLite ADD COLUMN，常数时间）。
+- 语义收敛：每个有决定的哈希都有一行（allowed→enabled=1；rejected→enabled=0）。
+- 并发：事务内 CAS decision_version，更晚决定必然 bump 版本，旧操作永远无法覆盖新决定。
+
+四、迁移/回填/兼容
+- 迁移纯 DDL（additive）；回填用独立幂等脚本（默认 --dry-run + 校验报告，"JSON 有但库无"必须为空）。
+- 兼容矩阵：未迁移→工具显式 AUTHORITY_UNAVAILABLE；未回填→AUTHORITY_NOT_BACKFILLED 并按证据不足处理（绝不把"读不到"当"没有撤回记录"）。
+- 启动门禁既有事实：库 revision 落后于代码 head 时服务拒绝启动（既有测试已证明），所以新代码必须与迁移同窗口。
+
+五、备份与回滚
+- 迁移前备份：moderation.db + moderation.db.rejections.json + 批次目录，均记 sha256。
+- R1（推荐）：先 --export-only 对齐 JSON → git revert 代码 → 保留新列（旧代码忽略）。
+- R2（可选）：alembic downgrade -1（batch_alter_table 去列）；我们建议默认保留列。
+- 演练在**合成库**上做完整「备份→迁移→回填→导出→回滚→再启动+对账」，不在生产演练。
+
+六、需要您确认的 6 点
+1) 表形态：A2 扩展 image_allowlist（我们倾向）还是 A1 新建 image_review_decisions？
+2) rejected 必须落行（enabled=0 + decision_state='rejected'）是否接受？（会改变"该表只存放行行"的语义，运行时读取不受影响）
+3) 导出失败语义变更：DECISIONS_COMMITTED_EXPORT_PENDING + 非零 + 不回滚；相应地您三个原件里编码"补偿恢复"的用例要按新语义重定义——是否确认？清单见提案 §8。
+4) 回填：迁移只做 DDL、回填走独立 dry-run 脚本（幂等 + 校验报告），可接受吗？
+5) 迁移与部署同窗口（启动门禁会拦未迁移库）：接受这一耦合，还是要求解耦（先上忽略新列的兼容版本）？
+6) 回滚口径 R1 是否可接受？是否需要补 R2 完整脚本？
+
+七、我们不会做的事
+- 不会在您确认前改代码/加迁移；不会执行生产迁移；不会动判定逻辑、阈值、enforce、群授权或任何开关。
+- 方案 B（本批已实现并通过）与方案 A 是**替代**关系而非叠加：A2 下跨进程锁只用于导出顺序。
