@@ -6,7 +6,7 @@
 | --- | --- | --- |
 | **代码修复** | **`228f276`** | C03-R1/R2、C04-R、C05-R（只动 `scripts/` 四个文件） |
 | **测试入库** | **`2f69fdf`** | 原 31 项包 + 本轮 23 项业务探针 + stale-true 输入适配（只动 `tests/`） |
-| 文档/证据 | 本提交 | 本材料 + 纯文本回评 + 只读身份报告 + 第十二批口径更正 |
+| 文档/证据 | **`3252f7d`** | 本材料 + 纯文本回评 + 只读身份报告 + 第十二批口径更正 |
 
 ---
 
@@ -33,7 +33,7 @@
 | 静态 | `ruff check` ✓、`ruff format --check` ✓（298 文件）、`mypy app` ✓（89 文件） |
 | C03 子包 | 您 C03 新 4 项 **4 passed**（2 个原失败反例 + 2 个正控） |
 | 生产身份链（**修复后**只读复跑） | `IDENTITY_OK allowed=68 (mismatch 0) rejected=1 (mismatch 0) snapshot_state=ok` → `docs/evidence/image-review/identity-20260920T053215Z.{md,json}` |
-| 同 SHA CI | 见文末（推送后回填 jobId） |
+| **同 SHA CI（`3252f7d`，含本批全部代码+测试+文档）** | [run 35492179873](https://github.com/miaomiao636/qq-group-moderation-bot/actions/runs/35492179873)，attempt 1：`ubuntu-latest` `jobId=106028899903`、`windows-latest` `jobId=106028899883`、`clean runtime-deps` `jobId=106028899737` —— **三 job 全部 success** |
 
 ---
 
