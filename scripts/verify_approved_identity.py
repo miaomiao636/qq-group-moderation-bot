@@ -211,9 +211,12 @@ def main(argv: list[str] | None = None) -> int:
           是精确身份 → **必须核对该行**；该行缺失或 dHash 不符 → 失败，
           **不得**因为"同批次里还有一张 dHash 相同的图"就自动改绑到别的行；
         - `honor_hint=False`（来源批次与 provenance 批次不同，属合法重编号/重新批准链）：
-          先形成**候选集合**（同批次内 dHash 相同的所有行），只要候选里存在**相反决定**
-          就报歧义（不按行顺序取第一个）；全部候选结论一致才算身份明确，
-          候选多于一个时记 `multiple_approved_identities`（多个批准身份，而非"唯一原图"）。
+          先形成**候选集合**（同批次内 dHash 相同的所有行）；**每一个被计入的候选都必须
+          走完整身份链**（存在 → 清单 SHA-256 → 磁盘字节 → 实际 dHash → 人工结论，
+          主审 C04-R2：只核验一张就不能声称"多个批准身份已核验"）；候选里存在**相反决定**
+          或任一行缺证据 → 报**具体编号与原因**并非零；全部候选都完整且结论一致才算明确，
+          候选多于一个时记 `multiple_approved_identities`（多个批准身份，而非"唯一原图"），
+          逐候选结果放在 `candidates` 里并穿透到报告。
         """
         item: dict[str, object] = {
             "phash": phash,
@@ -245,6 +248,56 @@ def main(argv: list[str] | None = None) -> int:
                 f"DECISIONS.json 声明的批次（{declared or '缺失'}）与目录名（{batch.name}）不一致"
             )
         target_no: str | None = None
+        batch_dir: Path = batch
+
+        def verify_entry(no: str) -> dict[str, object]:
+            """**单行完整身份链**（主审 C04-R2）：清单行 → 文件名 → SHA-256 等级 →
+            磁盘字节 → 实际 dHash → `DECISIONS.json` 人工结论。
+
+            每个**被计入**的候选都必须走完这条链；缺证据（缺图 / 清单 SHA 不可用或
+            与字节不符 / 不可解码 / 缺结论）一律算**不完整**，并在报告里给出编号与原因。
+            """
+            row: dict[str, object] = {"no": no, "problems": []}
+            row_problems: list[str] = row["problems"]  # type: ignore[assignment]
+            entry = entries[no]
+            row["file"] = entry["file"]
+            grade = _sha_grade(entry["sha"])
+            if grade is None:
+                row_problems.append(f"清单 SHA-256 不可用（{entry['sha'] or '空'}）")
+            else:
+                row["sha_grade"] = grade[1]
+            expected_dhash = _clean(entry["dhash"])
+            if len(expected_dhash) != 16 or not HEX.match(expected_dhash):
+                row_problems.append(f"清单 dHash 不可用（{entry['dhash'] or '空'}）")
+            picture = batch_dir / entry["file"]
+            if not picture.is_file():
+                row_problems.append("批次目录里缺这张原图（原件不在，身份无法证明）")
+                return row
+            raw = picture.read_bytes()
+            full = hashlib.sha256(raw).hexdigest()
+            row["file_sha256"] = full
+            if grade is not None and not full.startswith(grade[0]):
+                row_problems.append(
+                    f"字节 SHA-256 与清单不符（清单 {grade[0][:12]}… 实际 {full[:12]}…）"
+                )
+            phash_now = dhash64(raw)
+            if phash_now is None:
+                row_problems.append("原图无法解码算哈希")
+            else:
+                actual = to_hex(phash_now)
+                row["file_dhash"] = actual
+                if expected_dhash and actual != expected_dhash:
+                    row_problems.append(
+                        f"清单 dHash 与实际不符（清单 {expected_dhash} vs 文件 {actual}）"
+                    )
+            decision = decisions.get(no)
+            row["decision"] = decision or "（缺）"
+            if decision != expect:
+                row_problems.append(
+                    f"人工结论是 {decision or '（缺）'}，与目标状态（{expect}）不一致"
+                )
+            return row
+
         if honor_hint and no_hint:
             target_no = str(int(no_hint))
             hinted = entries.get(target_no)
@@ -259,6 +312,7 @@ def main(argv: list[str] | None = None) -> int:
                     f"provenance 指向的编号 {target_no} 的 dHash 与生效行不一致"
                     "（不得按 dHash 自动改绑）"
                 )
+            rows = [verify_entry(target_no)]
         else:
             candidates = sorted(
                 (no for no, row in entries.items() if _clean(row["dhash"]) == phash.lower()),
@@ -267,53 +321,34 @@ def main(argv: list[str] | None = None) -> int:
             if not candidates:
                 problems.append("该批次清单里找不到这张图（按 dHash 匹配）")
                 return item
-            reversed_rows = [no for no in candidates if decisions.get(no) not in (None, expect)]
+            item["candidate_identities"] = len(candidates)
+            if len(candidates) > 1:
+                item["multiple_approved_identities"] = candidates
+            if no_hint:
+                item["no_hint_not_bound"] = str(int(no_hint))
+            # 候选集合路径：**每一个候选都走完整链**（只核验一张 = 不能声称"多身份已核验"）。
+            rows = [verify_entry(no) for no in candidates]
+            reversed_rows = [
+                str(row["no"])
+                for row in rows
+                if decisions.get(str(row["no"])) not in (None, expect)
+            ]
             if reversed_rows:
                 problems.append(
                     "同哈希候选含相反决定（"
                     + "、".join(f"{no}={decisions.get(no)}" for no in reversed_rows)
                     + "）→ 不能用行顺序取第一个作为批准身份"
                 )
-                return item
-            matching = [no for no in candidates if decisions.get(no) == expect]
-            target_no = matching[0] if matching else candidates[0]
-            item["candidate_identities"] = len(candidates)
-            if len(candidates) > 1:
-                item["multiple_approved_identities"] = candidates
-            if no_hint:
-                item["no_hint_not_bound"] = str(int(no_hint))
-        item["no"] = target_no
-        entry = entries[target_no]
-        item["file"] = entry["file"]
-        grade = _sha_grade(entry["sha"])
-        if grade is None:
-            problems.append(f"清单 SHA-256 不可用（{entry['sha'] or '空'}）")
-        else:
-            item["sha_grade"] = grade[1]
-        expected_dhash = _clean(entry["dhash"])
-        if len(expected_dhash) != 16 or not HEX.match(expected_dhash):
-            problems.append(f"清单 dHash 不可用（{entry['dhash'] or '空'}）")
-        picture = batch / entry["file"]
-        if not picture.is_file():
-            problems.append("批次目录里缺这张原图（原件不在，身份无法证明）")
-            return item
-        raw = picture.read_bytes()
-        full = hashlib.sha256(raw).hexdigest()
-        item["file_sha256"] = full
-        if grade is not None and not full.startswith(grade[0]):
-            problems.append(f"字节 SHA-256 与清单不符（清单 {grade[0][:12]}… 实际 {full[:12]}…）")
-        phash_now = dhash64(raw)
-        if phash_now is None:
-            problems.append("原图无法解码算哈希")
-        else:
-            actual = to_hex(phash_now)
-            item["file_dhash"] = actual
-            if expected_dhash and actual != expected_dhash:
-                problems.append(f"清单 dHash 与实际不符（清单 {expected_dhash} vs 文件 {actual}）")
-        decision = decisions.get(target_no)
-        item["decision"] = decision or "（缺）"
-        if decision != expect:
-            problems.append(f"人工结论是 {decision or '（缺）'}，与目标状态（{expect}）不一致")
+        item["candidates"] = rows
+        multi = len(rows) > 1
+        for row in rows:
+            for reason in row["problems"]:  # type: ignore[union-attr]
+                problems.append(f"候选 {row['no']}：{reason}" if multi else str(reason))
+        representative = next((row for row in rows if not row["problems"]), rows[0])
+        item["no"] = representative["no"]
+        for key in ("file", "sha_grade", "file_sha256", "file_dhash", "decision"):
+            if key in representative:
+                item[key] = representative[key]
         return item
 
     findings: list[dict[str, object]] = []
@@ -352,10 +387,17 @@ def main(argv: list[str] | None = None) -> int:
                             no_hint=None,
                             honor_hint=False,
                         )
+                        # C04-R2 #4：逐候选结果与多身份诊断必须**穿透**到报告，
+                        # 不能只留 batch/no/decision（那会把候选核验证据丢掉）。
                         item["reapproval_chain"] = {
                             "batch": chip.get("batch"),
                             "no": chip.get("no"),
                             "decision": chip.get("decision"),
+                            "candidate_identities": chip.get("candidate_identities"),
+                            "multiple_approved_identities": chip.get(
+                                "multiple_approved_identities"
+                            ),
+                            "candidates": chip.get("candidates"),
                         }
                         for problem in chip["problems"]:  # type: ignore[union-attr]
                             item["problems"].append(  # type: ignore[union-attr]
@@ -433,6 +475,11 @@ def main(argv: list[str] | None = None) -> int:
     ]
     for item in findings + reject_findings:
         state_text = "OK" if not item["problems"] else "；".join(str(x) for x in item["problems"])  # type: ignore[union-attr]
+        candidates = item.get("candidates")
+        if isinstance(candidates, list) and len(candidates) > 1:
+            # C04-R2 #4：多候选时把**逐候选编号**一并写进报告（每个候选都已走完整链）。
+            nos = "、".join(str(row.get("no")) for row in candidates if isinstance(row, dict))
+            state_text += f"（候选 {len(candidates)} 行：{nos}）"
         lines.append(
             f"| `{item.get('phash', '-')}` | {item.get('batch', '-')} | {item.get('no', '-')} | "
             f"{item.get('file', '-')} | {item.get('decision', '-')} | {state_text} |"

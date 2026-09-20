@@ -28,6 +28,7 @@ sys.path.insert(0, str(ROOT / "scripts"))
 
 from app.moderation.image_hash import dhash64, to_hex  # noqa: E402
 from image_allowlist_seed import (  # noqa: E402
+    decision_lock,
     import_seeds,
     record_approval,
     record_rejection,
@@ -272,24 +273,28 @@ def main(argv: list[str] | None = None) -> int:
         if conflicts:
             print("COMPENSATION_CONFLICT " + "；".join(conflicts) + "（未完全回滚，需人工确认）")
 
-    prior = _states()
-    credential: dict[str, tuple[int, int, str] | None] = {}
-    result = import_seeds(
-        db=db,
-        seeds=approved,
-        dry_run=False,
-        operator=OPERATOR,
-        excluded=rejected,
-        # 显式重新批准：只有这条路可以覆盖既有拒绝并重新启用
-        reapproved={seed[3] for seed in approved},
-        # C03-R1：写事务内产出归属凭据（不是提交后另读的近似状态）
-        write_credential=credential,
-    )
-    try:
-        _persist_decisions()
-    except (OSError, ValueError, RuntimeError):
-        _compensate(prior, credential)
-        raise
+    # C03-R2-2（主审第十二轮）：**前态读取 → DB 变更 → 决定快照发布 → 失败补偿**
+    # 全部在同一把跨进程锁内（`decision_lock` 可重入，锁内的 `import_seeds` 不会自锁）。
+    # 只锁补偿的最后一段挡不住"DB 已提交、只剩 JSON 写盘"的并发审核。
+    with decision_lock(db):
+        prior = _states()
+        credential: dict[str, tuple[int, int, str] | None] = {}
+        result = import_seeds(
+            db=db,
+            seeds=approved,
+            dry_run=False,
+            operator=OPERATOR,
+            excluded=rejected,
+            # 显式重新批准：只有这条路可以覆盖既有拒绝并重新启用
+            reapproved={seed[3] for seed in approved},
+            # C03-R1：写事务内产出归属凭据（不是提交后另读的近似状态）
+            write_credential=credential,
+        )
+        try:
+            _persist_decisions()
+        except (OSError, ValueError, RuntimeError):
+            _compensate(prior, credential)
+            raise
     added, duplicate, failed, skipped = result
     print(f"IMPORT_OK 新增={added} 已存在={duplicate} 失败={failed} 排除={skipped}")
     return 0

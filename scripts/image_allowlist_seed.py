@@ -17,6 +17,7 @@ import json
 import os
 import sqlite3
 import sys
+import threading
 import time
 from collections.abc import Callable, Iterator
 from datetime import UTC, datetime
@@ -238,6 +239,63 @@ def _snapshot_lock(path: Path, *, timeout: float = 10.0, stale: float = 60.0) ->
         lock.unlink(missing_ok=True)
 
 
+_DECISION_LOCK_LOCAL = threading.local()
+
+
+@contextlib.contextmanager
+def decision_lock(db: Path, *, timeout: float = 30.0, stale: float = 120.0) -> Iterator[None]:
+    """审核决定/补偿的**跨进程串行化边界**（C03-R2-2，主审第十二轮）。
+
+    覆盖范围（全链同一把锁）：**前态读取 → DB 变更 → 决定快照发布 → 失败补偿**。
+    此前"补偿读快照 → commit"与"别处的 JSON 发布"没有共同边界，所以再多的复读也可能
+    被后续成功决定穿过（主审反例：最终 JSON=rejected、DB=enabled=1）。
+
+    - **跨进程**：`O_CREAT|O_EXCL` 锁文件（POSIX 与 Windows 同样可用），
+      不只挡线程，也不依赖 SQLite 写锁；
+    - **可重入**：同进程同线程嵌套调用只累加计数（`apply_review_decisions` 会在锁内
+      调用本模块的 `import_seeds`），避免自锁死；
+    - **超时即显式失败**：等待 `timeout` 秒后抛 `RuntimeError`（本次**不做任何改动**），
+      绝不静默继续；锁文件超过 `stale` 秒视为崩溃残留并回收；
+    - **锁顺序**：本锁（外）→ 拒绝快照锁 `_snapshot_lock`（内）；不得反向获取。
+    """
+    depth = getattr(_DECISION_LOCK_LOCAL, "depth", 0)
+    if depth:
+        _DECISION_LOCK_LOCAL.depth = depth + 1
+        try:
+            yield
+        finally:
+            _DECISION_LOCK_LOCAL.depth = depth
+        return
+    path = Path(f"{db}.review.lock")
+    deadline = time.monotonic() + timeout
+    handle: int | None = None
+    while handle is None:
+        try:
+            handle = os.open(path, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+        except FileExistsError:
+            try:
+                if time.time() - path.stat().st_mtime > stale:
+                    path.unlink(missing_ok=True)
+                    continue
+            except OSError:
+                pass
+            if time.monotonic() > deadline:
+                raise RuntimeError(
+                    f"审核决定锁被占用，等待 {timeout:.0f}s 超时：{path}"
+                    "（另有审核/补偿进程仍持有；本次未做任何改动，可稍后重试）"
+                ) from None
+            time.sleep(0.02)
+    _DECISION_LOCK_LOCAL.depth = 1
+    try:
+        with contextlib.suppress(OSError):
+            os.write(handle, f"pid={os.getpid()} at={time.time():.0f}\n".encode())
+        yield
+    finally:
+        _DECISION_LOCK_LOCAL.depth = 0
+        os.close(handle)
+        path.unlink(missing_ok=True)
+
+
 def _read_snapshot(path: Path) -> dict[str, object]:
     """**严格读取**：缺失 → 空对象；存在但损坏/结构异常 → 抛错。
 
@@ -356,6 +414,47 @@ def load_rejections(db: Path) -> set[str]:
 
 
 def import_seeds(
+    *,
+    db: Path,
+    seeds: list[tuple[Path, str, str]],
+    dry_run: bool,
+    operator: str,
+    excluded: set[str] | None = None,
+    reapproved: set[str] | None = None,
+    pre_commit: Callable[[], None] | None = None,
+    write_credential: dict[str, tuple[int, int, str] | None] | None = None,
+) -> tuple[int, int, int, int]:
+    """写入白名单的**唯一入口**：整个写入（含决定快照发布）都在 `decision_lock(db)` 内串行化。
+
+    C03-R2-2（主审第十二轮）：DB 变更与决定快照发布必须与"其它审核/补偿"处于**同一个**
+    串行化边界——只锁最后一段挡不住"DB 已提交、只剩 JSON 写盘"的并发审核。锁可重入，
+    所以 `apply_review_decisions` 在锁内再调用本函数不会自锁。`dry_run` 只读，不加锁。
+    """
+    if dry_run:
+        return _import_seeds_impl(
+            db=db,
+            seeds=seeds,
+            dry_run=True,
+            operator=operator,
+            excluded=excluded,
+            reapproved=reapproved,
+            pre_commit=pre_commit,
+            write_credential=write_credential,
+        )
+    with decision_lock(db):
+        return _import_seeds_impl(
+            db=db,
+            seeds=seeds,
+            dry_run=False,
+            operator=operator,
+            excluded=excluded,
+            reapproved=reapproved,
+            pre_commit=pre_commit,
+            write_credential=write_credential,
+        )
+
+
+def _import_seeds_impl(
     *,
     db: Path,
     seeds: list[tuple[Path, str, str]],
