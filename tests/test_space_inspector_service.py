@@ -150,7 +150,7 @@ def test_desktop_scan_uses_explicit_low_frequency_bounded_experiment(monkeypatch
     service.viewer = lambda: "98765432"
     monkeypatch.setattr(module, "run_scan", lambda *args, **kwargs: calls.append(kwargs))
     service.scan(threading.Event(), lambda _: None)
-    assert calls == [{"delay": 30.0, "max_checks": 10}]
+    assert calls == [{"delay": 30.0, "max_checks": 300}]
 
 
 def test_batch_waits_between_visits_but_not_after_last_member():
@@ -213,3 +213,38 @@ def test_close_attempts_all_resources_and_retains_lock_on_failure() -> None:
     service._release_task = lambda: calls.append("storage_ok")
     service.close()
     assert calls[-4:] == ["storage_ok", "browser", "directory", "unlock"]
+
+
+def test_desktop_batch_300_stops_and_resumes_remaining_member():
+    from app.space_inspector.service import EXPERIMENT_BATCH_SIZE
+
+    members = [str(10000000 + i) for i in range(301)]
+
+    class RemainingStore(MemoryStore):
+        def pending(self):
+            completed = {item.qq for item in self.saved}
+            return [qq for qq in members if qq not in completed]
+
+    store, reader = RemainingStore(), Reader()
+    run_scan(
+        store,
+        reader,
+        "98765432",
+        threading.Event(),
+        lambda _: None,
+        delay=0,
+        max_checks=EXPERIMENT_BATCH_SIZE,
+    )
+    assert reader.calls == members[:300]
+    assert store.pending() == members[300:]
+    run_scan(
+        store,
+        reader,
+        "98765432",
+        threading.Event(),
+        lambda _: None,
+        delay=0,
+        max_checks=EXPERIMENT_BATCH_SIZE,
+    )
+    assert reader.calls == members
+    assert not store.pending()
