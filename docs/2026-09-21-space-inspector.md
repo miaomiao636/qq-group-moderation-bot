@@ -9,7 +9,7 @@
 1. 打开工具，刷新群列表。群成员来源是项目已配置的机器人账号；QQ 空间观察账号由专用浏览器正常登录，两者分别显示。
 2. 点击“打开空间登录”，在独立 Microsoft Edge 中登录 QQ 空间，然后点击“确认已登录”。首次登录和之后的会话过期需要本人处理；不复制现有浏览器或 QQ 的凭据。
 3. 选择需要检查的群，点击“开始检查所选群”。每个任务最多选择 10 个群；同一账号跨群只访问一次，导出保留每个群的关联。
-4. 可以暂停、关闭后载入任务继续。任务逐项保存；同一任务必须使用原成员来源账号和空间观察账号才能续扫。仅查看或导出已有任务不需要重新登录空间。
+4. 可以暂停、关闭后载入任务继续。点击“载入已有任务”，在窗口内按创建时间、群名和进度选择任务，再点“载入所选”；默认选择最新任务，不必寻找隐藏的 AppData 目录。“其他位置”保留手动选择入口。载入不会自动开始巡检；点“继续检查”才续扫。任务逐项保存；同一任务必须使用原成员来源账号和空间观察账号才能续扫。仅查看或导出已有任务不需要重新登录空间。
 5. 点击“导出结果”，再点“打开导出目录”。`restricted.csv` 仅包含明确空间违规限制提示；`report.csv` 包含全部快照成员；`report.json` 保存观察依据、统计和群快照信息；`说明.txt` 解释范围与未完成数量。CSV 可用 Excel 打开。
 
 不要在扫描期间手动切换专用浏览器的页面或账号。明确的“主人设置了权限”页面记为待确认并继续；遇到登录失效、访问失败或其他未知页面会保存进度并暂停，用户处理后才能继续。未完成任务也可导出，导出不会把未完成成员当作正常。
@@ -82,6 +82,57 @@ uv run pytest --junitxml='C:/Users/81596/AppData/Local/Temp/qqbot-space-inspecto
 
 本轮桌面安装使用 `scripts/install-space-inspector.ps1`，只写用户目录与桌面快捷方式，已验证独立环境导入。修复后的程序需要退出旧窗口再打开以载入新代码；登录会话与原任务保存。最终 HEAD 的 CI 必须单独核对，不借用旧 run。
 
+## 第二种权限页与历史任务入口
+
+负责人重新创建任务后仍在后续成员处暂停。截图与实页 DOM 表明是“加为好友后访问”布局：申请链接位于 `.add_friend_access.access_option`，此前仅查找 `.apply_access`。代码提交 `37957de85ee01144bfb6a4fbdb641f53b95cc45f` 改为已观察到的共同容器 `.access_option`，仍要求精确权限提示、可见“申请访问”、正确目标与查看账号和完整加载，不修改阳性判据、不点击加好友或申请访问。
+
+同提交增加最近任务选择窗口，只读读取本工具任务摘要并保留 WAL 中的最新进度；载入、继续检查分开。历史读取失败仍保留“其他位置”入口。回归提交 `aa03122f5d445b5940cfac4281ce979f0f88ed4c` 覆盖真实临时 SQLite、WAL、外来/损坏结构、读取边界、只读约束及 worker 不自动开始扫描。内部测试与外部主审探针分开，后者未修改。
+
+在执行 SHA `aa03122f5d445b5940cfac4281ce979f0f88ed4c` 上完成以下隔离验证（TEMP 脚本未入库，不能称为 CI 回归）：
+
+```powershell
+& 'C:/Users/81596/AppData/Local/QQSpaceInspector/runtime/Scripts/python.exe' 'C:/Users/81596/AppData/Local/Temp/qqbot-space-inspector-20260921/verify_permission_dom.py'
+& 'C:/Users/81596/AppData/Local/QQSpaceInspector/runtime/Scripts/python.exe' 'C:/Users/81596/AppData/Local/Temp/qqbot-space-inspector-20260921/verify_history_ui.py'
+```
+
+前者以全请求拦截的合成 HTML 在新建无登录浏览器中运行生产 DOM 提取器和分类器：7 个场景通过，包含两种权限布局、未知权限文字、错误申请控件、明确限制提示、普通资料页和用户内容中的相同文字。后者不构造 Service、不接网，实际构造 Tk 组件并读取本机任务摘要：找到 2 个历史任务，最新任务显示已检查 5/993、限制提示 1；默认选最新、载入只提交 resume、错误时保留其他位置、关闭时不弹窗均通过。组件验证不能替代负责人重开新版本后的实机续扫。
+
+同期只读核对负责人实际任务，执行 SHA 同上，命令：
+
+```powershell
+uv run python 'C:/Users/81596/AppData/Local/QQSpaceInspector/evidence/inspect_saved_task.py' 'C:/Users/81596/AppData/Local/QQSpaceInspector/tasks/20260921T124031Z-621478da' --output 'C:/Users/81596/AppData/Local/QQSpaceInspector/evidence/history-fix-live-read-20260921.json'
+```
+
+该只读快照总成员 993，已检查 5（观察到限制 1、待确认 4），未完成 988（含当前受阻成员）。这是修复前保存的用户实机结果，不是新修复已完成续扫的证明；读取脚本的执行 SHA 也不能证明旧 GUI 进程已加载同一版本。
+
+另在 `814ddda394d4c0c2274e69f22e3690d4b0fc165f` 的 Store/导出代码上，对该任务的一致性副本做组件导出核验；当时 browser.py 有权限容器修改，但 Store/导出未修改。副本位于本机 `evidence/partial-desktop-export-copy-20260921/`，未写原任务。以下复算通过，全部 CSV 与 JSON 成员对应，完整报告 993 行、限制报告 1 行；仍仅检查 5 人，不能写成全群完成或用户已完成 GUI 导出：
+
+```powershell
+uv run python 'C:/Users/81596/AppData/Local/QQSpaceInspector/evidence/verify_export.py' 'C:/Users/81596/AppData/Local/QQSpaceInspector/evidence/partial-desktop-export-copy-20260921/exports/20260921T125053Z-1f4d2cb1cd9c' --source-sha 814ddda394d4c0c2274e69f22e3690d4b0fc165f
+```
+
+## 第二次补丁的全量与门禁
+
+执行 SHA：`aa03122f5d445b5940cfac4281ce979f0f88ed4c`；验证期间仅追加交接文档，源码和测试未变。命令：
+
+```powershell
+uv run ruff check app tests alembic scripts
+uv run ruff format --check app tests alembic scripts
+uv run mypy app
+uv run pytest --junitxml='C:/Users/81596/AppData/Local/Temp/qqbot-space-inspector-20260921/verification-history-fix/full.xml'
+uv run python 'C:/Users/81596/AppData/Local/Temp/qqbot-space-inspector-20260921/summarize_history_verification.py'
+```
+
+全量 2156 项：2139 passed、17 skipped、0 failed/error；主审探针 31 文件/262 项全通过；巡检内部回归 159 项中 158 passed、1 skipped。相比此前新增的 skip 是本机没有创建 symlink 权限的真实链接测试；模拟 Windows reparse 拒绝测试仍通过，不削弱原断言。三条门禁通过：格式 345 文件、类型 111 源文件。原始证据为上述 `verification-history-fix/` 中的 `full.log/xml`、`summary.json`、`gates.json` 与各门禁输出。
+
+此前文档 HEAD `814ddda394d4c0c2274e69f22e3690d4b0fc165f` 的 [CI run 35601171462](https://github.com/miaomiao636/qq-group-moderation-bot/actions/runs/35601171462) 已三 job 成功，核验命令 `gh run view 35601171462 --json headSha,status,conclusion,jobs`。这条旧 run 不覆盖本次补丁。推送后的最终 CI 应按实际 headSha 核对，不借用旧结果：
+
+```powershell
+git rev-parse HEAD
+gh run list --branch windows-deploy-2026-09-10 --limit 5 --json databaseId,headSha,status,conclusion,url
+gh run view <匹配最终HEAD的run_id> --json headSha,status,conclusion,jobs
+```
+
 ## 待验证
 
-全群覆盖、不同权限页面、长期运行及 QQ 页面升级兼容性仍需实际使用验证。方案 A 主审裁定与 Windows 回滚维护窗口仍是独立待办，不因本功能完成而关闭。
+第二次权限页修复后的用户实机续扫、暂停和 GUI 导出仍需核验；全群覆盖、其他权限页面、长期运行及 QQ 页面升级兼容性仍需实际使用验证。方案 A 主审裁定与 Windows 回滚维护窗口仍是独立待办，不因本功能完成而关闭。
