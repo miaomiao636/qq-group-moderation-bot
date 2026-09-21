@@ -2,17 +2,21 @@
 
 任务：`SPACE-INSPECT-20260921`。负责人已接受首版只识别 QQ 空间明确限制提示，未命中保留待确认；正式使用不连接手机。此为明确追加的新功能，不是重开主审已关闭问题。
 
+**当前可用性结论：有界续扫和部分结果导出已有实机证据，但整群连续扫描遭腾讯 WAF 拦截，整群一次扫完验收未通过。当前不能承诺为稳定的全群批量巡检工具。平台拦截必须停止，不作为成员异常依据；恢复时间、触发规则及低频分批是否可行均未验证。**
+
 ## 使用
 
 桌面入口为 **QQ空间限制巡检**。代码在本仓库 `app/space_inspector/`，独立运行，不依赖 Codex，不需要启动另一个后台服务。
 
 1. 打开工具，刷新群列表。群成员来源是项目已配置的机器人账号；QQ 空间观察账号由专用浏览器正常登录，两者分别显示。
 2. 点击“打开空间登录”，在独立 Microsoft Edge 中登录 QQ 空间，然后点击“确认已登录”。首次登录和之后的会话过期需要本人处理；不复制现有浏览器或 QQ 的凭据。
-3. 选择需要检查的群，点击“开始检查所选群”。每个任务最多选择 10 个群；同一账号跨群只访问一次，导出保留每个群的关联。
+3. 正常访问恢复后，选择需要检查的群，点击“开始检查所选群”。当前为低频试验：每批最多 10 人，批内相邻检查之间等待 30 秒，批末停止，由本人手动继续下一批；并非腾讯允许频率，仍可能被拦截。每个任务最多选择 10 个群；同一账号跨群只访问一次，导出保留每个群的关联。
 4. 可以暂停、关闭后载入任务继续。点击“载入已有任务”，在窗口内按创建时间、群名和进度选择任务，再点“载入所选”；默认选择最新任务，不必寻找隐藏的 AppData 目录。“其他位置”保留手动选择入口。载入不会自动开始巡检；点“继续检查”才续扫。任务逐项保存；同一任务必须使用原成员来源账号和空间观察账号才能续扫。仅查看或导出已有任务不需要重新登录空间。需要查看文件时点“打开任务目录”；未载入任务时打开任务根目录。AppData 默认隐藏，也可按 Win+R 输入 `%LOCALAPPDATA%\QQSpaceInspector\tasks` 直接进入。
 5. 点击“导出结果”，再点“打开导出目录”。`restricted.csv` 仅包含明确空间违规限制提示；`report.csv` 包含全部快照成员；`report.json` 保存观察依据、统计和群快照信息；`说明.txt` 解释范围与未完成数量。CSV 可用 Excel 打开。
 
 不要在扫描期间手动切换专用浏览器的页面或账号。已核验的“主人设置了权限”“对方未开通空间”页面记为待确认并继续；遇到登录失效、访问失败或其他未知页面会保存进度并暂停，提示具体 QQ 号及原因，用户处理后才能继续。未完成任务也可导出，导出不会把未完成成员当作正常。
+
+遇到腾讯安全防护拦截时，工具显示平台拦截原因，并撤销本次浏览器确认状态、禁用继续扫描，仍允许导出。先停止重试；待本人确认正常访问已经恢复后才重新确认浏览器。程序不设置声称有效的自动冷却时间，不轮换账号/IP，不跳过拦截继续访问下一成员。
 
 ## 判据与边界
 
@@ -183,6 +187,62 @@ uv run python 'C:/Users/81596/AppData/Local/QQSpaceInspector/evidence/verify_exp
 
 CSV/JSON 一致性通过：该旧导出包含快照成员 993 行，导出时已检查 78、限制 5、待确认 73、未完成 915。此为用户 GUI 导出的核验，不再只是复制任务的组件导出；仍不能代替本补丁续扫后的新导出或全群验收。最终文档 HEAD 的 CI 仍按上方查询命令逐项核对，旧成功 run 不作为本补丁证明。
 
+## 整群尝试遭平台拦截
+
+负责人尝试一次检查完整群，反馈 `https://waf.tencent.com/501page.html` 页面显示“您的访问被拦截”。此为平台安全防护拦截，不是被检查成员的空间违规提示。腾讯官方 [WAF 使用说明](https://cloud.tencent.com/document/product/627/59443) 描述了此类拦截页面和请求标识；该文档不能证明本次命中何种规则，也没有给出本任务的恢复时长。连续访问可能是诱因，不能据此断言命中固定频率阈值、账号封禁或指定等待时长即可恢复。
+
+执行 SHA `2076e402612ed2acefa1135c458d6aed7fa55f16` 的只读核验：
+
+```powershell
+uv run python 'C:/Users/81596/AppData/Local/QQSpaceInspector/evidence/inspect_saved_task.py' 'C:/Users/81596/AppData/Local/QQSpaceInspector/tasks/20260921T124031Z-621478da' --output 'C:/Users/81596/AppData/Local/QQSpaceInspector/evidence/waf-stop-live-read-20260921.json'
+```
+
+当时保存进度为已检查 213/993，限制提示 18、待确认 195、未完成 780（含受阻成员）。旧版本把这次跳转记作 `BLOCKED / unexpected_location`，没有把受阻成员计作限制或完成。负责人截图提供 WAF 页面证据；原历史记录保留，不事后改写成新版本观察。此次整群验收结论是未完成、受平台拦截，不能以已命中部分样本替代整群可行性。
+
+新增内部回归在基线 `2076e402612ed2acefa1135c458d6aed7fa55f16`（仅新增测试未提交）执行 `uv run pytest tests/test_space_inspector_browser.py -k waf -q -o addopts= --tb=short`，复现 2 failed：WAF 被泛化成地址不一致；浏览器确认错误引导重新登录。
+
+代码提交 `614081eb87a643c85b506bc30a705ac2d7d7be13`，回归提交 `23bcb33015781ee533bfb7f88daa824ef5992a63`。仅识别已见的精确 HTTPS WAF 域名和路径，保存 `BLOCKED / platform_access_blocked`、`platform_access_block` 来源；不保存跳转查询参数/请求标识，不归因成员异常。整个任务暂停，worker 向界面发出重新确认浏览器的状态，继续检查禁用、导出保留。浏览器仍停在 WAF 时仅检查当前页面，不导航重试。未绕过平台保护、未自动重试、未更改请求间隔或业务判定。
+
+执行 SHA `23bcb33015781ee533bfb7f88daa824ef5992a63` 的独立 Tk 状态验证通过，命令如下。worker 和系统交互已替换为隔离测试，不访问 QQ，不算平台恢复验证，也不是入库 CI 测试：
+
+```powershell
+& 'C:/Users/81596/AppData/Local/QQSpaceInspector/runtime/Scripts/python.exe' 'C:/Users/81596/AppData/Local/QQSpaceInspector/evidence/verify_platform_pause_ui.py'
+```
+
 ## 待验证
 
-权限页及未开通页面修复后的有界实机续扫均有保存记录证明，已有 GUI 导出也已核对；未开通页面补丁后的新增实机结果导出尚待核验。全群覆盖、其他页面、长期运行及 QQ 页面升级兼容性仍需实际使用验证。方案 A 主审裁定与 Windows 回滚维护窗口仍是独立待办，不因本功能完成而关闭。
+当前优先保留并导出已有结果，停止连续访问；负责人已选正常访问恢复后低频分批，尚未验证恢复或真实新批次。低频分批仅是尚未验证的负载控制实验，不能承诺避开拦截或完成全群。已有有界续扫及 GUI 导出证据不变；新增结果导出、整群覆盖、其他页面、长期运行及 QQ 页面升级兼容性仍需实际验证。方案 A 主审裁定与 Windows 回滚维护窗口仍是独立待办。
+
+
+## 低频分批与网上替代路线研究
+
+负责人已选恢复正常访问后再试低频分批，并要求检索 GitHub 替代路线。代码 `ac80853`、回归 `3b2f42e67a7b280bc18c60b9748cad09240d3719`：桌面 scan 显式传入每批最多 10 次检查、批内等待 30 秒；不会自动开启下一批，暂停能中断等待，批末无需额外等待。WAF 停止及重新确认、保存/导出保持。未访问被拦截的 QQ 页面，未验证平台恢复；此参数只用于有界实验，不能承诺全群可用。
+
+内部先在 `23bcb33015781ee533bfb7f88daa824ef5992a63` 加未提交回归执行 `uv run pytest tests/test_space_inspector_service.py -k 'batch_limit or low_frequency' -q -o addopts= --tb=short`，5 failed，分别复现缺少批次上限和桌面未显式传入低频参数。测试原样保留并新增等待/暂停覆盖。
+
+网上研究为只读源码审查，无第三方程序安装或执行，无登录凭据共享。GitHub `gh api repos/<owner>/<repo>/commits/HEAD --jq .sha` 核对研究版本；`gh api repos/<owner>/<repo>/contents/<path>` 解码读取下列源码。检索 `gh search code '"空间存在违规信息"' --limit 10 --json repository,path,url` 和 `gh search code '"暂不支持查看资料卡"' --limit 10 --json repository,path,url` 未返回条目；这仅是本次检索结果，不证明所有公开/私有实现均不存在。
+
+- [NapCat GetUserStatus](https://github.com/NapNeko/NapCatQQ/blob/2049e64260d378e9f1f1f318ae033347d46ab994/packages/napcat-onebot/action/extends/GetUserStatus.ts)：源码明确为在线状态，不是账号冻结或空间违规查询，不能据此替代阳性判据。
+- [onebot-qzone 错误类型](https://github.com/Gu-Heping/onebot-qzone/blob/2d016d2b60130923e060f8bc469d271d397879e0/src/qzone/infra/errors.ts) 和 [响应解析](https://github.com/Gu-Heping/onebot-qzone/blob/2d016d2b60130923e060f8bc469d271d397879e0/src/qzone/requestLayer.ts)：包含限频、鉴权及反爬错误，反爬明确不可重试。它可作接口结构研究参考，但已审查部分没有提供可直接用于本任务的成员失效分类器；换库不能据此保证消除拦截。
+- [qzone-sdk](https://github.com/Eganchiyu/qzone-sdk/tree/2282b8bc50c185eb6f8f7a39a3c8c6a517484d77)：README 主要是空间内容操作；`src/qzone_sdk/utils/response.py` 仅统一成功/错误返回，不证明能够识别成员失效。
+- [QQ 空间导出助手作者 FAQ](https://github.lvshuncai.com/archives/qzone-export-issue.html)：属于内容备份，作者区分访问权限与被封空间且不保证完整导出；不能把可备份内容当成账号正常或可靠检测接口。
+
+后续接口研究须先用明确空间限制、权限页、未开通和普通资料页对照验证返回语义，再评估有界请求下的可用性；候选库文档或非零错误码不直接作为成员异常证据。当前没有已验证的替换接口，也未将任何候选接入正式工具。
+
+
+### 本轮冻结版本验证
+
+执行 SHA `3b2f42e67a7b280bc18c60b9748cad09240d3719`，验证期间仅更新文档，源码/测试未变：
+
+```powershell
+uv run ruff check app tests alembic scripts
+uv run ruff format --check app tests alembic scripts
+uv run mypy app
+uv run pytest --junitxml='C:/Users/81596/AppData/Local/Temp/qqbot-space-inspector-20260921/verification-low-frequency/full.xml'
+uv run python 'C:/Users/81596/AppData/Local/Temp/qqbot-space-inspector-20260921/summarize_low_frequency_verification.py'
+& 'C:/Users/81596/AppData/Local/QQSpaceInspector/runtime/Scripts/python.exe' 'C:/Users/81596/AppData/Local/QQSpaceInspector/evidence/verify_low_frequency_ui.py'
+```
+
+全量 2179 项：2162 passed、17 skipped、0 failed/error；主审 31 文件/262 项全部通过；巡检内部回归 182 项中 181 passed、1 skipped（同前 Windows symlink 权限）。格式 345 文件、类型 111 源文件，三门禁通过。`verification-low-frequency/` 保留 full.log/xml、summary.json、gates.json 与门禁输出。独立 Tk 验证通过批末手动继续提示、WAF 禁用继续和保留导出；该私有脚本不是入库 CI 用例，不访问 QQ、不替代实机验收。
+
+最终文档 HEAD 推送后，按前述 `gh run list` / `gh run view` 命令核对同一 SHA 的三个 job；最终 CI 结果见对应 GitHub run 与交付回执。旧 `2076e402612ed2acefa1135c458d6aed7fa55f16` 的 run `35607666860` 三 job 已成功（`gh run view 35607666860 --json headSha,status,conclusion,jobs`），只证明旧版本，不能代替本轮 CI。
