@@ -81,6 +81,11 @@ class Store:
             for key in ("group_id", "device_hash", "android_user", "qq_version"):
                 if previous.get(key) != identity.get(key):
                     raise InspectionError("群、设备、QQ 分身或版本与原任务不一致，请新建任务。")
+            with self.db:
+                self.db.execute(
+                    "UPDATE meta SET value=? WHERE key='group_name'",
+                    (json.dumps(identity.get("group_name", ""), ensure_ascii=False),),
+                )
             return
         with self.db:
             self.db.executemany(
@@ -88,7 +93,7 @@ class Store:
                 [(key, json.dumps(value, ensure_ascii=False)) for key, value in identity.items()],
             )
 
-    def begin_pass(self, count: int | None) -> int:
+    def begin_pass(self, count: int | None, context: dict[str, Any] | None = None) -> int:
         with self.db:
             # An interrupted process cannot leave a task looking actively complete.
             self.db.execute(
@@ -100,6 +105,16 @@ class Store:
                 (now(), count),
             )
         assert cursor.lastrowid is not None
+        if context is not None:
+            folder = self.folder / "passes"
+            folder.mkdir(exist_ok=True)
+            with (folder / f"{cursor.lastrowid}.json").open("x", encoding="utf-8") as output:
+                json.dump(
+                    {**context, "pass_id": cursor.lastrowid, "started_at": now()},
+                    output,
+                    ensure_ascii=False,
+                    indent=2,
+                )
         return cursor.lastrowid
 
     def start_visit(self, pass_id: int, page_index: int, row_index: int) -> str:

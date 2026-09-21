@@ -131,6 +131,7 @@ class Scanner:
                 "result": result,
                 "warning_text": WARNING_TEXT if warning else "",
                 "group": self.store.metadata(),
+                "execution": self.stamp,
                 "page_index": page_index,
                 "row_index": row_index,
                 "member_page_fingerprint": page.fingerprint,
@@ -174,7 +175,16 @@ class Scanner:
                 "created_at": now(),
             }
         )
-        pass_id = self.store.begin_pass(group.member_count)
+        pass_id = self.store.begin_pass(
+            group.member_count,
+            {
+                **self.stamp,
+                **asdict(self.phone.identity),
+                "group_id": group.group_id,
+                "group_name": group.group_name,
+                "member_count_before": group.member_count,
+            },
+        )
         try:
             page = self.top(self.enter_members(group))
             previous: tuple[str, tuple[str, ...]] | None = None
