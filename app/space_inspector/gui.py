@@ -12,7 +12,7 @@ from pathlib import Path
 from tkinter import filedialog, messagebox, ttk
 
 from .contracts import LABELS, REASONS, Group
-from .service import data_root
+from .service import EXPERIMENT_BATCH_SIZE, EXPERIMENT_DELAY_SECONDS, data_root
 from .worker import Command, Event, run_worker
 
 
@@ -145,7 +145,13 @@ class Window:
             row=7, column=0, sticky="ew", pady=4
         )
         ttk.Label(
-            outer, text="每次最多选 10 个群；结果预览最多显示 200 条，导出包含全部快照成员"
+            outer,
+            text=(
+                f"低频试验：每批最多 {EXPERIMENT_BATCH_SIZE} 人，批内间隔 "
+                f"{EXPERIMENT_DELAY_SECONDS:g} 秒；批次结束后手动继续，仍可能被平台拦截。\n"
+                "每次最多选 10 个群；预览最多 200 条，导出包含全部快照成员。"
+            ),
+            wraplength=740,
         ).grid(row=8, column=0, sticky="w")
         self._result_tree = self._tree(
             outer, 9, ("qq", "status", "reason"), ("QQ 号", "观察结果", "说明")
@@ -501,7 +507,14 @@ class Window:
                     self._export_text.set("")
                     self._status.set("已有任务已载入；确认空间登录后可继续检查，也可直接导出。")
                 else:
-                    self._status.set("任务已保存。请核对统计；未观察到限制提示的成员仍为待确认。")
+                    summary = payload.get("summary")
+                    pending = summary.get("pending") if isinstance(summary, dict) else None
+                    self._status.set(
+                        "本批已停止并保存；仍有未完成成员，需手动继续下一批。"
+                        "低频试验不保证避免平台拦截。"
+                        if pending != 0
+                        else "快照成员已检查并保存；未观察到限制提示仍为待确认。"
+                    )
             elif kind == "history":
                 self._show_history(payload.get("tasks"))
                 self._status.set("选择已有任务载入；载入不会自动开始巡检。")

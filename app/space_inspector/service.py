@@ -24,6 +24,9 @@ from .contracts import (
     numeric_id,
 )
 
+EXPERIMENT_BATCH_SIZE = 10
+EXPERIMENT_DELAY_SECONDS = 30.0
+
 
 class ScanStore(Protocol):
     def pending(self) -> list[str]: ...
@@ -43,10 +46,15 @@ def run_scan(
     on_progress: Callable[[dict[str, object]], None],
     *,
     delay: float = 2.0,
+    max_checks: int | None = None,
 ) -> None:
     """Persist one completed visit before progressing; interruption never marks it normal."""
     viewer_qq = numeric_id(viewer_qq)
-    for qq in store.pending():
+    if max_checks is not None and (type(max_checks) is not int or max_checks <= 0):
+        raise InspectionError("每批检查人数必须是正整数。")
+    pending = store.pending()
+    batch = pending if max_checks is None else pending[:max_checks]
+    for index, qq in enumerate(batch):
         if stop.is_set():
             return
         observation = browser.inspect(qq, viewer_qq)
@@ -64,7 +72,7 @@ def run_scan(
                 f"巡检已暂停（QQ {observation.qq}）：{reason}。"
                 "请查看专用浏览器；处理后可继续，已完成结果会保留。"
             )
-        if stop.wait(delay):
+        if index + 1 < len(batch) and stop.wait(delay):
             return
 
 
@@ -179,7 +187,15 @@ class Service:
         viewer = self.viewer()
         self._store.bind_source(self.source_id)
         self._store.bind_viewer(viewer)
-        run_scan(self._store, self._browser, viewer, stop, on_progress)
+        run_scan(
+            self._store,
+            self._browser,
+            viewer,
+            stop,
+            on_progress,
+            delay=EXPERIMENT_DELAY_SECONDS,
+            max_checks=EXPERIMENT_BATCH_SIZE,
+        )
 
     def summary(self) -> dict[str, object]:
         return dict(self._store.summary()) if self._store else {}
