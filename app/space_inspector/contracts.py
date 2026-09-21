@@ -5,6 +5,14 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 
+# Keep the two observed system templates paired; do not normalize arbitrary text.
+NOTICE = "您访问的空间存在违规信息,已被多名用户举报,暂时无法查看！"
+RESTRICTION_TEMPLATES = (
+    ("温馨提示:", NOTICE, "返回我的空间"),
+    ("温馨提示：", "您访问的空间存在违规信息,已被多名用户举报,暂时无法查看。", "返回我的空间"),
+)
+RESTRICTION_NOTICES = tuple(template[1] for template in RESTRICTION_TEMPLATES)
+
 
 class InspectionError(RuntimeError):
     """A safe, user-facing failure. Never include remote payloads or credentials."""

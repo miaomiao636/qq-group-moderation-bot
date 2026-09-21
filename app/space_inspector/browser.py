@@ -13,14 +13,14 @@ from .contracts import (
     BLOCKED,
     REASONS,
     RESTRICTED,
+    RESTRICTION_TEMPLATES,
     UNCONFIRMED,
     InspectionError,
     Observation,
     PlatformAccessBlocked,
     numeric_id,
 )
-
-NOTICE = "您访问的空间存在违规信息,已被多名用户举报,暂时无法查看！"
+from .contracts import NOTICE as NOTICE
 
 
 def _platform_block_url(value: object) -> bool:
@@ -121,9 +121,10 @@ def classify_page(raw: object, qq: str, viewer_qq: str) -> Observation:
             raw.get("normal_profile") is False
             and type(icons) is int
             and icons == 1
-            and panel.get("paragraphs") == ["温馨提示:", NOTICE, "返回我的空间"]
+            and isinstance(paragraphs, list)
+            and any(paragraphs == list(template) for template in RESTRICTION_TEMPLATES)
         ):
-            evidence["notice"] = NOTICE
+            evidence["notice"] = paragraphs[1]
             evidence["notice_source"] = "qzone_top_level_error"
             return result(RESTRICTED, "qzone_restriction_notice_observed")
     return result(BLOCKED, "unrecognized_page")

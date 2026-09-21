@@ -15,6 +15,7 @@ from app.space_inspector.contracts import (
     LABELS,
     REASONS,
     RESTRICTED,
+    RESTRICTION_NOTICES,
     UNCONFIRMED,
     Group,
     InspectionError,
@@ -28,7 +29,6 @@ MAX_MEMBERSHIPS = 1_000_000
 MAX_UNIQUE_MEMBERS = 200_000
 MAX_GROUPS = 2000
 MAX_VISITS = 1_000_000
-NOTICE = "您访问的空间存在违规信息,已被多名用户举报,暂时无法查看！"
 _COLUMNS = {
     "meta": ("key", "value"),
     "groups": ("group_id", "name", "declared_count", "snapshot_count", "saved_at"),
@@ -356,7 +356,7 @@ OR o.visit_id!=(SELECT MAX(id) FROM visits WHERE qq=o.qq) LIMIT 1""").fetchone()
         ):
             raise InspectionError("巡检依据类型无效。")
         if (
-            value["notice"] not in ("", NOTICE)
+            value["notice"] not in ("", *RESTRICTION_NOTICES)
             or value["notice_source"] not in _SOURCES
             or value["ready_state"] not in ("complete", "interactive", "loading", "unknown")
         ):
@@ -379,7 +379,7 @@ OR o.visit_id!=(SELECT MAX(id) FROM visits WHERE qq=o.qq) LIMIT 1""").fetchone()
             not page_url
             or not viewer
             or value["viewer_qq"] != viewer
-            or value["notice"] != NOTICE
+            or value["notice"] not in RESTRICTION_NOTICES
             or value["notice_source"] != "qzone_top_level_error"
             or value["ready_state"] != "complete"
             or value["panel_count"] != 1
