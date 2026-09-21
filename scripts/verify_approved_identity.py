@@ -498,12 +498,7 @@ def main(argv: list[str] | None = None) -> int:
     OUT_DIR.mkdir(parents=True, exist_ok=True)
     stamp = f"{datetime.now(UTC):%Y%m%dT%H%M%S%fZ}"
     with (OUT_DIR / f"identity-{stamp}.md").open("x", encoding="utf-8") as output:
-        output.write(
-            "\
-".join(lines)
-            + "\
-"
-        )
+        output.write("\n".join(lines) + "\n")
     report_json = json.dumps(
         {
             "allowed_checked": len(allowed),
