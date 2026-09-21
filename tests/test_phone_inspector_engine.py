@@ -126,3 +126,26 @@ def test_resume_records_each_execution_instead_of_reusing_first_sha(tmp_path):
     assert manifest.is_file()
     assert json.loads(manifest.read_text(encoding="utf-8"))["execution_sha"] == "second"
     store.close()
+
+
+def test_full_cover_is_scrolled_before_reading_identity(tmp_path):
+    class CoverPhone(FakePhone):
+        revealed = False
+
+        def snapshot(self):
+            page = super().snapshot()
+            if page.kind == "profile" and not self.revealed:
+                return Page(kind="profile_cover", back=BACK, viewport=Rect(0, 100, 900, 900))
+            return page
+
+        def reveal_profile(self, page):
+            assert page.kind == "profile_cover"
+            self.revealed = True
+
+    phone = CoverPhone([["12345601"]])
+    store = Store(tmp_path / "task", create=True)
+    result = Scanner(phone, store).run(limit=1)
+    assert result["checked"] == 1
+    assert result["unresolved"] == 0
+    assert phone.state == "members"
+    store.close()

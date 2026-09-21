@@ -59,3 +59,17 @@ def test_device_lock_excludes_second_writer_and_releases_after_exception(tmp_pat
         raise ValueError("synthetic interruption")
     with FileLock(target):
         pass
+
+
+def test_reveal_cover_does_not_swipe_unknown_or_changed_page(monkeypatch):
+    phone = object.__new__(Phone)
+    cover = Page(kind="profile_cover", profile_name="合成名", viewport=Rect(0, 228, 1080, 2128))
+    monkeypatch.setattr(phone, "snapshot", lambda: Page())
+    monkeypatch.setattr(phone, "adb_call", lambda *a: pytest.fail("Unexpected phone input"))
+    with pytest.raises(InspectionError):
+        phone.reveal_profile(cover)
+    monkeypatch.setattr(phone, "snapshot", lambda: cover)
+    with pytest.raises(InspectionError):
+        phone.reveal_profile(
+            Page(kind="profile_cover", profile_name="其他名", viewport=cover.viewport)
+        )

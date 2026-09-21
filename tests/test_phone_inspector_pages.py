@@ -161,3 +161,20 @@ def test_custom_profile_duplicate_identity_rows_are_rejected():
     root.append(copy.deepcopy(root[1]))
     with pytest.raises(InspectionError):
         parse_page(ET.tostring(root))
+
+
+def test_known_full_cover_is_scrollable_but_supplies_no_account_identity():
+    root = ET.fromstring(
+        xml(
+            ("tu_", "合成昵称", "[300,1200][700,1300]"),
+            ("dk_", "", "[0,0][1080,2128]"),
+            ("g03", "", "[0,0][1080,228]"),
+            ("u9d", "", "[32,130][108,206]"),
+        )
+    )
+    root[-1].set("content-desc", "返回")
+    page = parse_page(ET.tostring(root))
+    assert page.kind == "profile_cover"
+    assert page.qq == ""
+    assert page.viewport.top >= 228
+    assert page.viewport.bottom <= 2128
