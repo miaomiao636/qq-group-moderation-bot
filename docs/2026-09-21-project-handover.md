@@ -3,7 +3,7 @@
 > 面向接手的 AI/工程师。**读完这一份即可独立接手**：状态、资产、工作流、纪律、坑、待办、红线、协作约定。
 > 生成日期：2026-09-21。所有数字均为**本机实核**（只读）或明确标注为"送审方声明"。
 
-> **本轮新增授权（UI-PAGING-20260921）**：负责人要求群管理、成员白名单、报告待人工清单按页码管理，并显示群审核/动作配置数量。代码与验证进度见 [本轮记录](2026-09-21-admin-list-pagination.md)。账号巡检暂缓，等待负责人提供异常成员样本。本轮是否已加载到生产以该记录为准，不能从代码提交推断。
+> **本轮新增授权（UI-PAGING-20260921）**：负责人要求群管理、成员白名单、报告待人工清单按页码管理，并显示群审核/动作配置数量。代码与验证进度见 [本轮记录](2026-09-21-admin-list-pagination.md)。账号巡检后续已收到样本，当前仅研究自动识别，见 §7.1。本轮是否已加载到生产以该记录为准，不能从代码提交推断。
 
 > **后续追加授权（STABILITY-20260921）**：负责人要求查找并修复影响长期运行的问题。当前改动覆盖媒体/AI/心跳、缓存、人工结案事务和确认码、日期/候选分页、备份保底及数据增长边界，详见 [长期运行整改记录](2026-09-21-longterm-stability.md)。生产未重启；合并加载本批时需要 Web 与官方 Runtime，不能沿用分页单批的“仅 Web”方案。
 
@@ -55,7 +55,7 @@ QQ 群多模态智能管理机器人：**双通道**（OneBot/NapCat + QQ 官方
 
 **后续 STABILITY-20260921**：代码提交 `4d79c3803ac0817b80bb8dae3277699845c4e9a3`、内部回归入库 `bfc027f2c203e75300966841a8a59299a1c73c10`，等价兼容补丁后的最终本机执行 SHA `6806210320d5c8c7810472255d0f665aa026f91b` 全量与门禁通过；CI 与生产生效边界见 [长期运行整改记录](2026-09-21-longterm-stability.md)。本批没有修改外部主审探针或历史证据，没有更改判定口径。
 
-**本轮 UI-PAGING-20260921**：代码执行基线 `759dc5c827c2304720eb23ce05e6e704623c3e1a`，页码分页、群配置数量与相关回归已完成，本机全量和门禁通过，结果与命令见 [本轮验证](2026-09-21-admin-list-pagination.md)。推送后 CI 与生产加载分别记录；本轮没有重启生产、没有迁移或更改群开关。账号巡检等待样本。
+**本轮 UI-PAGING-20260921**：代码执行基线 `759dc5c827c2304720eb23ce05e6e704623c3e1a`，页码分页、群配置数量与相关回归已完成，本机全量和门禁通过，结果与命令见 [本轮验证](2026-09-21-admin-list-pagination.md)。推送后 CI 与生产加载分别记录；本轮没有重启生产、没有迁移或更改群开关。账号巡检的后续研究状态见 §7.1。
 
 **接手核验补正**：执行 SHA `9b287271a3614da562c0f05d7407c2d28b98a552`，快照 UTC `2026-09-21T06:27:47.592471+00:00`。命令 `uv run python C:/Users/81596/AppData/Local/Temp/qqbot-r132-intake-9b28727-90442e26/snapshot.py`：动作配置开启 67 群，均有匹配 owner/route；数据库 revision 与 `uv run alembic heads` 同为 `d4b7c1e9a502`；文件配置为 shadow/recall_only。全库当时留存观察 6688 条，其中 `matched=true` 17 条；同目录 `shadow-matches.py`（命令同上替换脚本名）复核这些命中均为 shadow。原始 SQL、JSON 和 `intake-review.md` 保存在同目录。这不是固定部署窗口统计，不据此推断实际动作效果；**“零命中，等待样本”已不成立**。
 
@@ -273,8 +273,35 @@ Start-Sleep -Seconds 600        # Windows job 约 10-13 分钟；循环检查直
 | 5 | 54→67 群补 owner/route | **已完成**（实核：67 群全部可路由） | 已关闭 |
 | 6 | `enforce` 实现与阈值校准 | **未实现、未授权**；不得擅自开始 | 负责人 + 主审 |
 | 7 | UI-PAGING-20260921：群/成员白名单/待人工清单分页与群状态数量 | 代码、本机全量和门禁通过；CI 与生产加载以 [本轮记录](2026-09-21-admin-list-pagination.md) 为准 | 我方；生产重启由负责人决定 |
-| 8 | 异常账号巡检 | **负责人明确暂缓**；等待真实异常成员样本后评估共同特征 | 用户提供样本 → 再评估 |
+| 8 | 异常账号巡检 | 已收到样本；负责人要求**继续研究自动识别，不实施名单匹配**。负责人已确认全部样本当日在安卓 QQ 仍有异常提示；候选信号及只读实验见 §7.1 | 我方研究合法读取方式与正常对照 |
 | 9 | STABILITY-20260921：长期运行整改 | 代码与内部回归已入库；本机全量、门禁及本批 CI 见 [整改记录](2026-09-21-longterm-stability.md)，不得沿用分页的 CI；生产待授权加载 | 我方；维护窗口由负责人决定 |
+
+### 7.1 异常账号自动识别研究（2026-09-21，尚未实现）
+
+**负责人决定**：已提供桌面样本文件，明确选择“先不加名单功能，继续研究自动识别”；后续确认使用安卓 QQ、版本较新，全部样本当日查看仍弹出异常提示。准确版本未记录，但不以补版本号作为当前研究的前置。用户确认是人工标注，不等于本机取得了手机协议响应。不能把已知号码匹配包装为自动发现，也不能把“资料卡受限”直接解释为永久封禁、注销或违规事实。
+
+**本机只读实验**（执行仓库 SHA 均为 `2758cdbf63143320602558582241649254abe332`；脚本仅在本机 TEMP，未入库、未纳入 CI）：
+
+| 命令 | 实际结果与限制 |
+| --- | --- |
+| `uv run python C:/Users/81596/AppData/Local/Temp/qqbot-account-sample-check.py` | UTC `2026-09-21T09:14:30.183504+00:00`；绑定配置中的机器人身份并核对登录账号。NapCat `4.18.19` 返回的成员列表包含全部 10 个样本，普通资料接口均返回 `ok` 和非空昵称；接口未透传原生 `result/errMsg`，不能推断原生响应无错。选取的 3 个比较成员未经人工确认正常。已观察字段未形成可靠区分，不能据此判定样本正常。 |
+| `uv run python C:/Users/81596/AppData/Local/Temp/qqbot-packet-readiness.py` | UTC `2026-09-21T09:25:46.065560+00:00`；`nc_get_packet_status` 返回 `status=ok, retcode=0`。只证明底层通道状态，不能证明特定资料查询受支持。 |
+| `uv run python C:/Users/81596/AppData/Local/Temp/qqbot-summarycard-probe.py` | 固定 Tars 编码向量、结构包装、响应解析及坏输入的离线检查通过；这是临时研究脚本自检，不是仓库新增测试或外部主审探针。 |
+| `uv run python C:/Users/81596/AppData/Local/Temp/qqbot-summarycard-probe.py --live-once` | UTC `2026-09-21T09:33:29.932983+00:00`；只向首个样本发出一次 `SummaryCard.ReqSummaryCard` 资料查询，无重试。请求外层版本为 3，HTTP/API 成功取得外层版本为 2 的响应（实验 JSON 误将响应外层版本字段命名为 `request_version`），`RespHead.iVersion=2`、`iResult=151`，脱敏提示为 `[oidb] error login sig,[url]`。这是该请求模板的登录签名校验失败，**不是目标账号异常或正常的结论**。 |
+
+对应结果是同名 `.json` 文件，保留在本机 TEMP；样本号码、群资料、凭据与完整资料响应不入库。单次协议脚本 SHA256 为 `0c19604dbbfedba6981aec33f486acb7f891b9a974c3d4c92310ce7199bd46f8`，已有结果时拒绝重复执行或覆盖。未修改客户端、生产配置、群开关、案件状态或应用代码。
+
+**已核对的源码证据与候选**：
+
+- 运行版本对应 NapCat 固定源码 `af07479351c5b974e72ae1c7183f2272e79ffc1c`：成员转换把 [`unfriendly` 固定为 false](https://github.com/NapNeko/NapCatQQ/blob/af07479351c5b974e72ae1c7183f2272e79ffc1c/packages/napcat-onebot/helper/data.ts)，不能用它确认账号正常；[`get_stranger_info`](https://github.com/NapNeko/NapCatQQ/blob/af07479351c5b974e72ae1c7183f2272e79ffc1c/packages/napcat-onebot/action/go-cqhttp/GetStrangerInfo.ts) 未暴露手机 `RespHead`。本机成员缓存代码显示 `no_cache` 请求仍可能先返回已有缓存，因此本次“成员列表中存在”不等于服务器实时成员身份已获证明。
+- [QAuxiliary 固定源码](https://github.com/cinit/QAuxiliary/blob/4b8fb59a4a2511c1f0e872aabcb61f257754d383/app/src/main/java/me/hd/hook/auxiliary/profile/RemoveGroupProfileDialog.kt) 将“群成员资料卡异常弹窗”与 `ProfileSecureProcessor.processProfileCard` 中 `RespHead.iResult=201/202` 直接关联；代码适配门槛为 Android QQ `8.9.88`，`9.0.0` 起调整方法参数。[TCQT 固定源码](https://github.com/callng/TCQT/blob/237601a89916e749ac399bba7935d5e2dc5c3e3b/app/src/main/java/com/owo233/tcqt/features/appearance/AllowViewingCard.kt) 还关联缓存 `Card.forbidCode/isForbidAccount`。这些是开源适配实现，不是腾讯官方码表或本样本的准确率验证；本轮只读源码，没有执行其中修改响应或解除限制的逻辑。
+- 只读协议实验依据 [mirai 固定请求实现](https://github.com/mamoe/mirai/blob/283f8840d4682cc30fbdd87c66fe76f6a71ff8db/mirai-core/src/commonMain/kotlin/network/protocol/packet/summarycard/SummaryCard.kt) 的现有字段组合。使用当前 Windows 会话与历史通用入口 `eComeFrom=31`，没有模拟手机会话或猜测群入口参数。失败不能外推为其他合法查询方式都不可行。
+
+**下一步与边界**：继续核对受支持的只读资料查询方式，以及读取安卓客户端实际可见提示的可行性；需要同一查看者、同一群入口、相近时间的异常与正常对照。没有稳定可验证的信号前，不实现自动账号判定，不按昵称、头像、等级、在线状态猜测，不将普通失败算作“失效”，不索取手机登录凭据、不绕过签名校验。查询成功但未命中候选码，也只能记录“未发现该信号”，不能承诺账号正常。未来若验证成立，才设计只读巡检与群名/群号/QQ 号导出。
+
+**负责人已选手机辅助验证**：负责人接受连接安卓手机、保持 QQ 前台，先验证辅助巡检。优先评估独立的电脑＋手机工具；[Android UI Automator](https://developer.android.com/training/testing/other-components/ui-automator) 支持跨应用界面读取与操作，但本机尚未证明 QQ 的群号、QQ 号与异常弹窗能完整读取。首轮只验证身份与提示对应；遇到锁屏、切换应用、身份不明或未知弹窗应停止。是否可以批量扫描、扫描覆盖率与导出准确性均未验证。
+
+电脑端已在本机 TEMP `qqbot-android-validation/platform-tools/` 准备 Google 官方 Platform-Tools；没有改系统 PATH 或安装手机组件。执行 SHA `2758cdbf63143320602558582241649254abe332`，命令 `uv run python C:/Users/81596/AppData/Local/Temp/qqbot-android-validation/device-check.py`，UTC `2026-09-21T09:41:47.460717+00:00` 返回设备数量 **0**、没有读取手机界面；原始记录在该临时目录的 `device-check-20260921T094147Z.json`。当前需要用户连接、解锁手机并在设备上亲自确认 USB 调试授权（[官方说明](https://developer.android.com/studio/run/device)），再开始实机验证；不要把工具准备完成写成手机巡检验证成功。
 
 ---
 
@@ -361,4 +388,4 @@ uv run python scripts/shadow_report.py --db data/moderation.db --since "<UTC>" -
 
 本轮分页及后续长期运行整改的代码、验证与生产加载分别以 [分页记录](2026-09-21-admin-list-pagination.md) 和 [整改记录](2026-09-21-longterm-stability.md) 为准；
 **真正的工作面是"与主审的证据对话"**：复现 → 原样入库 → 登记式适配 → 小步整改 → 可复算的口径。
-外部输入仍包括：**方案 A 的裁定**、**回滚演练的窗口**；本轮新增等待**分页与稳定性修复加载的生产重启授权**与**异常成员样本**。
+外部输入仍包括：**方案 A 的裁定**、**回滚演练的窗口**；本轮新增等待**分页与稳定性修复加载的生产重启授权**。异常成员样本已收到并由负责人当日确认，自动识别仍待可验证读取方式与正常对照，见 §7.1。
