@@ -81,7 +81,7 @@ def page_controls(
         f'<nav class=pagination aria-label="{escape(label, quote=True)}">'
         f"<p class=muted>共 {page.total} 条，第 {page.number}/{page.pages} 页</p>"
         f"<div class=page-links>{''.join(links)}</div>"
-        f'<form method=get action="{escape(path, quote=True)}#{escape(fragment, quote=True)}">'
+        f'<form method=get action="{escape(path, quote=True)}">'
         f'{fields}<label>每页 <select name="{size_key}">{options}</select></label> '
         f'<label>跳至 <input type=number name="{page_key}" min=1 max="{page.pages}" '
         f'value="{page.number}" style="width:72px"> 页</label> '
