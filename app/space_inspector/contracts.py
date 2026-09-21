@@ -10,6 +10,10 @@ class InspectionError(RuntimeError):
     """A safe, user-facing failure. Never include remote payloads or credentials."""
 
 
+class PlatformAccessBlocked(InspectionError):
+    """The platform blocked the visit; require manual browser-state confirmation."""
+
+
 def numeric_id(value: object) -> str:
     if type(value) not in (str, int):
         raise InspectionError("群或成员编号格式无效。")
@@ -57,4 +61,5 @@ REASONS = {
     "unrecognized_page": "页面格式无法确认，请人工查看",
     "space_access_permission_required": "主人设置了访问权限，待确认；继续检查其他成员",
     "space_not_opened": "对方未开通空间，待确认；继续检查其他成员",
+    "platform_access_blocked": "QQ 空间访问被腾讯安全防护拦截；请停止重试，待正常访问恢复后再确认",
 }

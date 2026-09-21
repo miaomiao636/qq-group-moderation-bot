@@ -14,7 +14,15 @@ from app.phone_inspector.locks import FileLock
 from app.phone_inspector.pages import InspectionError as LockError
 
 from .browser import Browser
-from .contracts import BLOCKED, REASONS, Group, InspectionError, Observation, numeric_id
+from .contracts import (
+    BLOCKED,
+    REASONS,
+    Group,
+    InspectionError,
+    Observation,
+    PlatformAccessBlocked,
+    numeric_id,
+)
 
 
 class ScanStore(Protocol):
@@ -48,6 +56,10 @@ def run_scan(
         on_progress(dict(store.summary()))
         if observation.status == BLOCKED:
             reason = REASONS.get(observation.reason, "页面状态无法确认")
+            if observation.reason == "platform_access_blocked":
+                raise PlatformAccessBlocked(
+                    f"{reason}。任务已暂停，已完成结果保留；当前成员仍未完成，不能据此判断成员异常。"
+                )
             raise InspectionError(
                 f"巡检已暂停（QQ {observation.qq}）：{reason}。"
                 "请查看专用浏览器；处理后可继续，已完成结果会保留。"

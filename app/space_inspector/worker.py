@@ -8,7 +8,7 @@ from collections.abc import Callable
 from contextlib import suppress
 from pathlib import Path
 
-from .contracts import InspectionError
+from .contracts import InspectionError, PlatformAccessBlocked
 from .service import Service
 
 Command = tuple[str, object]
@@ -40,8 +40,10 @@ def run_worker(
             "rows": service.rows(),
         }
 
-    def failure(message: str, operation: str) -> None:
+    def failure(message: str, operation: str, *, platform_blocked: bool = False) -> None:
         payload: dict[str, object] = {"message": message, "operation": operation}
+        if platform_blocked:
+            payload["requires_browser_confirmation"] = True
         if service is not None and operation in {"create", "resume", "scan"}:
             with suppress(Exception):
                 payload.update(snapshot())
@@ -91,6 +93,8 @@ def run_worker(
                 emit("exported", {"path": service.export()})
             else:
                 raise InspectionError("暂不支持这项操作。")
+        except PlatformAccessBlocked as exc:
+            failure(str(exc), kind, platform_blocked=True)
         except InspectionError as exc:
             failure(str(exc), kind)
         except Exception:

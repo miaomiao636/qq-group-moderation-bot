@@ -516,6 +516,9 @@ class Window:
                 if payload.get("operation") in {"viewer", "browser"}:
                     self._logged_in = False
                     self._viewer.set("空间访问账号：尚未确认登录")
+                if payload.get("requires_browser_confirmation") is True:
+                    self._logged_in = False
+                    self._viewer.set("空间访问已被平台拦截；待正常访问恢复后再确认，暂不继续巡检")
                 self._status.set(str(payload.get("message", "操作未完成。")))
             if self._closing:
                 self._status.set("正在保存任务并关闭巡检浏览器，请稍候……")

@@ -53,6 +53,7 @@ _SOURCES = {
     "unrecognized_page",
     "login_redirect",
     "navigation_failure",
+    "platform_access_block",
 }
 _SELECT_ROWS = """
 SELECT g.name AS group_name, g.group_id, m.qq,

@@ -9,9 +9,32 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import urlsplit
 
-from .contracts import BLOCKED, RESTRICTED, UNCONFIRMED, InspectionError, Observation, numeric_id
+from .contracts import (
+    BLOCKED,
+    REASONS,
+    RESTRICTED,
+    UNCONFIRMED,
+    InspectionError,
+    Observation,
+    PlatformAccessBlocked,
+    numeric_id,
+)
 
 NOTICE = "您访问的空间存在违规信息,已被多名用户举报,暂时无法查看！"
+
+
+def _platform_block_url(value: object) -> bool:
+    if not isinstance(value, str):
+        return False
+    try:
+        parsed = urlsplit(value)
+        return (
+            parsed.scheme == "https"
+            and parsed.netloc == "waf.tencent.com"
+            and parsed.path == "/501page.html"
+        )
+    except ValueError:
+        return False
 
 
 def classify_page(raw: object, qq: str, viewer_qq: str) -> Observation:
@@ -31,6 +54,9 @@ def classify_page(raw: object, qq: str, viewer_qq: str) -> Observation:
 
     if not isinstance(raw, dict) or not isinstance(raw.get("url"), str):
         return result(BLOCKED, "unrecognized_page")
+    if _platform_block_url(raw["url"]):
+        evidence["notice_source"] = "platform_access_block"
+        return result(BLOCKED, "platform_access_blocked")
     try:
         url = urlsplit(raw["url"])
         if url.scheme == "https" and url.netloc in ("i.qq.com", "qzone.qq.com"):
@@ -182,6 +208,8 @@ class Browser:
             raise InspectionError("请先打开专用浏览器并登录 QQ 空间。")
         try:
             raw = self._page.evaluate(SNAPSHOT_SCRIPT)
+            if isinstance(raw, dict) and _platform_block_url(raw.get("url")):
+                raise PlatformAccessBlocked(REASONS["platform_access_blocked"])
             viewers = raw.get("viewers")
             if (
                 raw.get("ready") != "complete"
@@ -195,6 +223,8 @@ class Browser:
             if parsed.scheme != "https" or parsed.netloc != "user.qzone.qq.com":
                 raise ValueError
             return viewers[0]
+        except PlatformAccessBlocked:
+            raise
         except Exception:
             raise InspectionError(
                 "尚未确认登录。请在专用浏览器完成登录，打开自己的空间后重试。"
