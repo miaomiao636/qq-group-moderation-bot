@@ -21,6 +21,7 @@ from app.actions.orchestrator import (
     orchestrate_actions,
     summarize_intents,
 )
+from app.core.async_utils import blocking_call
 from app.core.contracts import MessageParseError, MessageSource, StandardMessage
 from app.core.dedup import begin_processing, mark_failed, mark_processed
 from app.moderation.ai import AIReviewService
@@ -343,7 +344,8 @@ async def _run_pipeline(
                     )
                 elif _is_video(att.content_type):
                     media_decisions.append(
-                        evaluate_video(
+                        await blocking_call(
+                            evaluate_video,
                             message_id,
                             msg.external_group_id,
                             msg.external_user_id,
@@ -354,7 +356,8 @@ async def _run_pipeline(
                     )
                 elif _is_file(att.content_type):
                     media_decisions.append(
-                        evaluate_file(
+                        await blocking_call(
+                            evaluate_file,
                             message_id,
                             msg.external_group_id,
                             msg.external_user_id,
@@ -364,7 +367,7 @@ async def _run_pipeline(
                     )
                 else:
                     # image/gif/其他 → 图片引擎
-                    m = image_engine.analyze(local)
+                    m = await blocking_call(image_engine.analyze, local)
                     media_decisions.append(_media_decision_from(m, message_id, msg))
                 if (
                     not member_policy_allow

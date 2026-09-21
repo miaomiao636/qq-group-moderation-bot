@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import math
 import time
 from typing import Any
 
@@ -19,6 +20,7 @@ import httpx
 from websockets.asyncio.client import connect
 
 from app.adapters.qq_official.media import download_attachment
+from app.core.async_utils import blocking_call
 from app.db import SessionLocal
 from app.moderation.image_engine import ImageModerationEngine
 from app.moderation.imaging import dhash
@@ -123,7 +125,9 @@ async def _listen_once(app_id: str, app_secret: str, stop: asyncio.Event) -> flo
         token = await _get_token(dl_client, app_id, app_secret)
         async with connect(WS_URL, max_size=2**22) as ws:
             hello = json.loads(await ws.recv())
-            hb_interval = hello["d"]["heartbeat_interval"] / 1000
+            hb_interval = float(hello["d"]["heartbeat_interval"]) / 1000
+            if not math.isfinite(hb_interval) or hb_interval <= 0:
+                raise ValueError("invalid heartbeat interval")
             last_s = hello.get("s", 0)
             await ws.send(
                 json.dumps(
@@ -131,41 +135,54 @@ async def _listen_once(app_id: str, app_secret: str, stop: asyncio.Event) -> flo
                 )
             )
             print("[runner] connected, shadow mode (record only)")
-            next_hb = time.monotonic() + hb_interval
             text_engine = TextRuleEngine()
-            image_engine = _seed_image_engine()
 
-            while not stop.is_set():
-                try:
-                    raw = await asyncio.wait_for(ws.recv(), timeout=5)
-                except TimeoutError:
-                    if time.monotonic() >= next_hb:
+            async def heartbeat() -> None:
+                while not stop.is_set():
+                    try:
+                        await asyncio.wait_for(stop.wait(), timeout=hb_interval)
+                    except TimeoutError:
                         await ws.send(json.dumps({"op": 1, "d": last_s}))
-                        next_hb = time.monotonic() + hb_interval
-                    continue
-                payload = json.loads(raw)
-                if payload.get("s") is not None:
-                    last_s = payload["s"]
-                op = payload.get("op")
-                if op == 11:
-                    continue
-                if op == 1:
-                    await ws.send(json.dumps({"op": 11}))
-                    continue
-                if op == 9:
-                    raise RuntimeError("会话失效（op 9），需要重新连接")
-                if op == 0 and payload.get("t") == "GROUP_MESSAGE_CREATE":
-                    data = payload.get("d") or {}
-                    await _download_attachments(dl_client, data)
-                    async with SessionLocal() as session:
-                        record = await run_pipeline(
-                            data, session, text_engine=text_engine, image_engine=image_engine
-                        )
-                        if record:
-                            print(
-                                f"[shadow] {record.kind} verdict={record.verdict} "
-                                f"conf={record.confidence} {record.reason[:60]}"
-                            )
+
+            # Heartbeats must run during incoming traffic and slow moderation.
+            # A failed heartbeat cancels the receiver and reaches run()'s reconnect.
+            async with asyncio.TaskGroup() as group:
+                heartbeat_task = group.create_task(heartbeat())
+                try:
+                    image_engine = await blocking_call(_seed_image_engine)
+                    while not stop.is_set():
+                        try:
+                            raw = await asyncio.wait_for(ws.recv(), timeout=5)
+                        except TimeoutError:
+                            continue
+                        payload = json.loads(raw)
+                        if payload.get("s") is not None:
+                            last_s = payload["s"]
+                        op = payload.get("op")
+                        if op == 11:
+                            continue
+                        if op == 1:
+                            await ws.send(json.dumps({"op": 11}))
+                            continue
+                        if op == 9:
+                            raise RuntimeError("会话失效（op 9），需要重新连接")
+                        if op == 0 and payload.get("t") == "GROUP_MESSAGE_CREATE":
+                            data = payload.get("d") or {}
+                            await _download_attachments(dl_client, data)
+                            async with SessionLocal() as session:
+                                record = await run_pipeline(
+                                    data,
+                                    session,
+                                    text_engine=text_engine,
+                                    image_engine=image_engine,
+                                )
+                                if record:
+                                    print(
+                                        f"[shadow] {record.kind} verdict={record.verdict} "
+                                        f"conf={record.confidence} {record.reason[:60]}"
+                                    )
+                finally:
+                    heartbeat_task.cancel()
     return time.monotonic() - started
 
 

@@ -145,7 +145,7 @@ async def _agreement(session: AsyncSession) -> dict[str, Any]:
     latest = {
         (f.provider, f.external_group_id or f.group_openid, f.message_id): f for f in feedbacks
     }
-    message_ids = {f.message_id for f in feedbacks}
+    message_ids = select(FeedbackRecord.message_id).distinct()
     shadows = (
         (
             await session.execute(

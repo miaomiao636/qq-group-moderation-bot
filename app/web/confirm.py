@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import secrets
 import time
+from collections.abc import Iterator
+from contextlib import contextmanager
 from dataclasses import dataclass
 
 CODE_TTL_SECONDS = 300  # 5分钟（PROJECT_CONTEXT 既定）
@@ -14,6 +16,7 @@ class PendingCode:
     code: str
     expires_at: float
     purpose: str
+    reserved: bool = False
 
 
 _pending: dict[int, PendingCode] = {}  # case_id -> code
@@ -30,16 +33,37 @@ def generate(case_id: int, purpose: str = "kick_confirm") -> str:
 
 def verify_and_consume(case_id: int, code: str) -> bool:
     """校验并消费确认码；过期/错误均返回 False。"""
+    with reserve_code(case_id, code) as accepted:
+        return accepted
+
+
+@contextmanager
+def reserve_code(case_id: int, code: str) -> Iterator[bool]:
+    """Reserve until transaction exit; a failed transaction may retry within TTL."""
     pending = _pending.get(case_id)
     if pending is None:
-        return False
+        yield False
+        return
     if time.monotonic() > pending.expires_at:
         del _pending[case_id]
-        return False
-    if not secrets.compare_digest(pending.code, code.strip()):
-        return False
-    del _pending[case_id]  # 一次性：用后即焚
-    return True
+        yield False
+        return
+    if pending.reserved or not secrets.compare_digest(pending.code, code.strip()):
+        yield False
+        return
+    pending.reserved = True
+    try:
+        yield True
+    except BaseException:
+        if _pending.get(case_id) is pending:
+            if time.monotonic() > pending.expires_at:
+                del _pending[case_id]
+            else:
+                pending.reserved = False
+        raise
+    else:
+        if _pending.get(case_id) is pending:
+            del _pending[case_id]  # Successful use consumes only this code generation.
 
 
 def clear(case_id: int) -> None:

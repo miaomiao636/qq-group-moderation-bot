@@ -320,6 +320,8 @@ async def transition_case(
     target: str,
     operator: str,
     extra: dict[str, Any] | None = None,
+    *,
+    commit: bool = True,
 ) -> Case:
     """案件状态转换（供 T-301 审批界面调用），校验合法性并记录审计。
 
@@ -345,5 +347,8 @@ async def transition_case(
         }
     )
     case.audit_json = json.dumps(audit, ensure_ascii=False)
-    await session.commit()
+    if commit:
+        await session.commit()
+    else:
+        await session.flush()
     return case

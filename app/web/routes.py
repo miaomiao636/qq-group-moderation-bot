@@ -229,19 +229,24 @@ async def record_admin_audit(
     target_type: str,
     target_id: str,
     details: dict[str, Any] | None = None,
+    *,
+    session: AsyncSession | None = None,
 ) -> None:
     safe_details = details or {}
-    async with SessionLocal() as session:
-        session.add(
-            AdminAudit(
-                operator=operator,
-                action=action,
-                target_type=target_type,
-                target_id=str(target_id)[:128],
-                detail_json=json.dumps(safe_details, ensure_ascii=False),
-            )
-        )
-        await session.commit()
+    audit = AdminAudit(
+        operator=operator,
+        action=action,
+        target_type=target_type,
+        target_id=str(target_id)[:128],
+        detail_json=json.dumps(safe_details, ensure_ascii=False),
+    )
+    if session is not None:
+        session.add(audit)
+        await session.flush()
+    else:
+        async with SessionLocal() as owned_session:
+            owned_session.add(audit)
+            await owned_session.commit()
 
 
 # ---------- 登录/退出 ----------
@@ -370,6 +375,14 @@ async def dashboard(
     page = max(1, page)
     page_size = 50
     show_archived = archived == "1"
+    try:
+        start_date = datetime.strptime(date_from, "%Y-%m-%d") if date_from else None
+        end_date = datetime.strptime(date_to, "%Y-%m-%d") if date_to else None
+        if start_date and end_date and start_date > end_date:
+            raise ValueError("reversed date range")
+        exclusive_end = end_date + timedelta(days=1) if end_date else None
+    except (ValueError, OverflowError) as exc:
+        raise HTTPException(422, "日期范围无效，请使用有效的起止日期") from exc
     async with SessionLocal() as session:
         pending_pagination, pending = await _pending_review_page(
             session, pending_page, pending_page_size
@@ -387,10 +400,10 @@ async def dashboard(
             if needle.isdigit() or needle not in matched:
                 matched.add(needle)
             conditions.append(Case.group_openid.in_(matched))
-        if date_from:
-            conditions.append(Case.created_at >= f"{date_from} 00:00:00")
-        if date_to:
-            conditions.append(Case.created_at <= f"{date_to} 23:59:59")
+        if start_date:
+            conditions.append(Case.created_at >= start_date)
+        if exclusive_end:
+            conditions.append(Case.created_at < exclusive_end)
         where = [*conditions] if conditions else []
         base = select(Case)
         if where:
@@ -699,16 +712,14 @@ async def manual_kick(request: Request, case_id: int, csrf: str = Form("")) -> R
     """人工处理一键确认：记录为已踢出并结案（负责人 2026-09-12 简化，取消确认码）。"""
     await _require_admin_post(request, csrf)
     operator = await _operator(request)
-    case, _ = await _load_case(case_id)
     try:
-        for target in ("APPROVED_MANUAL", "MANUAL_PENDING", "KICKED", "CLOSED"):
-            await transition_with_session(case_id, target, operator)
-        await record_admin_audit(
+        await _transition_case_chain(
+            case_id,
+            ("APPROVED_MANUAL", "MANUAL_PENDING", "KICKED", "CLOSED"),
             operator,
             "case_manual_kick",
-            "case",
-            str(case_id),
-            {"case_no": case.case_no, "mode": "one_click"},
+            details={"mode": "one_click"},
+            include_case_no=True,
         )
     except IllegalTransitionError as exc:
         return _page("操作未执行", _transition_error_html(case_id, exc))
@@ -722,17 +733,16 @@ async def confirm_kick(
     request: Request, case_id: int, code: str = Form(""), csrf: str = Form("")
 ) -> Response:
     """存量案件兼容：旧流程（已批准待确认码）的确认入口。"""
-    from app.web.confirm import verify_and_consume
+    from app.web.confirm import reserve_code
 
     await _require_admin_post(request, csrf)
-    if not verify_and_consume(case_id, code):
-        return await case_detail(request, case_id, notice="确认码错误或已过期")
     try:
-        await transition_with_session(case_id, "KICKED", await _operator(request))
-        await transition_with_session(case_id, "CLOSED", await _operator(request))
-        await record_admin_audit(
-            await _operator(request), "case_confirm_manual_kick", "case", str(case_id)
-        )
+        with reserve_code(case_id, code) as accepted:
+            if not accepted:
+                return await case_detail(request, case_id, notice="确认码错误或已过期")
+            await _transition_case_chain(
+                case_id, ("KICKED", "CLOSED"), await _operator(request), "case_confirm_manual_kick"
+            )
     except IllegalTransitionError as exc:
         return _page("操作未执行", _transition_error_html(case_id, exc))
     return RedirectResponse(
@@ -744,9 +754,9 @@ async def confirm_kick(
 async def keep_case(request: Request, case_id: int, csrf: str = Form("")) -> Response:
     await _require_admin_post(request, csrf)
     try:
-        await transition_with_session(case_id, "KEEP", await _operator(request))
-        await transition_with_session(case_id, "CLOSED", await _operator(request))
-        await record_admin_audit(await _operator(request), "case_keep", "case", str(case_id))
+        await _transition_case_chain(
+            case_id, ("KEEP", "CLOSED"), await _operator(request), "case_keep"
+        )
     except IllegalTransitionError as exc:
         return _page("操作未执行", _transition_error_html(case_id, exc))
     return RedirectResponse("/admin", status_code=303)
@@ -755,24 +765,14 @@ async def keep_case(request: Request, case_id: int, csrf: str = Form("")) -> Res
 @router.post("/cases/{case_id}/false-positive")
 async def false_positive(request: Request, case_id: int, csrf: str = Form("")) -> Response:
     await _require_admin_post(request, csrf)
-    case, records = await _load_case(case_id)
     try:
-        await transition_with_session(case_id, "FALSE_POSITIVE", await _operator(request))
-        await transition_with_session(case_id, "STRIKE_REVOKED", await _operator(request))
-        await transition_with_session(case_id, "CLOSED", await _operator(request))
-        async with SessionLocal() as session:
-            for r in records:
-                stored = await session.get(ViolationRecord, r.id)
-                if stored and not stored.revoked:
-                    stored.revoked = True
-                    stored.revoke_reason = f"管理员标记误判（案件{case.case_no}）"
-            await session.commit()
-        await record_admin_audit(
+        await _transition_case_chain(
+            case_id,
+            ("FALSE_POSITIVE", "STRIKE_REVOKED", "CLOSED"),
             await _operator(request),
             "case_false_positive",
-            "case",
-            str(case_id),
-            {"case_no": case.case_no, "records": len(records)},
+            revoke_records=True,
+            include_case_no=True,
         )
     except IllegalTransitionError as exc:
         return _page("操作未执行", _transition_error_html(case_id, exc))
@@ -783,9 +783,9 @@ async def false_positive(request: Request, case_id: int, csrf: str = Form("")) -
 async def cancel_case(request: Request, case_id: int, csrf: str = Form("")) -> Response:
     await _require_admin_post(request, csrf)
     try:
-        await transition_with_session(case_id, "CANCELLED", await _operator(request))
-        await transition_with_session(case_id, "CLOSED", await _operator(request))
-        await record_admin_audit(await _operator(request), "case_cancel", "case", str(case_id))
+        await _transition_case_chain(
+            case_id, ("CANCELLED", "CLOSED"), await _operator(request), "case_cancel"
+        )
     except IllegalTransitionError as exc:
         return _page("操作未执行", _transition_error_html(case_id, exc))
     return RedirectResponse("/admin", status_code=303)
@@ -848,6 +848,47 @@ async def transition_with_session(case_id: int, target: str, operator: str) -> N
 
     async with SessionLocal() as session:
         await transition_case(session, case_id, target, operator)
+
+
+async def _transition_case_chain(
+    case_id: int,
+    targets: tuple[str, ...],
+    operator: str,
+    audit_action: str,
+    *,
+    revoke_records: bool = False,
+    include_case_no: bool = False,
+    details: dict[str, Any] | None = None,
+) -> None:
+    """Commit a human operation, its evidence changes and audit atomically."""
+    from app.cases.service import transition_case
+
+    async with SessionLocal() as session:
+        # SQLite writer reservation BEFORE reading state prevents competing
+        # human decisions from both acting on the same old PENDING_REVIEW state.
+        await session.execute(update(Case).where(Case.id == case_id).values(status=Case.status))
+        case_row = await session.get(Case, case_id)
+        if case_row is None:
+            raise HTTPException(404, "案件不存在")
+        for target in targets:
+            await transition_case(session, case_id, target, operator, commit=False)
+        audit_details = dict(details or {})
+        if include_case_no:
+            audit_details["case_no"] = case_row.case_no
+        if revoke_records:
+            count = 0
+            for violation_id in json.loads(case_row.violation_ids_json):
+                record = await session.get(ViolationRecord, int(violation_id))
+                if record is not None:
+                    count += 1
+                    if not record.revoked:
+                        record.revoked = True
+                        record.revoke_reason = f"管理员标记误判（案件{case_row.case_no}）"
+            audit_details["records"] = count
+        await record_admin_audit(
+            operator, audit_action, "case", str(case_id), audit_details, session=session
+        )
+        await session.commit()
 
 
 # ---------- 影子判定视图 ----------
@@ -1602,7 +1643,12 @@ async def rollback_rule_version_submit(
 
 
 @router.get("/feedback", response_class=HTMLResponse)
-async def feedback_page(request: Request, notice: str = "") -> Response:
+async def feedback_page(
+    request: Request,
+    notice: str = "",
+    candidate_page: int = 1,
+    candidate_page_size: int = 20,
+) -> Response:
     token = await _require_login(request)
     if not token:
         return _login_redirect()
@@ -1621,13 +1667,25 @@ async def feedback_page(request: Request, notice: str = "") -> Response:
             .scalars()
             .all()
         )
+        candidate_total = int(
+            await session.scalar(
+                select(func.count())
+                .select_from(RuleCandidate)
+                .where(RuleCandidate.status != "PURGED")
+            )
+            or 0
+        )
+        candidate_pagination = Page.from_request(
+            candidate_total, candidate_page, candidate_page_size
+        )
         candidates = (
             (
                 await session.execute(
                     select(RuleCandidate)
                     .where(RuleCandidate.status != "PURGED")
                     .order_by(RuleCandidate.created_at.desc(), RuleCandidate.id.desc())
-                    .limit(80)
+                    .offset(candidate_pagination.offset)
+                    .limit(candidate_pagination.size)
                 )
             )
             .scalars()
@@ -1677,9 +1735,18 @@ async def feedback_page(request: Request, notice: str = "") -> Response:
         "<button class=btn>清理已驳回候选内容</button></form>"
         "<span class=muted>保留编号及已复制草稿的关联；不删除已发布规则。</span>"
         "<span class=muted>（PROPOSED 超 30 天未处理也会在每日清理中自动驳回）</span></div>"
-        "<div class=card><h3>候选规则</h3>"
+        "<div class=card id=candidate-list><h3>候选规则</h3>"
         "<table><tr><th>ID</th><th>状态</th><th>范围</th><th>类型</th><th>内容</th><th>类别</th><th>支持/成员</th><th>负例冲突</th><th>操作</th></tr>"
-        f"{candidate_html}</table></div>"
+        f"{candidate_html}</table>"
+        + page_controls(
+            request,
+            candidate_pagination,
+            label="候选规则分页",
+            fragment="candidate-list",
+            page_key="candidate_page",
+            size_key="candidate_page_size",
+        )
+        + "</div>"
         "<div class=card><h3>最近反馈</h3>"
         "<table><tr><th>ID</th><th>消息</th><th>标签</th><th>类别</th><th>群</th><th>原因</th><th>脱敏样本</th></tr>"
         f"{feedback_html}</table></div>"

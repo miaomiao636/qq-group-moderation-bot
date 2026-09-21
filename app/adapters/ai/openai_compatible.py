@@ -6,6 +6,7 @@ selected image bytes to `/chat/completions` and accepts only strict JSON.
 
 from __future__ import annotations
 
+import asyncio
 import base64
 import hashlib
 import json
@@ -60,6 +61,7 @@ class OpenAICompatibleTextModerator:
         # 否则改规则后旧缓存仍命中，审核口径漂移。
         self.prompt_digest = hashlib.sha256(self.system_prompt.encode("utf-8")).hexdigest()[:16]
         self._client = client or httpx.AsyncClient(timeout=timeout_seconds)
+        self._timeout_seconds = timeout_seconds
         self._owns_client = client is None
 
     async def moderate_text(self, request: AIModerationRequest) -> AIModerationResult:
@@ -104,14 +106,17 @@ class OpenAICompatibleTextModerator:
         if not self.base_url or not self.api_key or not self.model_id:
             raise AIProviderError("provider_missing_config")
         try:
-            resp = await self._client.post(
-                f"{self.base_url}/chat/completions",
-                json=payload,
-                headers={"Authorization": f"Bearer {self.api_key}"},
-            )
-            resp.raise_for_status()
-            data = resp.json()
-        except httpx.TimeoutException as exc:
+            # HTTPX read timeouts bound idle gaps, not a response that keeps
+            # trickling bytes. Bound the entire exchange so workers can recover.
+            async with asyncio.timeout(self._timeout_seconds):
+                resp = await self._client.post(
+                    f"{self.base_url}/chat/completions",
+                    json=payload,
+                    headers={"Authorization": f"Bearer {self.api_key}"},
+                )
+                resp.raise_for_status()
+                data = resp.json()
+        except (httpx.TimeoutException, TimeoutError) as exc:
             raise AIProviderError("provider_timeout") from exc
         except httpx.HTTPStatusError as exc:
             if exc.response.status_code in (429, 529):

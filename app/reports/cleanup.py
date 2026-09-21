@@ -522,19 +522,29 @@ def _managed_keep_set(target: Path, entry: _ManagedCopy) -> set[Path]:
     if entry.keep_min_entries <= 0 or not target.is_dir():
         return set()
     try:
-        pairs = [(item, _managed_entry_files(item)) for item in target.iterdir()]
+        pairs = []
+        for item in target.iterdir():
+            files = _managed_entry_files(item)
+            # A crash residue or empty placeholder cannot displace the last
+            # completed backup. Preserve every companion of a retained set.
+            completed = [
+                f for f in files if f.suffix.lower() != ".partial" and f.stat().st_size > 0
+            ]
+            if completed:
+                pairs.append((files, completed))
     except OSError:
-        return set()
+        # Fail closed: an unreadable candidate cannot authorize deleting others.
+        return set(_managed_entry_files(target))
 
-    def _freshness(pair: tuple[Path, list[Path]]) -> float:
-        item, files = pair
+    def _freshness(pair: tuple[list[Path], list[Path]]) -> float:
+        _files, completed = pair
         try:
-            return max((f.stat().st_mtime for f in files), default=item.stat().st_mtime)
+            return max(f.stat().st_mtime for f in completed)
         except OSError:
             return 0.0
 
     kept: set[Path] = set()
-    for _item, files in sorted(pairs, key=_freshness, reverse=True)[: entry.keep_min_entries]:
+    for files, _completed in sorted(pairs, key=_freshness, reverse=True)[: entry.keep_min_entries]:
         kept.update(files)
     return kept
 
