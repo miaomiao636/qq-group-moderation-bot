@@ -23,6 +23,9 @@ dependencies = [
     "pypdf>=6.17.0",
 ]
 
+[project.optional-dependencies]
+inspection = ["playwright==1.63.0"]
+
 [dependency-groups]
 dev = [
     "pytest>=8.2",
