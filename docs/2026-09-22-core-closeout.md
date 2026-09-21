@@ -69,4 +69,4 @@ AI、OneBot、动作、通知关闭，没有启动官方 runtime 或计划任务
 
 这次没有可直接授权删除的清单；未知源时间不能用 mtime 补造，备份内部原文也未检查。下一步需建立后续副本固定源期限、历史未知项处置口径及合规恢复副本，再交负责人审核真实处置清单。文件系统是运行中的有界观察，非原子快照；普通 SQLite 只读事务也不代表 SHM 锁记账字节完全不动。
 
-同一执行 SHA 的 `uv run ruff check app tests alembic scripts`、`uv run ruff format --check app tests alembic scripts`、`uv run mypy app` 已通过（格式 348 文件、类型 111 文件）。正式全量与最终 CI 仍在执行；不以局部验证替代。
+同一执行 SHA 的 `uv run ruff check app tests alembic scripts`、`uv run ruff format --check app tests alembic scripts`、`uv run mypy app` 已通过（格式 348 文件、类型 111 文件）。全量命令 `uv run pytest --junitxml=C:/Users/81596/AppData/Local/Temp/qqbot-core-closeout-20260922/full.xml`：2214 项，2197 passed、17 skipped、0 failed/error；主审子集 31 文件/262 项全通过。汇总 [verification-summary.json](evidence/core-closeout-20260922/verification-summary.json)，日志保存在同一 TEMP 目录。后续文档提交不改变执行源码；最终 CI 仍需按推送 HEAD 核验。
