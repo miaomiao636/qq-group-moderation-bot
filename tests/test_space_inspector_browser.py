@@ -45,6 +45,37 @@ def test_loaded_profile_without_warning_remains_unconfirmed() -> None:
     assert result.evidence["notice"] == ""
 
 
+def test_verified_owner_permission_page_remains_unconfirmed_and_does_not_block():
+    raw = page()
+    raw.update(
+        panels=[],
+        permission_panels=[{"tips": "主人设置了权限，您可通过以下方式访问", "apply_link": True}],
+    )
+    result = classify_page(raw, QQ, VIEWER)
+    assert result.status == UNCONFIRMED
+    assert result.reason == "space_access_permission_required"
+    assert result.evidence["notice_source"] == "qzone_permission_page"
+    assert result.evidence["notice"] == ""
+
+
+@pytest.mark.parametrize(
+    "change",
+    [
+        {"permission_panels": [{"tips": "请输入验证码", "apply_link": True}]},
+        {
+            "permission_panels": [
+                {"tips": "主人设置了权限，您可通过以下方式访问", "apply_link": False}
+            ]
+        },
+        {"permission_panels": "主人设置了权限，您可通过以下方式访问"},
+    ],
+)
+def test_unknown_permission_like_pages_still_pause(change):
+    raw = page()
+    raw.update(panels=[], **change)
+    assert classify_page(raw, QQ, VIEWER).status == BLOCKED
+
+
 @pytest.mark.parametrize(
     "url",
     [

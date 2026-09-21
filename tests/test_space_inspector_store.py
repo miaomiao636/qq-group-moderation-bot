@@ -267,6 +267,25 @@ def test_unconfirmed_requires_a_completed_profile_for_bound_viewer(tmp_path):
         store.close()
 
 
+def test_permission_page_can_be_saved_and_resumed_as_unconfirmed(tmp_path):
+    store = make_store(tmp_path / "task")
+    store.save(
+        observation(
+            UNCONFIRMED,
+            reason="space_access_permission_required",
+            evidence={**evidence(), "notice_source": "qzone_permission_page", "panel_count": 1},
+        )
+    )
+    store.close()
+    resumed = Store(tmp_path / "task")
+    try:
+        assert resumed.pending() == [OTHER]
+        assert resumed.summary()["unconfirmed"] == 1
+        assert resumed.summary()["restricted"] == 0
+    finally:
+        resumed.close()
+
+
 def test_stored_schema_or_metadata_corruption_is_rejected(tmp_path):
     for damage in ("DROP TABLE visits", "UPDATE meta SET value='bad' WHERE key='source_self_id'"):
         folder = tmp_path / str(len(list(tmp_path.iterdir())))
