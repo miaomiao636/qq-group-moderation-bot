@@ -1,0 +1,91 @@
+{
+  "execution_sha": "59d15eceff32df54520d214b04bd0dc9647c7f63",
+  "command": "uv run pytest --junitxml=C:/Users/81596/AppData/Local/Temp/qqbot-core-closeout-20260922/final-main.xml",
+  "total": 2221,
+  "skipped": 17,
+  "failures": 0,
+  "errors": 0,
+  "review_count": 262,
+  "gates": {
+    "uv run ruff check app tests alembic scripts": "passed",
+    "uv run ruff format --check app tests alembic scripts": "passed (348 files)",
+    "uv run mypy app": "passed (111 files)"
+  },
+  "private_log_directory": "C:\\Users\\81596\\AppData\\Local\\Temp\\qqbot-core-closeout-20260922",
+  "passed": 2204,
+  "artifacts": {
+    "final-main.log": "d9c297754cbc6c53de028cc15bbfbf2936492c8c6c9c1e429e276b228cd50017",
+    "final-main.xml": "b6a9aee61952eccf231f011ecf9245fc09fb895f84b424e4c0dbae155b69adf5"
+  },
+  "source_scope_note": "Execution includes already committed inspector changes e4d582e/2623031/77f1deb (outside this closeout). Relative to e41368d, six N03 tests and one inspector boundary test account for seven new collected cases.",
+  "skipped_details": [
+    {
+      "nodeid": "tests.test_image_engine::test_real_violation_samples_match_manifest_labels",
+      "reason": "真实样本仅存于测试机本地（gitignored）"
+    },
+    {
+      "nodeid": "tests.test_longterm_data::test_backup_link_never_displaces_completed_backup_or_deletes_target",
+      "reason": "directory symbolic links are unavailable on this host"
+    },
+    {
+      "nodeid": "tests.test_managed_copies::test_file_link_inside_registered_dir_not_deleted",
+      "reason": "本环境不支持创建文件符号链接"
+    },
+    {
+      "nodeid": "tests.test_space_inspector_history::test_symlink_task_directory_is_not_followed",
+      "reason": "symlink unavailable on this platform: OSError"
+    },
+    {
+      "nodeid": "tests.test_sqlite_path::test_readme_default_relative_path_resolves_to_project_root",
+      "reason": "生产服务运行中（持有运行时锁）：data/ 快照守卫不可靠，已跳过。停止服务后重跑可恢复。"
+    },
+    {
+      "nodeid": "tests.test_sqlite_path::test_relative_path_without_dot_slash",
+      "reason": "生产服务运行中（持有运行时锁）：data/ 快照守卫不可靠，已跳过。停止服务后重跑可恢复。"
+    },
+    {
+      "nodeid": "tests.test_sqlite_path::test_relative_path_resolves_same_regardless_of_cwd",
+      "reason": "生产服务运行中（持有运行时锁）：data/ 快照守卫不可靠，已跳过。停止服务后重跑可恢复。"
+    },
+    {
+      "nodeid": "tests.test_sqlite_path::test_absolute_unix_path_preserved",
+      "reason": "生产服务运行中（持有运行时锁）：data/ 快照守卫不可靠，已跳过。停止服务后重跑可恢复。"
+    },
+    {
+      "nodeid": "tests.test_sqlite_path::test_windows_absolute_path_forward_slash_preserved",
+      "reason": "生产服务运行中（持有运行时锁）：data/ 快照守卫不可靠，已跳过。停止服务后重跑可恢复。"
+    },
+    {
+      "nodeid": "tests.test_sqlite_path::test_windows_absolute_path_backslash_preserved",
+      "reason": "生产服务运行中（持有运行时锁）：data/ 快照守卫不可靠，已跳过。停止服务后重跑可恢复。"
+    },
+    {
+      "nodeid": "tests.test_sqlite_path::test_windows_drive_relative_path_rejected",
+      "reason": "生产服务运行中（持有运行时锁）：data/ 快照守卫不可靠，已跳过。停止服务后重跑可恢复。"
+    },
+    {
+      "nodeid": "tests.test_sqlite_path::test_memory_database_preserved",
+      "reason": "生产服务运行中（持有运行时锁）：data/ 快照守卫不可靠，已跳过。停止服务后重跑可恢复。"
+    },
+    {
+      "nodeid": "tests.test_sqlite_path::test_non_sqlite_url_preserved",
+      "reason": "生产服务运行中（持有运行时锁）：data/ 快照守卫不可靠，已跳过。停止服务后重跑可恢复。"
+    },
+    {
+      "nodeid": "tests.test_sqlite_path::test_settings_normalizes_relative_url",
+      "reason": "生产服务运行中（持有运行时锁）：data/ 快照守卫不可靠，已跳过。停止服务后重跑可恢复。"
+    },
+    {
+      "nodeid": "tests.test_sqlite_path::test_e2e_migrate_and_start_from_non_project_dirs",
+      "reason": "生产服务运行中（持有运行时锁）：data/ 快照守卫不可靠，已跳过。停止服务后重跑可恢复。"
+    },
+    {
+      "nodeid": "tests.test_sqlite_path::test_e2e_unmigrated_db_rejected_from_non_project_dir",
+      "reason": "生产服务运行中（持有运行时锁）：data/ 快照守卫不可靠，已跳过。停止服务后重跑可恢复。"
+    },
+    {
+      "nodeid": "tests.test_sqlite_path::test_e2e_alembic_cli_works_from_any_cwd",
+      "reason": "生产服务运行中（持有运行时锁）：data/ 快照守卫不可靠，已跳过。停止服务后重跑可恢复。"
+    }
+  ]
+}

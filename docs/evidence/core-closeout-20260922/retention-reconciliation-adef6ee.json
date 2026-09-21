@@ -1,0 +1,160 @@
+{
+  "schema_version": 1,
+  "as_of": "2026-09-21T16:30:23.271386+00:00",
+  "inventory_as_of": "2026-09-21T16:07:44.788898+00:00",
+  "retention_days": 15,
+  "read_only": true,
+  "deletion_authorized": false,
+  "n03_closed": false,
+  "file_contents_read": false,
+  "identity_keys_emitted": false,
+  "filename_candidates_are_not_content_identity_proof": true,
+  "target_inventory": {
+    "inventory_target_count": 2522,
+    "unchanged_target_count": 2522,
+    "target_absent_or_changed_or_blocked": 0
+  },
+  "direct_reference_file_outcomes": {
+    "direct_reference_still_missing_source_time": 1847,
+    "direct_reference_all_source_times_provable": 84
+  },
+  "proven_metadata_time_windows": {
+    "within_window_at_reconciliation_asof": 84,
+    "within_window_at_original_inventory_asof": 84
+  },
+  "unique_direct_source_outcomes": {
+    "source_time_missing_and_inbox_payload_cleared": 1336,
+    "source_time_missing_and_no_inbox_event": 505,
+    "exact_message_counterpart": 84,
+    "already_known": 84
+  },
+  "orphan_file_outcomes": {
+    "event_metadata_only_no_source_time": 574,
+    "deterministic_filename_candidate_source_time_unknown": 17
+  },
+  "reference_shape_totals": {
+    "projection_rows": 29482,
+    "missing_or_empty_file_reference": 4353,
+    "source_records": 29458
+  },
+  "database_snapshot": {
+    "read_snapshot_seconds": 0.438,
+    "metadata_schema": {
+      "shadow_decisions": [
+        "id",
+        "message_id",
+        "group_openid",
+        "member_openid",
+        "kind",
+        "verdict",
+        "category",
+        "confidence",
+        "reason",
+        "detail_json",
+        "created_at",
+        "sender_name",
+        "provider",
+        "external_group_id",
+        "external_user_id",
+        "external_message_id"
+      ],
+      "violation_records": [
+        "id",
+        "group_openid",
+        "member_openid",
+        "message_id",
+        "category",
+        "confidence",
+        "rule_hits_json",
+        "message_snapshot_json",
+        "action_result_json",
+        "case_id",
+        "revoked",
+        "revoke_reason",
+        "created_at",
+        "provider",
+        "external_group_id",
+        "external_user_id"
+      ],
+      "onebot_inbox": [
+        "event_key",
+        "self_id",
+        "group_id",
+        "payload_json",
+        "payload_hash",
+        "status",
+        "attempts",
+        "lease_token",
+        "lease_expires_at",
+        "available_at",
+        "error_kind",
+        "created_at",
+        "updated_at"
+      ],
+      "processed_events": [
+        "message_id",
+        "event_type",
+        "processed_at",
+        "status",
+        "error_message",
+        "error_kind",
+        "lease_token",
+        "lease_expires_at",
+        "attempts",
+        "next_retry_at",
+        "provider",
+        "external_group_id",
+        "external_user_id"
+      ]
+    },
+    "retention_named_table_count": 0
+  },
+  "management_metadata": {
+    "backups": {
+      "directory_present": true,
+      "entries": 16,
+      "file_extensions": {
+        ".db": 6,
+        "other": 9
+      },
+      "manifest_named_candidates": 0,
+      "manifest_content_read": false,
+      "coverage_proven": false,
+      "blocked_entries": 0,
+      "depth_limited_directories": 0
+    },
+    "sample_pool": {
+      "directory_present": true,
+      "entries": 60,
+      "file_extensions": {
+        ".jsonl": 4,
+        ".json": 1,
+        ".txt": 2,
+        "other": 52
+      },
+      "manifest_named_candidates": 0,
+      "manifest_content_read": false,
+      "coverage_proven": false,
+      "blocked_entries": 0,
+      "depth_limited_directories": 0
+    }
+  },
+  "execution_sha": "adef6ee558be3ba9d53de7111c6eecfd21a74ef9",
+  "script_sha256": "cf76e7c4eb1863f92c2fd4d0e9f5f60a5cf2f95e580f2b706f91bc2a57bb22c9",
+  "command_arguments": [
+    "D:\\CodeBuddy工作空间\\CB 项目\\qq-group-moderation-bot\\.venv\\Scripts\\python.exe",
+    "-B",
+    "C:\\Users\\81596\\AppData\\Local\\Temp\\qqbot-retention-reconcile-98e3b1820cfb41029e3834db4e1e2d49\\reconcile.py",
+    "--db",
+    "D:/CodeBuddy工作空间/CB 项目/qq-group-moderation-bot/data/moderation.db",
+    "--data-root",
+    "D:/CodeBuddy工作空间/CB 项目/qq-group-moderation-bot/data",
+    "--inventory",
+    "C:/Users/81596/AppData/Local/Temp/qqbot-core-closeout-20260922/retention-inventory.json",
+    "--out",
+    "C:/Users/81596/AppData/Local/Temp/qqbot-retention-reconcile-98e3b1820cfb41029e3834db4e1e2d49/reconciliation-final.json",
+    "--execution-sha",
+    "adef6ee558be3ba9d53de7111c6eecfd21a74ef9"
+  ],
+  "command": "& 'D:\\CodeBuddy工作空间\\CB 项目\\qq-group-moderation-bot\\.venv\\Scripts\\python.exe' '-B' 'C:\\Users\\81596\\AppData\\Local\\Temp\\qqbot-retention-reconcile-98e3b1820cfb41029e3834db4e1e2d49\\reconcile.py' '--db' 'D:/CodeBuddy工作空间/CB 项目/qq-group-moderation-bot/data/moderation.db' '--data-root' 'D:/CodeBuddy工作空间/CB 项目/qq-group-moderation-bot/data' '--inventory' 'C:/Users/81596/AppData/Local/Temp/qqbot-core-closeout-20260922/retention-inventory.json' '--out' 'C:/Users/81596/AppData/Local/Temp/qqbot-retention-reconcile-98e3b1820cfb41029e3834db4e1e2d49/reconciliation-final.json' '--execution-sha' 'adef6ee558be3ba9d53de7111c6eecfd21a74ef9'"
+}

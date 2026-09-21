@@ -70,3 +70,17 @@ AI、OneBot、动作、通知关闭，没有启动官方 runtime 或计划任务
 这次没有可直接授权删除的清单；未知源时间不能用 mtime 补造，备份内部原文也未检查。下一步需建立后续副本固定源期限、历史未知项处置口径及合规恢复副本，再交负责人审核真实处置清单。文件系统是运行中的有界观察，非原子快照；普通 SQLite 只读事务也不代表 SHM 锁记账字节完全不动。
 
 同一执行 SHA 的 `uv run ruff check app tests alembic scripts`、`uv run ruff format --check app tests alembic scripts`、`uv run mypy app` 已通过（格式 348 文件、类型 111 文件）。全量命令 `uv run pytest --junitxml=C:/Users/81596/AppData/Local/Temp/qqbot-core-closeout-20260922/full.xml`：2214 项，2197 passed、17 skipped、0 failed/error；主审子集 31 文件/262 项全通过。汇总 [verification-summary.json](evidence/core-closeout-20260922/verification-summary.json)，日志保存在同一 TEMP 目录。后续文档提交不改变执行源码；最终 CI 仍需按推送 HEAD 核验。
+
+## 最终补正与交付边界
+
+执行源码 `59d15eceff32df54520d214b04bd0dc9647c7f63`：N03 预检把空文件引用与非法引用分列，排除观察时间之后的处理记录并单独计数。六项新增回归已入库。全量命令 `uv run pytest --junitxml=C:/Users/81596/AppData/Local/Temp/qqbot-core-closeout-20260922/final-main.xml` 得到 **2221 项：2204 passed、17 skipped、0 failed/error**；其中原契约主审探针 262 项全通过。跳过分别为运行中生产锁保护 13 项、符号链接不可用 3 项、本地真实图片样本未挂载 1 项，不能统称 Windows 差异。同 SHA 的 `uv run ruff check app tests alembic scripts`、`uv run ruff format --check app tests alembic scripts`（348 文件）、`uv run mypy app`（111 文件）通过。精确日志哈希/跳过节点见 [最终本机验证](evidence/core-closeout-20260922/verification-59d15ec.json)。测试集合也包含此前独立巡检任务已提交的边界回归；不把它计作本轮主项目功能。
+
+该 SHA 的只读预检命令及聚合原件见 [最终保留期观察](evidence/core-closeout-20260922/retention-summary-59d15ec.json)：UTC 2026-09-21T16:44:22.331094Z，源记录 29487，时间缺失 4937；空引用 4353、非法引用 0。文件元数据 9619 项，其中媒体 9010、备份 15、样本池 59、审核证据 527、隔离副本 8。媒体中来源时间已知且窗口内 6488、未知 1931、无引用 591。仍全部禁止直接删除。
+
+追加只读关联核查执行 `adef6ee558be3ba9d53de7111c6eecfd21a74ef9`，完整命令及结果见 [关联观察](evidence/core-closeout-20260922/retention-reconciliation-adef6ee.json)。原清单的 2522 项文件元数据未变化，其中 84 项可从同 provider/group/member/external-message 的记录补证源时间，且仍在保留窗口内；剩余 2438 项不能确认源期限。该关联未读取文件内容，不能证明文件字节身份，也未回填生产库。历史入口中部分原始 payload 已清除，不能用 mtime 代替原始时间。备份内部内容与可替代恢复副本尚未完成核验，**N03 未关闭、没有获批的删除清单**。
+
+此前 `adef6ee` 的 CI [35624097841](https://github.com/miaomiao636/qq-group-moderation-bot/actions/runs/35624097841) 已核对成功：实际 PR 合并检出 `6e6a01a0059ecea061170b5fcd478ecffdc3c0a2`，Ubuntu/Windows 的 `uv run pytest` 均 2211 passed、3 skipped，干净运行依赖任务通过。原始 jobId/命令/日志哈希见 [CI 摘要](evidence/core-closeout-20260922/ci-35624097841-summary.json)。这不替代后续 HEAD 的 CI，交接时应检查对应 PR 最新 Checks。
+
+方案 A 已按负责人裁定实现为独立候选 `codex/r132-authority-20260922`，源码冻结 `7456d40b61f969c41662665a971dee8c71bdfb40`；验证记录在该分支 `docs/2026-09-22-authority-a2-validation.md`。生产工作分支保持旧 schema，不能提前合入新 migration 后让现有服务自动重启。候选只允许评审与 CI，维护窗口之前不合并、不生产迁移、不部署。
+
+仍未关闭：Windows 整机故障/恢复与真实备份恢复（负责人决定待排期）；历史单项失败原始 nodeid/trace/命令/执行 SHA 缺失（未证明原因或修复）；真实群卡片事件原文已不在可用 payload 中（历史命中不等于真实样本验收）；N03 全副本源期限与最终原件处置。通知能力保留但不启用。运行中的生产主程序仍沿用 MEDIA-QUOTA 的加载基线，不因本轮离线工具改动重启；enforce、判断阈值、群授权与动作开关均未调整。
