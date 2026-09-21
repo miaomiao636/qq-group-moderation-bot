@@ -66,11 +66,16 @@ class Page:
     confirm: Rect | None = None
     members_button: Rect | None = None
     at_top: bool = False
+    profile_name: str = ""
     raw: bytes = field(default=b"", repr=False)
 
     @property
     def fingerprint(self) -> str:
         # This checks navigation layout only. It is NEVER a member identity.
+        if self.kind == "profile_cover":
+            return hashlib.sha256(
+                repr((self.profile_name, self.viewport, self.back)).encode()
+            ).hexdigest()
         values = [(row.name, row.bounds.__dict__, row.target.__dict__) for row in self.rows]
         return hashlib.sha256(json.dumps(values, ensure_ascii=False).encode()).hexdigest()
 
@@ -155,6 +160,24 @@ def parse_page(raw: bytes) -> Page:
             raise InspectionError("资料页账号字段不唯一，已暂停。")
         if candidates:
             return Page(kind="profile", qq=candidates[0], back=back, raw=raw)
+    cover, toolbar = single("dk_"), single("g03")
+    if (
+        nickname is not None
+        and nickname.get("text")
+        and identity_section is None
+        and cover is not None
+        and toolbar is not None
+        and back
+    ):
+        body, header = _bounds(cover), _bounds(toolbar)
+        if body.contains(header) and body.bottom - header.bottom > 600:
+            return Page(
+                kind="profile_cover",
+                profile_name=nickname.get("text", ""),
+                viewport=Rect(body.left, header.bottom, body.right, body.bottom),
+                back=back,
+                raw=raw,
+            )
     group_id, group_name = single("rj8"), single("rie")
     if group_id is not None and group_name is not None:
         gid, name = group_id.get("text", ""), group_name.get("text", "").strip()

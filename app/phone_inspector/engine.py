@@ -23,6 +23,7 @@ class PhoneInterface(Protocol):
     def scroll(self, expected: Page, *, toward_bottom: bool) -> None: ...
     def delay(self, seconds: float = 1.0) -> None: ...
     def screenshot(self) -> bytes: ...
+    def reveal_profile(self, expected: Page) -> None: ...
 
 
 class Scanner:
@@ -53,7 +54,7 @@ class Scanner:
         if page.kind == "warning" and page.confirm:
             self.phone.tap(page, page.confirm)
             page = self.phone.snapshot()
-        if page.kind == "profile" and page.back:
+        if page.kind in {"profile", "profile_cover"} and page.back:
             self.phone.tap(page, page.back)
             page = self.phone.snapshot()
         if page.kind == "members" and page.back:
@@ -83,10 +84,13 @@ class Scanner:
         raise InspectionError("定位列表顶部超过限制，已暂停。")
 
     def loaded_profile(self) -> Page:
-        for _ in range(3):
+        for attempt in range(4):
             page = self.phone.snapshot()
             if page.kind in {"warning", "profile"}:
                 return page
+            if page.kind == "profile_cover" and attempt < 3:
+                self.phone.reveal_profile(page)
+                continue
             self.phone.delay()
         raise InspectionError("资料卡未加载或出现未知页面，已暂停；没有判定账号状态。")
 

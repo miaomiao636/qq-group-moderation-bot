@@ -15,7 +15,11 @@ from .pages import PACKAGE, InspectionError, Page, Rect, parse_page
 SUPPORTED_QQ = "9.3.60"
 ACTIVITIES = {
     "com.tencent.mobileqq.activity.TroopMemberListActivity": {"members"},
-    "com.tencent.mobileqq.profilecard.activity.FriendProfileCardActivity": {"profile", "warning"},
+    "com.tencent.mobileqq.profilecard.activity.FriendProfileCardActivity": {
+        "profile",
+        "profile_cover",
+        "warning",
+    },
     "com.tencent.mobileqq.activity.QPublicFragmentActivity": {"group"},
 }
 
@@ -169,3 +173,21 @@ class Phone:
         if before != self.foreground() or not image.startswith(b"\x89PNG\r\n\x1a\n"):
             raise InspectionError("截图期间窗口变化或截图无效。")
         return image
+
+    def reveal_profile(self, expected: Page) -> None:
+        fresh = self.snapshot()
+        if (
+            expected.kind != "profile_cover"
+            or fresh.kind != "profile_cover"
+            or fresh.fingerprint != expected.fingerprint
+            or not fresh.viewport
+        ):
+            raise InspectionError("资料卡封面发生变化，未执行滑动。")
+        box = fresh.viewport
+        x = box.left + (box.right - box.left) // 3
+        upper, lower = box.top + box.height // 3, box.bottom - 200
+        if lower - upper < 250:
+            raise InspectionError("资料卡封面可滑动区域不足。")
+        self.foreground()
+        self.adb_call("shell", "input", "swipe", str(x), str(lower), str(x), str(upper), "500")
+        self.delay()
