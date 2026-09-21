@@ -32,3 +32,13 @@
 
 没有 skip/xfail，也没有以放松锁使探针通过。旧只读候选兼容仅适用于无法读取旧 authority schema
 时的明确候选过滤；A2 未回填/不一致不能用旧 JSON 或 enabled 冒充已批准。
+
+## 哈希口径与登记范围补充
+
+执行 `git show adef6ee:<path>` / `git show 90c1c9e:<path>` 和 Python AST 比较：原件副本逐字节一致；适配登记覆盖原主审文件中改变的顶层函数/fixture/钩子。`adaptation-ast.json` 中 current_sha256 是原 Windows CRLF 工作区字节，不是规范化后的 Git blob；新增 [Git blob 核对](evidence/authority-a2-20260922/git-blob-verification.json) 固定不可变源码 `90c1c9e5d7ccc35c434b032ebd14aae1a79ea45b` 的前后 blob 哈希与逐项 AST 核对。旧登记不覆盖或重写。
+
+模块导入/文件头变化见完整 diff；其中 compensation_ownership、r9_write_residuals、round11_c03、round12_c03 的导入变化不属于函数 AST 表。新增 authority_fixtures 及内部回归分别入库，不能混称原样外部探针。
+
+内部 `test_r132_decision_lock_cross_process.py` 不属于外部原件：忙锁异常字串改为 `decision lock busy`；释放后断言从“锁文件不存在”改为“固定 inode 文件仍在”，对应 OS 锁释放但路径保留的新协议。真实跨进程阻塞、超时和再次获取断言保留；不通过删锁或减短保护范围换绿。
+
+旧基线原样探针通过与 A2 已登记适配探针通过分别记证。不得把后者描述成“所有外部探针原字节在新契约上通过”。
