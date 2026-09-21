@@ -132,6 +132,29 @@ def parse_page(raw: bytes) -> Page:
         if not match:
             raise InspectionError("资料页没有明确的 QQ 号码，已暂停。")
         return Page(kind="profile", qq=match[1], back=back, raw=raw)
+    # QQ 9.3.60 custom-cover cards put the native QQ row in ag/icon/info.
+    # Require that structure AND the displayed nickname prefix; never interpret
+    # arbitrary parentheses in a nickname, signature or other info row as QQ.
+    nickname, identity_section = single("tu_"), single("ag")
+    if nickname is not None and identity_section is not None:
+        candidates = []
+        for row in identity_section:
+            children = list(row)
+            if (
+                len(children) == 2
+                and children[0].get("resource-id") == PACKAGE + ":id/icon"
+                and children[1].get("resource-id") == PACKAGE + ":id/info"
+            ):
+                match = re.fullmatch(
+                    re.escape(nickname.get("text", "")) + r"\(([1-9][0-9]{4,11})\)",
+                    children[1].get("text", ""),
+                )
+                if match and nickname.get("text"):
+                    candidates.append(match[1])
+        if len(candidates) > 1:
+            raise InspectionError("资料页账号字段不唯一，已暂停。")
+        if candidates:
+            return Page(kind="profile", qq=candidates[0], back=back, raw=raw)
     group_id, group_name = single("rj8"), single("rie")
     if group_id is not None and group_name is not None:
         gid, name = group_id.get("text", ""), group_name.get("text", "").strip()
