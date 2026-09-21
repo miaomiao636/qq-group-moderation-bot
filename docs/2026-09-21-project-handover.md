@@ -14,11 +14,11 @@
 | 仓库 | `https://github.com/miaomiao636/qq-group-moderation-bot.git` |
 | 分支 | `windows-deploy-2026-09-10`（长期工作分支，直接推送；**不要**推 main） |
 | HEAD | **以 `git log -1` 的实际值为准**（本文件即在该提交中；状态快照以 `2e9e686` 为基线生成）；接手时先确认工作区**干净** |
-| CI | 本次分页变更等待推送后 CI；旧成功记录不能证明本次变更，详见 [本轮验证](2026-09-21-admin-list-pagination.md) |
+| CI | 本次源代码提交 `229d856` 对应 run `35573589364`，固定 job 证据见 [本轮验证](2026-09-21-admin-list-pagination.md)；最终文档 HEAD 的最新 CI 须另核，不能借用旧成功记录 |
 | 测试基线 | 本次执行 `759dc5c`：**1906 项 / 1891 passed / 0 failed / 0 error / 15 skipped**；命令与原因见 [本轮验证](2026-09-21-admin-list-pagination.md) |
 | 主审探针 | 同次全量 JUnit 子集 `tests.test_r132_review_*`：**31 文件 / 262 项**全部通过；本轮未修改 |
 | 静态门禁 | 本次执行 `759dc5c`：`ruff check` ✓ / `ruff format --check` ✓（**309 文件**）/ `mypy app` ✓（90 文件）；完整命令见本轮验证 |
-| 生产运行态 | 67 群已开**且全部可路由**；阶段 `recall_only`（只撤回）；`IMAGE_HASH_MODE=shadow`；迁移已在生产执行到 `d4b7c1e9a502` |
+| 生产快照 | 接手时只读数据库/文件配置核验见 §2；不是本次分页已加载或真实动作效果的证明 |
 | 唯一外部依赖 | **主审**（外部 reviewer）：每轮给我方一个"探针包"，我方复现→入库→整改→送审 |
 | 当前卡点 | 主审已认可方案 B（本批实现并通过）；**方案 A 提案待主审裁定 6 个问题** |
 | 绝对禁止 | 启用 `enforce`、执行生产迁移/回滚、改判定逻辑与阈值、扩群或改动作开关（除负责人明确授权） |
@@ -35,7 +35,7 @@ QQ 群多模态智能管理机器人：**双通道**（OneBot/NapCat + QQ 官方
 - **入口**：`app/main.py`、`app/__main__.py`；服务日志在仓库根 `runner.out.log` / `runner.err.log`
   （日常操作见 `docs/windows-operations.md`、`docs/deploy-runbook-d037-d038.md`）。
 
-**关键开关（`.env`，`app/config.py` 定义，2026-09-21 实读值）**
+**关键开关（接手时的文件配置快照；不证明当前进程加载值）**
 
 | 变量 | 现值 | 语义 |
 | --- | --- | --- |
@@ -52,6 +52,8 @@ QQ 群多模态智能管理机器人：**双通道**（OneBot/NapCat + QQ 官方
 ## 2. 状态快照（本轮与历史分开）
 
 **本轮 UI-PAGING-20260921**：代码执行基线 `759dc5c827c2304720eb23ce05e6e704623c3e1a`，页码分页、群配置数量与相关回归已完成，本机全量和门禁通过，结果与命令见 [本轮验证](2026-09-21-admin-list-pagination.md)。推送后 CI 与生产加载分别记录；本轮没有重启生产、没有迁移或更改群开关。账号巡检等待样本。
+
+**接手核验补正**：执行 SHA `9b287271a3614da562c0f05d7407c2d28b98a552`，快照 UTC `2026-09-21T06:27:47.592471+00:00`。命令 `uv run python C:/Users/81596/AppData/Local/Temp/qqbot-r132-intake-9b28727-90442e26/snapshot.py`：动作配置开启 67 群，均有匹配 owner/route；数据库 revision 与 `uv run alembic heads` 同为 `d4b7c1e9a502`；文件配置为 shadow/recall_only。全库当时留存观察 6688 条，其中 `matched=true` 17 条；同目录 `shadow-matches.py`（命令同上替换脚本名）复核这些命中均为 shadow。原始 SQL、JSON 和 `intake-review.md` 保存在同目录。这不是固定部署窗口统计，不据此推断实际动作效果；**“零命中，等待样本”已不成立**。
 
 **以下为接手时保留的历史快照（原基线 `2e9e686`）**，不代表本次 UI 变更已加载，也不把历史生产数量当作实时值：
 
@@ -263,7 +265,7 @@ Start-Sleep -Seconds 600        # Windows job 约 10-13 分钟；循环检查直
 | 1 | **方案 A 提案**（同库权威保存 + JSON 可重试导出）：`docs/2026-09-20-r132-image-decision-authority-proposal.md` | **等主审裁定 6 个问题**（表形态、rejected 落行、导出失败语义变更确认、回填方式、迁移与部署同窗口、回滚口径） | 用户转发 → 主审 → 再实现 |
 | 2 | Windows **回滚全链实机演练** | 需负责人给**维护窗口** + 备份；**不在生产演练**（先合成库） | 用户排期 |
 | 3 | "1 次未复现失败"钉死 | 需复现条件；至今未复现 | 我方 |
-| 4 | shadow 观察**第二份报告** | 等真实样本出现 `matched=true`（现在 0 命中，报告价值低） | 我方（持续跑） |
+| 4 | shadow 观察**第二份报告** | 接手核验已有 `matched=true` 留存样本（§2）；待按固定时间窗整理报告，不能等同于真实动作证据 | 我方（待实施，本次分页未开展） |
 | 5 | 54→67 群补 owner/route | **已完成**（实核：67 群全部可路由） | 已关闭 |
 | 6 | `enforce` 实现与阈值校准 | **未实现、未授权**；不得擅自开始 | 负责人 + 主审 |
 | 7 | UI-PAGING-20260921：群/成员白名单/待人工清单分页与群状态数量 | 代码、本机全量和门禁通过；CI 与生产加载以 [本轮记录](2026-09-21-admin-list-pagination.md) 为准 | 我方；生产重启由负责人决定 |
@@ -342,7 +344,7 @@ $env:PYTHONPATH=".;tests"; uv run python -m pytest -c pyproject.toml -p conftest
 （**必须先得到主审对语义变更的确认**）→ 合成库演练"备份→迁移→回填→导出→回滚→再启动+对账"。
 
 **任务 3：出 shadow 第二份观察报告**
-等 `data/moderation.db` 里出现 `matched=true` 的样本后：
+接手核验已见 `matched=true` 的留存样本；先确定一致的 UTC 窗口再生成报告：
 ```powershell
 uv run python scripts/shadow_report.py --db data/moderation.db --since "<UTC>" --until "<UTC>"
 ```

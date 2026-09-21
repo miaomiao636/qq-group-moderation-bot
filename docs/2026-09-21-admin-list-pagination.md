@@ -42,6 +42,18 @@
 
 ## CI 与生产加载
 
-- 本次变更尚未推送，尚无本次 CI 结论；不得借用旧 HEAD 的成功记录。
+- 本次代码、测试和首份文档已推送为 `229d85638301c35b37c6a93289b69a7a0b9d1555`，对应 [CI run 35573589364](https://github.com/miaomiao636/qq-group-moderation-bot/actions/runs/35573589364)（attempt 1）。本节保存固定来源，最终结论以该 run 原始记录为准；不把排队/执行中写成通过。
+- 该 run 的 PR 合并检出 SHA 为 `a9a14874e3254c3049fdf9547ff037d578092615`（runtime 与 Ubuntu checkout 日志已核对），不能将源分支 head 和实际执行 SHA 混称。复核命令：`gh run view 35573589364 --json headSha,status,conclusion,attempt,jobs`；单 job 原始日志使用 `gh api --allow-escape-sequences repos/miaomiao636/qq-group-moderation-bot/actions/jobs/<jobId>/logs`。
+
+| 检查 | jobId | 固定证据入口 |
+| --- | --- | --- |
+| Ubuntu 质量与全量测试 | `106250323836` | [执行结果与日志](https://github.com/miaomiao636/qq-group-moderation-bot/actions/runs/35573589364/job/106250323836) |
+| Windows 质量与全量测试 | `106250323834` | [执行结果与日志](https://github.com/miaomiao636/qq-group-moderation-bot/actions/runs/35573589364/job/106250323834) |
+| 干净运行时依赖 | `106250323620` | [执行结果与日志](https://github.com/miaomiao636/qq-group-moderation-bot/actions/runs/35573589364/job/106250323620) |
+
+CI 的命令是 `uv run ruff check app tests alembic`、`uv run ruff format --check app tests alembic`、`uv run mypy app`、`uv run pytest`；CI 静态检查不含 `scripts`，本机额外覆盖该目录。源代码执行基线到文档提交的 `git diff 759dc5c..HEAD -- app tests alembic scripts pyproject.toml uv.lock` 应为空。**文档回填后的最终 HEAD 仍须单独核验其最新 CI**：`gh run list --commit <git rev-parse HEAD 的完整值> --limit 3 --json databaseId,headSha,status,conclusion,url`，不能用前一 run 代替；最终交接回复提供这一新 run 的链接和实得结论，避免文档自引用导致无限补提交。
+
 - 生产尚未重启加载。本次无数据库迁移；是否立即重启 `QQBotWeb` 仍受交接入口 §10 的生产操作授权约束。
 - 当前 `QQBotWeb` 同时承担后台与 OneBot 接入，不能把重启描述为绝不影响消息接入。未授权前不执行重启、急停或生产回滚。
+- 生效方案：获得明确窗口/授权后，核对在途任务与健康状态，使用现有 `app.reports.backup.backup_sqlite` 做一致性在线备份并确认 `quick_check`；仅正常重启 `QQBotWeb`，检查新进程、健康/OneBot 就绪与持续心跳，再重新登录验收分页。无需重启 `QQBotRuntime`、QQ 或 NapCat。断线期间未入库消息不保证补齐，遗留执行中动作可能变为 UNKNOWN 待核对。
+- 若新页面异常，代码回退方案是撤销本次 Web/测试提交后重新加载；数据库不回滚、不恢复。该代码回退与再次生产重启也须纳入负责人授权。本轮仅备好方案，未执行生产备份、重启或回退。
