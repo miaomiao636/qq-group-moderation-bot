@@ -31,6 +31,10 @@ class FakeService:
     def open_browser(self) -> None:
         self.record("browser")
 
+    def history(self) -> list[dict[str, object]]:
+        self.record("history")
+        return [{"folder": Path("saved-task"), "checked": 3, "total": 10}]
+
     def viewer(self) -> str:
         self.record("viewer")
         return "34567890"
@@ -226,3 +230,30 @@ def test_close_failure_preserves_worker_until_a_successful_retry() -> None:
     assert emitted[1][1]["message"] == "请手动关闭专用浏览器后重试退出。"
     assert [action for action, _ in calls].count("close") == 2
     assert [action for action, _ in calls].count("init") == 1
+
+
+def test_history_does_not_open_browser_replace_task_or_start_scan() -> None:
+    calls: list[tuple[str, int]] = []
+    commands: queue.Queue[Command] = queue.Queue()
+    events: queue.Queue[Event] = queue.Queue(maxsize=100)
+    fake = FakeService(calls)
+    fake.current_folder = Path("current-task")
+    commands.put(("history", None))
+    commands.put(("close", None))
+    worker = threading.Thread(
+        target=run_worker,
+        args=(commands, events, threading.Event(), lambda: cast(Service, fake)),
+    )
+    worker.start()
+    worker.join(timeout=2)
+    assert not worker.is_alive()
+    assert fake.current_folder == Path("current-task")
+    assert calls == [
+        ("init", threading.get_ident()),
+        ("history", worker.ident),
+        ("close", worker.ident),
+    ]
+    assert drain(events) == [
+        ("history", {"tasks": [{"folder": Path("saved-task"), "checked": 3, "total": 10}]}),
+        ("closed", {}),
+    ]
