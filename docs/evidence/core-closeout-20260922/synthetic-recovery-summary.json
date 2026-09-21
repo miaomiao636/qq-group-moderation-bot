@@ -1,0 +1,134 @@
+{
+  "source_sha": "d2a4f6b22b7b1629a4a08b64f7b355d604e5a06d",
+  "started_by": "isolated_recovery",
+  "completed_utc": "2026-09-21T15:57:29.239553+00:00",
+  "archive_command": [
+    "git",
+    "-C",
+    "D:\\CodeBuddy工作空间\\CB 项目\\qq-group-moderation-bot",
+    "archive",
+    "--format=zip",
+    "--output=C:\\Users\\81596\\AppData\\Local\\Temp\\qqbot-isolated-recovery-b3b56e57fe34\\source.zip",
+    "d2a4f6b22b7b1629a4a08b64f7b355d604e5a06d",
+    "app",
+    "alembic",
+    "alembic.ini",
+    "config"
+  ],
+  "archive_sha256": "380ae48e8e02f0b05e97e5034d6213a70be591221cb4c3beaed59006b18520cc",
+  "wrapper_sha256": "9661fef8ffd73a6e83efaaa4fa2b9dbdf95d949916038915b98141e1cb260c93",
+  "commands": [
+    {
+      "command": [
+        "D:\\CodeBuddy工作空间\\CB 项目\\qq-group-moderation-bot\\.venv\\Scripts\\python.exe",
+        "-B",
+        "C:\\Users\\81596\\AppData\\Local\\Temp\\qqbot-isolated-recovery-b3b56e57fe34\\drill.py",
+        "seed"
+      ],
+      "started_utc": "2026-09-21T15:57:26.265666+00:00",
+      "exit_code": 0
+    },
+    {
+      "command": [
+        "D:\\CodeBuddy工作空间\\CB 项目\\qq-group-moderation-bot\\.venv\\Scripts\\python.exe",
+        "-B",
+        "C:\\Users\\81596\\AppData\\Local\\Temp\\qqbot-isolated-recovery-b3b56e57fe34\\drill.py",
+        "server"
+      ],
+      "started_utc": "2026-09-21T15:57:27.372491+00:00",
+      "exit_code": 0
+    }
+  ],
+  "seed": {
+    "source_sha": "d2a4f6b22b7b1629a4a08b64f7b355d604e5a06d",
+    "migration_head": "d4b7c1e9a502",
+    "backup": "C:\\Users\\81596\\AppData\\Local\\Temp\\qqbot-isolated-recovery-b3b56e57fe34\\seed\\backups\\moderation-20260921T155727Z-_33srir2.db",
+    "backup_sha256": "60d62e77814fc783f8a80c3ea7e38851b03d0c6b0c1ade720171d9c75d0781cd",
+    "restored_sha256_before_startup": "60d62e77814fc783f8a80c3ea7e38851b03d0c6b0c1ade720171d9c75d0781cd",
+    "logical_dump_sha256": "945085226c23191d91eb682d5939e4d702a7e114b4185bd9b479873e27a9ec32",
+    "wal_only_committed_rows_verified": true,
+    "integrity_check": "ok",
+    "foreign_key_check": [],
+    "online_backup_seconds": 0.01600000000325963,
+    "observed": {
+      "sqlite_connections": [
+        "C:\\Users\\81596\\AppData\\Local\\Temp\\qqbot-isolated-recovery-b3b56e57fe34\\seed\\synthetic.db",
+        "C:\\Users\\81596\\AppData\\Local\\Temp\\qqbot-isolated-recovery-b3b56e57fe34\\seed\\synthetic.db",
+        "C:\\Users\\81596\\AppData\\Local\\Temp\\qqbot-isolated-recovery-b3b56e57fe34\\seed\\main-file-only-control.db",
+        "C:\\Users\\81596\\AppData\\Local\\Temp\\qqbot-isolated-recovery-b3b56e57fe34\\seed\\synthetic.db",
+        "C:\\Users\\81596\\AppData\\Local\\Temp\\qqbot-isolated-recovery-b3b56e57fe34\\seed\\backups\\moderation-20260921T155727Z-_33srir2.partial",
+        "C:\\Users\\81596\\AppData\\Local\\Temp\\qqbot-isolated-recovery-b3b56e57fe34\\seed\\backups\\moderation-20260921T155727Z-_33srir2.db",
+        "C:\\Users\\81596\\AppData\\Local\\Temp\\qqbot-isolated-recovery-b3b56e57fe34\\restored\\synthetic.db"
+      ],
+      "network_connections": [
+        [
+          "127.0.0.1",
+          61403
+        ]
+      ],
+      "violations": []
+    }
+  },
+  "startup": {
+    "healthz": {
+      "status": "ok",
+      "env": "test",
+      "mode": "SAFE",
+      "media_storage": {
+        "state": "ok",
+        "used_bytes": 0,
+        "quota_bytes": 2147483648,
+        "remaining_bytes": 2147483648,
+        "disk_free_bytes": 78624284672,
+        "warning_percent": 80
+      }
+    },
+    "notification_health": {
+      "status": "disabled"
+    },
+    "bound_address": [
+      "127.0.0.1",
+      61413
+    ],
+    "migration_head": "d4b7c1e9a502",
+    "notifications_worker_started": false,
+    "official_runtime_launched": false,
+    "scheduler_launched": false,
+    "source_sha": "d2a4f6b22b7b1629a4a08b64f7b355d604e5a06d",
+    "integrity_check": "ok",
+    "events_after_startup": {
+      "synthetic-PROCESSED": "PROCESSED",
+      "synthetic-PROCESSING": "FAILED",
+      "synthetic-PENDING": "PENDING"
+    },
+    "actions_after_startup": {
+      "synthetic-SUCCEEDED": "SUCCEEDED",
+      "synthetic-UNKNOWN": "UNKNOWN"
+    },
+    "restored_table_counts": {
+      "allowlist_members": 1,
+      "provider_group_settings": 1,
+      "cases": 1,
+      "processed_events": 3,
+      "action_intents": 2
+    },
+    "observed": {
+      "sqlite_connections": [
+        "C:\\Users\\81596\\AppData\\Local\\Temp\\qqbot-isolated-recovery-b3b56e57fe34\\restored\\synthetic.db",
+        "C:\\Users\\81596\\AppData\\Local\\Temp\\qqbot-isolated-recovery-b3b56e57fe34\\restored\\synthetic.db"
+      ],
+      "network_connections": [
+        [
+          "127.0.0.1",
+          61408
+        ],
+        [
+          "127.0.0.1",
+          61413
+        ]
+      ],
+      "violations": []
+    }
+  },
+  "scope": "Synthetic SQLite online backup and isolated HTTP startup only; not production rollback, full Windows reboot/network/power recovery, offsite backup or notification delivery acceptance."
+}

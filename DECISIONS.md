@@ -1247,3 +1247,8 @@ ACTION_MODE 切换为 OFFICIAL、ONEBOT_ACTIONS_ENABLED=true、ONEBOT_ACTION_STA
 - **不变量**：`ONEBOT_ACTION_STAGE` 仍为 **`recall_only`**（只撤回，禁言/警告仍被编排层跳过）；
   `IMAGE_HASH_MODE=shadow`；enforce **未实现**；本次不改判定逻辑、不扩权限到其它 provider。
 - **回退**：按本次输出的 `ROLLBACK_SQL` 逐行删除这 54 行归属与路由即可（或从上述一致性备份恢复）。
+
+
+## 2026-09-22 主项目收尾 CORE-CLOSEOUT
+
+报告一致快照、UTC/区间与旧证据保护已修复；固定窗口 shadow、当前参数容量 B/C Mock、合成库恢复与 N03 只读预检已取证。通知暂不开启；原件清理待具体清单确认、整机演练待排期。负责人授权本任务承担方案 A 审查和实施，先修正提案并隔离开发；不自动授权生产迁移。源码/测试/证据/门禁及剩余工作统一见 [本轮记录](docs/2026-09-22-core-closeout.md)，全量与最终 CI 按该记录实时核实。

@@ -326,3 +326,8 @@ PENDING_REVIEW
 - [QQ群成员禁言](https://bot.q.qq.com/wiki/develop/api-v2/autogen/api/v2_groups_group_openid_restrict_chat_setting.post.html)
 - [NapCatQQ](https://github.com/NapNeko/NapCatQQ)
 - [OneBot 11 API](https://github.com/botuniverse/onebot-11/blob/master/api/public.md)
+
+
+## 2026-09-22 主项目收尾 CORE-CLOSEOUT
+
+报告一致快照、UTC/区间与旧证据保护已修复；固定窗口 shadow、当前参数容量 B/C Mock、合成库恢复与 N03 只读预检已取证。通知暂不开启；原件清理待具体清单确认、整机演练待排期。负责人授权本任务承担方案 A 审查和实施，先修正提案并隔离开发；不自动授权生产迁移。源码/测试/证据/门禁及剩余工作统一见 [本轮记录](docs/2026-09-22-core-closeout.md)，全量与最终 CI 按该记录实时核实。
