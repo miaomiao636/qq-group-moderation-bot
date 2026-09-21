@@ -93,6 +93,11 @@ class Service:
     def groups(self) -> list[Group]:
         return self._directory.groups()
 
+    def history(self) -> list[dict[str, object]]:
+        from .history import list_tasks
+
+        return list_tasks(self.root / "tasks")
+
     def open_browser(self) -> None:
         self._browser.open()
 

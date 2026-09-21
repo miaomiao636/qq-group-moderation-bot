@@ -7,10 +7,12 @@ import queue
 import sys
 import threading
 import tkinter as tk
+from datetime import datetime
 from pathlib import Path
 from tkinter import filedialog, messagebox, ttk
 
 from .contracts import LABELS, REASONS, Group
+from .service import data_root
 from .worker import Command, Event, run_worker
 
 
@@ -29,6 +31,7 @@ class Window:
         self._logged_in = False
         self._folder: Path | None = None
         self._search_timer: str | None = None
+        self._history_dialog: tk.Toplevel | None = None
         self._source = tk.StringVar(value="正在读取机器人账号和群列表……")
         self._viewer = tk.StringVar(value="空间访问账号：尚未确认登录")
         self._search = tk.StringVar()
@@ -268,11 +271,120 @@ class Window:
         )
 
     def _resume(self) -> None:
+        if self._history_dialog is not None:
+            self._history_dialog.lift()
+            return
+        self._submit("history")
+
+    @staticmethod
+    def _history_date(value: object) -> str:
+        if not isinstance(value, str):
+            return "时间未知"
+        try:
+            created = datetime.fromisoformat(value)
+            if created.tzinfo is None:
+                return "时间未知"
+            return created.astimezone().strftime("%Y-%m-%d %H:%M:%S")
+        except (ValueError, OverflowError, OSError):
+            return "时间未知"
+
+    def _dismiss_history(self) -> None:
+        dialog, self._history_dialog = self._history_dialog, None
+        if dialog is not None:
+            dialog.destroy()
+
+    def _other_task(self) -> None:
+        if self._closing or self._shutdown_failed or self._busy:
+            return
         chosen = filedialog.askdirectory(
-            title="选择已有巡检任务目录", parent=self.root, mustexist=True
+            title="选择已有巡检任务目录",
+            parent=self._history_dialog or self.root,
+            initialdir=str(data_root() / "tasks"),
+            mustexist=True,
         )
-        if chosen:
+        if chosen and not self._closing and not self._shutdown_failed and not self._busy:
+            self._dismiss_history()
             self._submit("resume", Path(chosen))
+
+    def _show_history(self, tasks: object, error_message: str = "") -> None:
+        if self._closing or self._shutdown_failed:
+            return
+        self._dismiss_history()
+        dialog = tk.Toplevel(self.root)
+        self._history_dialog = dialog
+        dialog.title("载入已有巡检任务")
+        dialog.geometry("900x440")
+        dialog.minsize(720, 320)
+        dialog.transient(self.root)
+        dialog.protocol("WM_DELETE_WINDOW", self._dismiss_history)
+        outer = ttk.Frame(dialog, padding=12)
+        outer.pack(fill="both", expand=True)
+        outer.columnconfigure(0, weight=1)
+        outer.rowconfigure(1, weight=1)
+        ttk.Label(
+            outer,
+            text="最近 50 个任务（本机时间）。载入后可查看或导出，点击“继续检查”才会开始巡检。",
+            wraplength=840,
+        ).grid(row=0, column=0, sticky="w", pady=(0, 8))
+        tree = self._tree(
+            outer,
+            1,
+            ("created", "groups", "checked", "total", "restricted"),
+            ("创建时间", "群名称", "已检查", "总人数", "观察到限制"),
+        )
+        tree.configure(selectmode="browse")
+        tree.column("created", width=155, stretch=False)
+        tree.column("groups", width=340, stretch=True)
+        tree.column("checked", width=75, stretch=False)
+        tree.column("total", width=75, stretch=False)
+        tree.column("restricted", width=100, stretch=False)
+        folders: dict[str, Path] = {}
+        if isinstance(tasks, list):
+            for task in tasks[:50]:
+                if not isinstance(task, dict) or not isinstance(task.get("folder"), Path):
+                    continue
+                folder = task["folder"]
+                row_id = tree.insert(
+                    "",
+                    "end",
+                    values=(
+                        self._history_date(task.get("created_at")),
+                        str(task.get("group_names", "")),
+                        task.get("checked", 0),
+                        task.get("total", 0),
+                        task.get("restricted", 0),
+                    ),
+                )
+                folders[row_id] = folder
+
+        def load_selected() -> None:
+            if self._closing or self._shutdown_failed or self._busy:
+                return
+            selection = tree.selection()
+            folder = folders.get(selection[0]) if selection else None
+            if folder is not None:
+                self._dismiss_history()
+                self._submit("resume", folder)
+
+        buttons = ttk.Frame(outer)
+        buttons.grid(row=3, column=0, sticky="ew", pady=(10, 0))
+        load_button = ttk.Button(buttons, text="载入所选", command=load_selected)
+        load_button.pack(side="left")
+        ttk.Button(buttons, text="其他位置", command=self._other_task).pack(side="left", padx=8)
+        ttk.Button(buttons, text="取消", command=self._dismiss_history).pack(side="right")
+        if folders:
+            first = next(iter(folders))
+            tree.selection_set(first)
+            tree.focus(first)
+        else:
+            load_button.configure(state="disabled")
+            ttk.Label(
+                outer,
+                text=error_message or "没有找到已保存的任务；可点击“其他位置”选择任务文件夹。",
+                wraplength=840,
+            ).grid(row=2, column=0, sticky="w", pady=(8, 0))
+        dialog.grab_set()
+        tree.focus_set()
 
     def _pause(self) -> None:
         self._stop.set()
@@ -283,6 +395,7 @@ class Window:
         if self._closing:
             return
         self._closing = True
+        self._dismiss_history()
         self._stop.set()
         self._status.set("正在保存任务并关闭巡检浏览器，请稍候……")
         self._controls()
@@ -386,12 +499,17 @@ class Window:
                     self._status.set("已有任务已载入；确认空间登录后可继续检查，也可直接导出。")
                 else:
                     self._status.set("任务已保存。请核对统计；未观察到限制提示的成员仍为待确认。")
+            elif kind == "history":
+                self._show_history(payload.get("tasks"))
+                self._status.set("选择已有任务载入；载入不会自动开始巡检。")
             elif kind == "exported":
                 path = str(payload.get("path", ""))
                 self._export_text.set(path)
                 self._status.set("结果已导出，文件位置显示在“最近导出”一栏。")
             elif kind == "error":
                 self._show_snapshot(payload)
+                if payload.get("operation") == "history":
+                    self._show_history([], str(payload.get("message", "历史任务读取未完成。")))
                 if payload.get("operation") in {"viewer", "browser"}:
                     self._logged_in = False
                     self._viewer.set("空间访问账号：尚未确认登录")

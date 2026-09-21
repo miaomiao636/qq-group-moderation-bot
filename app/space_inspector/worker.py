@@ -63,6 +63,8 @@ def run_worker(
                 service = service_factory()
             if kind == "groups":
                 emit("ready", {"groups": service.groups(), "source_id": service.source_id})
+            elif kind == "history":
+                emit("history", {"tasks": service.history()})
             elif kind == "browser":
                 service.open_browser()
                 emit("browser_opened", {})

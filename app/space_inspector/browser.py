@@ -114,7 +114,7 @@ SNAPSHOT_SCRIPT = r"""() => {
         permission_panels: [...document.querySelectorAll('.page > .page_main > .main_content.main_login')]
             .filter(visible).slice(0, 2).map(panel => ({
                 tips: panel.querySelector(':scope > p.tips')?.textContent.trim().slice(0, 500) || '',
-                apply_link: [...panel.querySelectorAll('.apply_access a[data-cmd="apply_request"]')]
+                apply_link: [...panel.querySelectorAll('.access_option a[data-cmd="apply_request"]')]
                     .some(a => visible(a) && a.textContent.trim() === '申请访问')
             })),
         panels: [...document.querySelectorAll('.page > .page_main > .error_content')]
