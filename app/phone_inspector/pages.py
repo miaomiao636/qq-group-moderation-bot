@@ -202,14 +202,26 @@ def parse_page(raw: bytes) -> Page:
             raise InspectionError("请在手机成员列表选择默认排序后继续。")
         viewport = _bounds(viewport_node)
         rows = []
-        for row in find("jzt"):
+        section = ""
+        for row in nodes:
+            if row.get("resource-id") == PACKAGE + ":id/k8u":
+                section = row.get("text", "")
+            if row.get("resource-id") != PACKAGE + ":id/jzt":
+                continue
+            bounds = _bounds(row)
+            if not viewport.contains(bounds) or bounds.height < 70:
+                continue  # A clipped row can have no name node until the next viewport.
+            if section == "机器人" and any(
+                n.get("resource-id") == PACKAGE + ":id/kab" for n in row.iter("node")
+            ):
+                continue  # Native robot section + robot badge, never the member's nickname.
             labels = [
                 n for n in row.iter("node") if n.get("resource-id") == PACKAGE + ":id/tv_name"
             ]
             if len(labels) != 1 or row.get("enabled") != "true":
                 raise InspectionError("成员行结构变化，已暂停。")
             try:
-                bounds, target = _bounds(row), _bounds(labels[0])
+                target = _bounds(labels[0])
             except InspectionError:
                 continue  # Clipped rows are inspected on the overlapping next viewport.
             if target.left >= viewport.right * 0.68:
