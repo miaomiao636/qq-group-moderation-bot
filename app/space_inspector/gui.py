@@ -138,6 +138,9 @@ class Window:
             ttk.Entry(paths, textvariable=variable, state="readonly").grid(
                 row=row, column=1, sticky="ew"
             )
+        ttk.Button(paths, text="打开任务目录", command=self._open_task_folder).grid(
+            row=0, column=2, padx=(8, 0)
+        )
         ttk.Label(outer, textvariable=self._summary, wraplength=950).grid(
             row=7, column=0, sticky="ew", pady=4
         )
@@ -526,6 +529,16 @@ class Window:
                 os.startfile(target)
             except OSError:
                 self._status.set("无法打开文件夹，请复制“最近导出”中的路径自行打开。")
+
+    def _open_task_folder(self) -> None:
+        target = self._folder or data_root() / "tasks"
+        if target.is_dir() and sys.platform == "win32":
+            try:
+                os.startfile(target)
+            except OSError:
+                self._status.set("无法打开任务目录；可用“载入已有任务”查看已保存任务。")
+        else:
+            self._status.set("尚未保存巡检任务；创建任务后可打开任务目录。")
 
 
 def main() -> None:

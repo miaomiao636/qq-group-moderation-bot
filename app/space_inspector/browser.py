@@ -78,6 +78,19 @@ def classify_page(raw: object, qq: str, viewer_qq: str) -> Observation:
         icons = panel.get("report_icons")
         if type(icons) is int and 0 <= icons <= 10:
             evidence["report_icon_count"] = icons
+        paragraphs = panel.get("paragraphs")
+        if (
+            raw.get("normal_profile") is False
+            and type(icons) is int
+            and icons == 0
+            and isinstance(paragraphs, list)
+            and len(paragraphs) == 2
+            and paragraphs[0] == "对方未开通空间"
+            and isinstance(paragraphs[1], str)
+            and paragraphs[1].split() == ["邀请开通", "返回我的空间"]
+        ):
+            evidence["notice_source"] = "qzone_unopened_page"
+            return result(UNCONFIRMED, "space_not_opened")
         if (
             raw.get("normal_profile") is False
             and type(icons) is int

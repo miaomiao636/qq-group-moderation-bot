@@ -56,4 +56,5 @@ REASONS = {
     "unexpected_location": "页面地址与待检查成员不一致",
     "unrecognized_page": "页面格式无法确认，请人工查看",
     "space_access_permission_required": "主人设置了访问权限，待确认；继续检查其他成员",
+    "space_not_opened": "对方未开通空间，待确认；继续检查其他成员",
 }

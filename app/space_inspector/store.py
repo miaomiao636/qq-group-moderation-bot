@@ -49,6 +49,7 @@ _SOURCES = {
     "qzone_top_level_error",
     "qzone_profile",
     "qzone_permission_page",
+    "qzone_unopened_page",
     "unrecognized_page",
     "login_redirect",
     "navigation_failure",
@@ -389,10 +390,10 @@ OR o.visit_id!=(SELECT MAX(id) FROM visits WHERE qq=o.qq) LIMIT 1""").fetchone()
             or not viewer
             or value["viewer_qq"] != viewer
             or value["notice"] != ""
-            or value["notice_source"] not in {"qzone_profile", "qzone_permission_page"}
+            or value["notice_source"]
+            not in {"qzone_profile", "qzone_permission_page", "qzone_unopened_page"}
             or value["ready_state"] != "complete"
-            or value["panel_count"]
-            != (1 if value["notice_source"] == "qzone_permission_page" else 0)
+            or value["panel_count"] != (0 if value["notice_source"] == "qzone_profile" else 1)
             or value["report_icon_count"] != 0
         ):
             raise InspectionError("未观察到提示的页面依据不完整，不能记作已完成。")
