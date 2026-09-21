@@ -24,7 +24,7 @@ from .contracts import (
     numeric_id,
 )
 
-EXPERIMENT_BATCH_SIZE = 10
+EXPERIMENT_BATCH_SIZE = 300
 EXPERIMENT_DELAY_SECONDS = 30.0
 
 
