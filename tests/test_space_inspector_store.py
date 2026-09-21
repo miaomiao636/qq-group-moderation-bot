@@ -80,6 +80,32 @@ def test_resume_retains_source_viewer_progress_and_counts(tmp_path):
         resumed.close()
 
 
+def test_period_notice_resumes_and_exports_original_text_without_erasing_history(tmp_path):
+    folder = tmp_path / "task"
+    store = make_store(folder)
+    store.save(
+        observation(
+            BLOCKED, evidence={**evidence(), "notice_source": "unrecognized_page", "panel_count": 1}
+        )
+    )
+    notice = "您访问的空间存在违规信息,已被多名用户举报,暂时无法查看。"
+    store.save(observation(evidence={**evidence(restricted=True), "notice": notice}))
+    store.close()
+    resumed = Store(folder)
+    try:
+        assert resumed.pending() == [OTHER]
+        assert resumed.summary()["restricted"] == 1
+        assert resumed.db.execute("SELECT COUNT(*) FROM visits").fetchone()[0] == 2
+        output = resumed.export()
+        report = json.loads((output / "report.json").read_text(encoding="utf-8"))
+        member = next(row for row in report["rows"] if row["qq"] == MEMBER)
+        assert member["evidence"]["notice"] == notice
+        with (output / "restricted.csv").open(encoding="utf-8-sig", newline="") as handle:
+            assert len(list(csv.DictReader(handle))) == 1
+    finally:
+        resumed.close()
+
+
 def test_cross_group_member_checked_once_but_exported_per_group(tmp_path):
     store = Store(tmp_path / "task", create=True)
     try:

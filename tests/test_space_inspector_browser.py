@@ -29,6 +29,55 @@ def test_verified_qzone_system_notice_is_observed() -> None:
     assert result.evidence["viewer_qq"] == VIEWER
 
 
+def test_verified_fullwidth_colon_period_template_preserves_original_notice():
+    raw = page()
+    notice = "您访问的空间存在违规信息,已被多名用户举报,暂时无法查看。"
+    raw["panels"] = [{"paragraphs": ["温馨提示：", notice, "返回我的空间"], "report_icons": 1}]
+    result = classify_page(raw, QQ, VIEWER)
+    assert result.status == RESTRICTED
+    assert result.evidence["notice"] == notice
+
+
+@pytest.mark.parametrize(
+    "change",
+    [
+        {"viewers": ["22345678"]},
+        {"ready": "loading"},
+        {"normal_profile": True},
+        {"url": "https://user.qzone.qq.com/22345678"},
+    ],
+)
+def test_period_template_still_requires_verified_identity_and_system_page(change):
+    raw = page()
+    raw["panels"] = [
+        {
+            "paragraphs": [
+                "温馨提示：",
+                "您访问的空间存在违规信息,已被多名用户举报,暂时无法查看。",
+                "返回我的空间",
+            ],
+            "report_icons": 1,
+        }
+    ]
+    raw.update(change)
+    assert classify_page(raw, QQ, VIEWER).status == BLOCKED
+
+
+@pytest.mark.parametrize(
+    "heading,notice,icons",
+    [
+        ("温馨提示:", "您访问的空间存在违规信息,已被多名用户举报,暂时无法查看。", 1),
+        ("温馨提示：", NOTICE, 1),
+        ("温馨提示：", "您访问的空间存在违规信息,已被多名用户举报,暂时无法查看。", 0),
+        ("温馨提示：", "您访问的空间存在违规信息,已被多名用户举报,暂时无法查看。", True),
+    ],
+)
+def test_unverified_period_like_template_still_blocks(heading, notice, icons):
+    raw = page()
+    raw["panels"] = [{"paragraphs": [heading, notice, "返回我的空间"], "report_icons": icons}]
+    assert classify_page(raw, QQ, VIEWER).status == BLOCKED
+
+
 def test_real_punctuation_is_required_not_an_invented_warning() -> None:
     raw = page()
     raw["panels"] = [
