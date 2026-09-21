@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 import queue
+import sys
 import threading
 import tkinter as tk
 from pathlib import Path
@@ -179,7 +180,7 @@ class Window:
         try:
             folder = export_task(Path(self.task.get()))
             self.status.set("已导出 TXT、CSV 和完整 JSON 报告：" + str(folder))
-            if os.name == "nt":
+            if sys.platform == "win32":
                 os.startfile(folder)
         except Exception as exc:
             messagebox.showerror("导出未完成", str(exc))
