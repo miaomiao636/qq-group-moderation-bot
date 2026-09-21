@@ -9,10 +9,10 @@
 1. 打开工具，刷新群列表。群成员来源是项目已配置的机器人账号；QQ 空间观察账号由专用浏览器正常登录，两者分别显示。
 2. 点击“打开空间登录”，在独立 Microsoft Edge 中登录 QQ 空间，然后点击“确认已登录”。首次登录和之后的会话过期需要本人处理；不复制现有浏览器或 QQ 的凭据。
 3. 选择需要检查的群，点击“开始检查所选群”。每个任务最多选择 10 个群；同一账号跨群只访问一次，导出保留每个群的关联。
-4. 可以暂停、关闭后载入任务继续。点击“载入已有任务”，在窗口内按创建时间、群名和进度选择任务，再点“载入所选”；默认选择最新任务，不必寻找隐藏的 AppData 目录。“其他位置”保留手动选择入口。载入不会自动开始巡检；点“继续检查”才续扫。任务逐项保存；同一任务必须使用原成员来源账号和空间观察账号才能续扫。仅查看或导出已有任务不需要重新登录空间。
+4. 可以暂停、关闭后载入任务继续。点击“载入已有任务”，在窗口内按创建时间、群名和进度选择任务，再点“载入所选”；默认选择最新任务，不必寻找隐藏的 AppData 目录。“其他位置”保留手动选择入口。载入不会自动开始巡检；点“继续检查”才续扫。任务逐项保存；同一任务必须使用原成员来源账号和空间观察账号才能续扫。仅查看或导出已有任务不需要重新登录空间。需要查看文件时点“打开任务目录”；未载入任务时打开任务根目录。AppData 默认隐藏，也可按 Win+R 输入 `%LOCALAPPDATA%\QQSpaceInspector\tasks` 直接进入。
 5. 点击“导出结果”，再点“打开导出目录”。`restricted.csv` 仅包含明确空间违规限制提示；`report.csv` 包含全部快照成员；`report.json` 保存观察依据、统计和群快照信息；`说明.txt` 解释范围与未完成数量。CSV 可用 Excel 打开。
 
-不要在扫描期间手动切换专用浏览器的页面或账号。明确的“主人设置了权限”页面记为待确认并继续；遇到登录失效、访问失败或其他未知页面会保存进度并暂停，用户处理后才能继续。未完成任务也可导出，导出不会把未完成成员当作正常。
+不要在扫描期间手动切换专用浏览器的页面或账号。已核验的“主人设置了权限”“对方未开通空间”页面记为待确认并继续；遇到登录失效、访问失败或其他未知页面会保存进度并暂停，提示具体 QQ 号及原因，用户处理后才能继续。未完成任务也可导出，导出不会把未完成成员当作正常。
 
 ## 判据与边界
 
@@ -133,6 +133,56 @@ gh run list --branch windows-deploy-2026-09-10 --limit 5 --json databaseId,headS
 gh run view <匹配最终HEAD的run_id> --json headSha,status,conclusion,jobs
 ```
 
+## 未开通空间页导致的后续暂停
+
+负责人再次反馈暂停，原任务已越过之前的权限页。执行 SHA `64f77a78522281987022f90ff657363cd79ec0f5` 只读核验命令如下：
+
+```powershell
+uv run python 'C:/Users/81596/AppData/Local/QQSpaceInspector/evidence/inspect_saved_task.py' 'C:/Users/81596/AppData/Local/QQSpaceInspector/tasks/20260921T124031Z-621478da' --output 'C:/Users/81596/AppData/Local/QQSpaceInspector/evidence/next-pause-live-read-20260921.json'
+```
+
+保存的实机进度为 993 名成员、已检查 78（限制提示 5、待确认 73）、未完成 915（含当前受阻成员）。当前受阻原因为 `unrecognized_page`。随后在同一查看账号下，用 `qzoneTab.goto(任务记录中的成员页面)`、`getAXState()`、`playwright.evaluate(...)` 核对，实际顶层错误区域是“对方未开通空间”，附“邀请开通 / 返回我的空间”，没有违规报告图标；不是登录失效或已观察到违规提示。私有最小 DOM 转录保存在 `evidence/unopened-page-dom-20260921.json`，不含凭据，也不是原始 HTTP 响应。
+
+内部新增回归在基线 `64f77a78522281987022f90ff657363cd79ec0f5`（仅测试未提交修改）执行 `uv run pytest tests/test_space_inspector_browser.py tests/test_space_inspector_store.py -k unopened -q -o addopts= --tb=short`，真实复现 2 failed、5 passed：未开通模板被判 BLOCKED，存储拒绝新的依据来源。
+
+代码提交 `f74b8ed3b30de9fa9065565696b416133cf60d04`：严格匹配已核验的顶层未开通模板，记 `UNCONFIRMED / space_not_opened`，绑定目标、查看账号和完整加载状态不变；存储允许该最小依据并保留原暂停历史。另加“打开任务目录”按钮、暂停时显示具体 QQ 与原因。未改阳性判据、未知页暂停策略或生产模块。回归提交 `5f54f877d04e20b7f99a83ae49a77dbc54b5484c`，覆盖未知模板仍停、恢复保留历史、导出依据以及实际调度继续下一成员。
+
+在执行 SHA `5f54f877d04e20b7f99a83ae49a77dbc54b5484c` 执行以下 TEMP 验证通过：生产分类器回放实页最小转录得到待确认；任务目录回调通过正确路径与打开失败提示的隔离检查。操作系统打开动作已用测试替身替代，不宣称实际操作了用户资源管理器；没有推进真实任务。这项未入库，不当作 CI 测试：
+
+```powershell
+& 'C:/Users/81596/AppData/Local/QQSpaceInspector/runtime/Scripts/python.exe' 'C:/Users/81596/AppData/Local/QQSpaceInspector/evidence/verify_unopened_page.py'
+```
+
+### 未开通页面补丁验收
+
+执行 SHA `5f54f877d04e20b7f99a83ae49a77dbc54b5484c`（期间只追加文档，源码/测试未变）：
+
+```powershell
+uv run ruff check app tests alembic scripts
+uv run ruff format --check app tests alembic scripts
+uv run mypy app
+uv run pytest --junitxml='C:/Users/81596/AppData/Local/Temp/qqbot-space-inspector-20260921/verification-unopened-fix/full.xml'
+uv run python 'C:/Users/81596/AppData/Local/Temp/qqbot-space-inspector-20260921/summarize_unopened_verification.py'
+```
+
+全量 2164 项：2147 passed、17 skipped、0 failed/error。主审 31 文件/262 项全部通过；巡检内部回归 167 项中 166 passed、1 skipped（Windows symlink 权限，原因与上一轮相同）。格式 345 文件、类型 111 源文件，门禁全部通过。证据在 `verification-unopened-fix/` 的 JUnit、日志、摘要及门禁输出。
+
+负责人反馈已能继续。上述 SHA 下只读执行：
+
+```powershell
+uv run python 'C:/Users/81596/AppData/Local/QQSpaceInspector/evidence/inspect_saved_task.py' 'C:/Users/81596/AppData/Local/QQSpaceInspector/tasks/20260921T124031Z-621478da' --output 'C:/Users/81596/AppData/Local/QQSpaceInspector/evidence/unopened-fix-live-resume-20260921.json'
+```
+
+保存的真实记录确认原阻断成员已以 `space_not_opened / UNCONFIRMED` 完成，旧 BLOCKED 历史仍保留，任务继续检查后续成员。该快照已检查 105/993，观察到限制 8、待确认 97、未完成 888，无当前 BLOCKED 成员。这是一次有界续扫成功，不代表整群完成，也不将未开通空间算成异常账号。
+
+同时核对用户通过 GUI 生成的已有导出（导出生成于本补丁前），执行 SHA 同上：
+
+```powershell
+uv run python 'C:/Users/81596/AppData/Local/QQSpaceInspector/evidence/verify_export.py' 'C:/Users/81596/AppData/Local/QQSpaceInspector/tasks/20260921T124031Z-621478da/exports/20260921T133058Z-9b51c9c5dd37' --source-sha 5f54f877d04e20b7f99a83ae49a77dbc54b5484c
+```
+
+CSV/JSON 一致性通过：该旧导出包含快照成员 993 行，导出时已检查 78、限制 5、待确认 73、未完成 915。此为用户 GUI 导出的核验，不再只是复制任务的组件导出；仍不能代替本补丁续扫后的新导出或全群验收。最终文档 HEAD 的 CI 仍按上方查询命令逐项核对，旧成功 run 不作为本补丁证明。
+
 ## 待验证
 
-第二次权限页修复后的用户实机续扫、暂停和 GUI 导出仍需核验；全群覆盖、其他权限页面、长期运行及 QQ 页面升级兼容性仍需实际使用验证。方案 A 主审裁定与 Windows 回滚维护窗口仍是独立待办，不因本功能完成而关闭。
+权限页及未开通页面修复后的有界实机续扫均有保存记录证明，已有 GUI 导出也已核对；未开通页面补丁后的新增实机结果导出尚待核验。全群覆盖、其他页面、长期运行及 QQ 页面升级兼容性仍需实际使用验证。方案 A 主审裁定与 Windows 回滚维护窗口仍是独立待办，不因本功能完成而关闭。
