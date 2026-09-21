@@ -49,10 +49,38 @@ def test_scan_saves_before_progress_and_finishes_snapshot() -> None:
 
 def test_blocked_visit_is_saved_then_job_stops() -> None:
     store, reader = MemoryStore(), Reader(BLOCKED)
-    with pytest.raises(InspectionError):
+    with pytest.raises(InspectionError, match="QQ 12345678.*页面格式无法确认"):
         run_scan(store, reader, "98765432", threading.Event(), lambda _: None, delay=0)
     assert len(store.saved) == 1
     assert reader.calls == ["12345678"]
+
+
+def test_unopened_space_is_saved_and_scan_continues_to_next_member() -> None:
+    class UnopenedReader:
+        def inspect(self, qq: str, viewer_qq: str) -> Observation:
+            return classify_page(
+                {
+                    "url": f"https://user.qzone.qq.com/{qq}",
+                    "ready": "complete",
+                    "viewers": [viewer_qq],
+                    "normal_profile": False,
+                    "panels": [
+                        {
+                            "paragraphs": ["对方未开通空间", "邀请开通\u00a0\u00a0返回我的空间"],
+                            "report_icons": 0,
+                        }
+                    ],
+                },
+                qq,
+                viewer_qq,
+            )
+
+    store = MemoryStore()
+    run_scan(store, UnopenedReader(), "98765432", threading.Event(), lambda _: None, delay=0)
+    assert [item.qq for item in store.saved] == ["12345678", "22345678"]
+    assert all(
+        item.status == UNCONFIRMED and item.reason == "space_not_opened" for item in store.saved
+    )
 
 
 def test_pause_before_scan_makes_no_requests() -> None:

@@ -297,6 +297,37 @@ def test_stored_schema_or_metadata_corruption_is_rejected(tmp_path):
             Store(folder)
 
 
+def test_unopened_space_can_resume_blocked_member_without_losing_history(tmp_path):
+    folder = tmp_path / "task"
+    store = make_store(folder)
+    store.save(
+        observation(
+            BLOCKED, evidence={**evidence(), "notice_source": "unrecognized_page", "panel_count": 1}
+        )
+    )
+    store.save(
+        observation(
+            UNCONFIRMED,
+            reason="space_not_opened",
+            evidence={**evidence(), "notice_source": "qzone_unopened_page", "panel_count": 1},
+        )
+    )
+    store.close()
+    resumed = Store(folder)
+    try:
+        assert resumed.pending() == [OTHER]
+        assert resumed.summary()["unconfirmed"] == 1
+        assert resumed.summary()["restricted"] == 0
+        assert resumed.db.execute("SELECT COUNT(*) FROM visits").fetchone()[0] == 2
+        output = resumed.export()
+        report = json.loads((output / "report.json").read_text(encoding="utf-8"))
+        member = next(row for row in report["rows"] if row["qq"] == MEMBER)
+        assert member["reason"] == "space_not_opened"
+        assert member["evidence"]["notice_source"] == "qzone_unopened_page"
+    finally:
+        resumed.close()
+
+
 def test_cannot_overwrite_existing_task_or_create_on_resume(tmp_path):
     folder = tmp_path / "task"
     store = make_store(folder)

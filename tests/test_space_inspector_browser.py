@@ -58,6 +58,34 @@ def test_verified_owner_permission_page_remains_unconfirmed_and_does_not_block()
     assert result.evidence["notice"] == ""
 
 
+def test_verified_unopened_space_is_unconfirmed_and_does_not_block():
+    raw = page()
+    raw["panels"] = [
+        {"paragraphs": ["对方未开通空间", "邀请开通\u00a0\u00a0返回我的空间"], "report_icons": 0}
+    ]
+    result = classify_page(raw, QQ, VIEWER)
+    assert result.status == UNCONFIRMED
+    assert result.reason == "space_not_opened"
+    assert result.evidence["notice_source"] == "qzone_unopened_page"
+    assert result.evidence["notice"] == ""
+
+
+@pytest.mark.parametrize(
+    "paragraphs,icons",
+    [
+        (["请输入验证码", "邀请开通\u00a0\u00a0返回我的空间"], 0),
+        (["对方未开通空间", "请稍后重试"], 0),
+        (["对方未开通空间", "邀请开通\u00a0\u00a0返回我的空间"], 1),
+        (["对方未开通空间", "邀请开通\u00a0\u00a0返回我的空间"], False),
+        (["对方未开通空间"], 0),
+    ],
+)
+def test_unopened_like_unknown_error_still_blocks(paragraphs, icons):
+    raw = page()
+    raw["panels"] = [{"paragraphs": paragraphs, "report_icons": icons}]
+    assert classify_page(raw, QQ, VIEWER).status == BLOCKED
+
+
 @pytest.mark.parametrize(
     "change",
     [
