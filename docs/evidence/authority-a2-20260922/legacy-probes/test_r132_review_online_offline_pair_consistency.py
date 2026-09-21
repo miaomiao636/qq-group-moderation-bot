@@ -1,6 +1,4 @@
 # ruff: noqa: E402, I001, F401, F811, SIM105
-# A2 REGISTERED ADAPTATION: original bytes are sealed under docs/evidence/authority-a2-20260922/legacy-probes/.
-# Historical nodeids are retained; current contracts and every changed AST node are registered in docs/2026-09-22-authority-a2-adaptations.md.
 # Reviewer round-7 probe pack (2ff2a8a), promoted VERBATIM into the repo suite.
 # Only this header was added; no assertion and no logic was changed.
 """Round6 probes: real persisted decisions, synthetic models and images only."""
@@ -35,16 +33,11 @@ from scripts import image_review_export as export_tool
 async def seed(data):
     phash = image_hash.dhash64(data)
     assert phash is not None
-    from scripts import image_decision_authority as authority
-
-    db = Path(os.environ["DATABASE_URL"].split(":///", 1)[1])
-    authority.backfill(db, apply=True)
-    value = image_hash.to_hex(phash)
-    authority.apply_decisions(
-        db,
-        [authority.Decision(value, "allowed", "test", "synthetic")],
-        expected_versions=authority.versions(db, {value}),
-    )
+    async with SessionLocal() as session:
+        session.add(
+            ImageAllowlist(phash=image_hash.to_hex(phash), source="test", created_by="synthetic")
+        )
+        await session.commit()
     return phash
 
 

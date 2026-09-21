@@ -1,6 +1,4 @@
 # ruff: noqa: E402, I001, F401, F811
-# A2 REGISTERED ADAPTATION: original bytes are sealed under docs/evidence/authority-a2-20260922/legacy-probes/.
-# Historical nodeids are retained; current contracts and every changed AST node are registered in docs/2026-09-22-authority-a2-adaptations.md.
 # Reviewer round-6 probe pack (85b0c0b), promoted VERBATIM into the repo suite.
 # Only this header was added; no assertion and no logic was changed.
 """Independent synthetic controls for 1e70724; no live DB, media, or network."""
@@ -73,7 +71,7 @@ def test_real_migration_constraints_check_and_roundtrip(tmp_path):
         db.commit()
     _alembic(path, "upgrade", "head")
     with sqlite3.connect(path) as db:
-        assert db.execute("SELECT version_num FROM alembic_version").fetchone() == ("e1c7d4b8a902",)
+        assert db.execute("SELECT version_num FROM alembic_version").fetchone() == ("d4b7c1e9a502",)
         columns = {row[1]: row for row in db.execute("PRAGMA table_info(image_allowlist)")}
         assert set(columns) == {
             "id",
@@ -84,15 +82,8 @@ def test_real_migration_constraints_check_and_roundtrip(tmp_path):
             "enabled",
             "created_at",
             "created_by",
-            "decision_state",
-            "decision_source",
-            "decision_operator",
-            "decision_version",
-            "decided_at",
-            "history_json",
         }
-        assert all(row[3] == 1 for name, row in columns.items() if name != "decided_at")
-        assert columns["decided_at"][3] == 0
+        assert all(row[3] == 1 for row in columns.values())
         db.execute("INSERT INTO image_allowlist(phash) VALUES(?)", ("0123456789abcdef",))
         assert db.execute(
             "SELECT note,source,hit_count,enabled,created_by FROM image_allowlist"

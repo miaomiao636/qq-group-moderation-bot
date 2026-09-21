@@ -1,6 +1,4 @@
 # ruff: noqa: E402, I001, F401, F811, SIM105, S101
-# A2 REGISTERED ADAPTATION: original bytes are sealed under docs/evidence/authority-a2-20260922/legacy-probes/.
-# Historical nodeids are retained; current contracts and every changed AST node are registered in docs/2026-09-22-authority-a2-adaptations.md.
 # Reviewer round-9 probe pack (dbd80a5); promoted into the repo suite.
 # Registered adaptation (only one, scheduler only):
 #   `test_concurrent_reject_and_reapprove_share_one_authoritative_state` used to run
@@ -30,7 +28,6 @@ from PIL import Image
 
 from app.moderation.image_hash import to_hex
 from scripts import apply_review_decisions as apply_tool
-from scripts import image_decision_authority as authority
 from scripts import image_allowlist_seed as seed_tool
 from tests.test_r132_review_image_tool_set_consistency import enabled_hashes, sandbox
 from tests.test_r132_review_review_write_contract import apply, make_batch, set_decision
@@ -113,15 +110,15 @@ def test_corrupt_snapshot_blocks_generic_import(sandbox, tmp_path):
     db, _, _, _ = sandbox
     _, picture, value = make_batch(tmp_path)
     snapshot = seed_tool.rejection_snapshot_path(db)
-    raw = b'{"broken":'
-    snapshot.write_bytes(raw)
-    assert authority.export_state(db) == "corrupt"
-    seed_tool.import_seeds(
-        db=db, seeds=[(picture, "sample", "synthetic")], dry_run=False, operator="synthetic"
-    )
-    assert to_hex(value) in enabled_hashes(db)
-    assert authority.export_state(db) == "ok"
-    assert [p.read_bytes() for p in snapshot.parent.glob(snapshot.name + ".invalid-*")] == [raw]
+    snapshot.write_text('{"broken":', encoding="utf-8")
+    assert seed_tool.load_rejections_state(db)[1] == "corrupt"
+    try:
+        seed_tool.import_seeds(
+            db=db, seeds=[(picture, "sample", "synthetic")], dry_run=False, operator="synthetic"
+        )
+    except (OSError, ValueError, RuntimeError):
+        pass
+    assert to_hex(value) not in enabled_hashes(db), "corrupt read state was discarded as empty."
 
 
 @pytest.mark.parametrize("fault", ["corrupt_snapshot", "snapshot_write_error"])
@@ -130,20 +127,21 @@ def test_snapshot_failure_cannot_leave_committed_approval(sandbox, tmp_path, mon
     batch, _, value = make_batch(tmp_path)
     snapshot = seed_tool.rejection_snapshot_path(db)
     if fault == "corrupt_snapshot":
-        raw = b'{"broken":'
-        snapshot.write_bytes(raw)
-        assert apply(batch, db) == 0
-        assert [p.read_bytes() for p in snapshot.parent.glob(snapshot.name + ".invalid-*")] == [raw]
+        snapshot.write_text('{"broken":', encoding="utf-8")
     else:
+        impl = importlib.import_module(apply_tool.record_approval.__module__)
 
-        def fail(*args, **kwargs):
+        def fail_write(*_args, **_kwargs):
             raise PermissionError("synthetic snapshot write denied")
 
-        monkeypatch.setattr(seed_tool, "_write_snapshot", fail)
-        assert apply(batch, db) == 5
-    assert to_hex(value) in enabled_hashes(db)
-    row = authority.read_authority(db)[to_hex(value)]
-    assert (row["decision_state"], row["decision_version"]) == ("allowed", 1)
+        monkeypatch.setattr(impl, "_write_snapshot", fail_write)
+    failed = False
+    try:
+        failed = apply(batch, db) != 0
+    except (OSError, ValueError, RuntimeError):
+        failed = True
+    assert failed, "Fault must be visible."
+    assert to_hex(value) not in enabled_hashes(db), "Application failed after committing enabled=1."
 
 
 def test_concurrent_reject_and_reapprove_share_one_authoritative_state(
@@ -155,14 +153,14 @@ def test_concurrent_reject_and_reapprove_share_one_authoritative_state(
     assert same == value and apply(approve_batch, db) == 0
     rejecting_committed = Event()
     finish_rejection = Event()
-    original = authority.export_snapshot
+    original = apply_tool.record_rejection
 
     def paused_rejection(*args, **kwargs):
         rejecting_committed.set()  # Called only after import_seeds committed enabled=0.
         assert finish_rejection.wait(5)
         return original(*args, **kwargs)
 
-    monkeypatch.setattr(authority, "export_snapshot", paused_rejection)
+    monkeypatch.setattr(apply_tool, "record_rejection", paused_rejection)
     with ThreadPoolExecutor(max_workers=2) as pool:
         task = pool.submit(apply, reject_batch, db)
         second = None

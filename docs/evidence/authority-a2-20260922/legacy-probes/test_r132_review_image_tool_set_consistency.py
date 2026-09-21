@@ -1,6 +1,4 @@
 # ruff: noqa: E402, I001, F401, F811
-# A2 REGISTERED ADAPTATION: original bytes are sealed under docs/evidence/authority-a2-20260922/legacy-probes/.
-# Historical nodeids are retained; current contracts and every changed AST node are registered in docs/2026-09-22-authority-a2-adaptations.md.
 # Reviewer round-6 probe pack (85b0c0b), promoted VERBATIM into the repo suite.
 # Only this header was added; no assertion and no logic was changed.
 """85b0c0b review probes: synthetic-only import/replay/export contracts.
@@ -44,9 +42,6 @@ def sandbox(tmp_path, monkeypatch):
             "enabled INTEGER NOT NULL DEFAULT 1, hit_count INTEGER NOT NULL DEFAULT 0, "
             "created_at TEXT NOT NULL, created_by TEXT NOT NULL DEFAULT '');"
         )
-    from tests.authority_fixtures import initialize_authority
-
-    initialize_authority(db)
     return db, media, samples, default_exclusions
 
 
@@ -115,9 +110,8 @@ def test_manual_disable_is_respected_by_offline_active_set(sandbox, builder):
         db=db, seeds=seed_tool.scan_samples(samples), dry_run=False, operator="review"
     )
     assert enabled_hashes(db) == {to_hex(value)}
-    from tests.authority_fixtures import decide
-
-    decide(db, to_hex(value), "rejected", "exclude")
+    with sqlite3.connect(db) as con:
+        con.execute("UPDATE image_allowlist SET enabled=0 WHERE phash=?", (to_hex(value),))
     assert tool_hashes(builder, samples, db, media) == enabled_hashes(db)
 
 

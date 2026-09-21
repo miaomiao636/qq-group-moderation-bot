@@ -1,6 +1,4 @@
 # ruff: noqa: E402, I001, F401, F811, SIM105
-# A2 REGISTERED ADAPTATION: original bytes are sealed under docs/evidence/authority-a2-20260922/legacy-probes/.
-# Historical nodeids are retained; current contracts and every changed AST node are registered in docs/2026-09-22-authority-a2-adaptations.md.
 # Reviewer round-8 probe pack (8299ce8), promoted VERBATIM into the repo suite.
 # Only this header was added; no assertion and no logic was changed.
 """8299ce8 synthetic-only checks for the new human-image review write path."""
@@ -132,8 +130,7 @@ def test_corrupt_rejection_snapshot_not_silently_replaced(sandbox):
         seed_tool.record_rejection(db, "0000000000000002", operator="synthetic")
     except (OSError, ValueError, RuntimeError):
         pass
-    assert [p.read_bytes() for p in snapshot.parent.glob(snapshot.name + ".invalid-*")] == [before]
-    assert seed_tool.load_rejections(db) == {"0000000000000002"}
+    assert snapshot.read_bytes() == before, "Malformed refusal history was silently overwritten."
 
 
 def test_concurrent_rejections_preserve_both_writers(sandbox, monkeypatch):

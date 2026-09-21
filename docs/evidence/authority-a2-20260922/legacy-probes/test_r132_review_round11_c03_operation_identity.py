@@ -1,6 +1,4 @@
 # ruff: noqa: E402, I001, F401, F811, SIM105, S101
-# A2 REGISTERED ADAPTATION: original bytes are sealed under docs/evidence/authority-a2-20260922/legacy-probes/.
-# Historical nodeids are retained; current contracts and every changed AST node are registered in docs/2026-09-22-authority-a2-adaptations.md.
 # Reviewer pack (round-11 review of 6505a79); promoted into the repo suite.
 # Registered adaptation (only one, and only the scheduler of the last test):
 #   `test_late_json_commit_of_successful_rejection_cannot_be_overwritten` used to
@@ -31,7 +29,7 @@ import pytest
 from PIL import Image
 
 from app.moderation.image_hash import dhash64_file, to_hex
-from scripts import image_decision_authority as authority
+from scripts import apply_review_decisions as apply_tool
 from scripts import image_allowlist_seed as seed_tool
 from tests.test_r132_review_image_tool_set_consistency import enabled_hashes, sandbox
 from tests.test_r132_review_review_write_contract import apply, make_batch
@@ -64,23 +62,28 @@ def test_partial_snapshot_reports_accepted_manual_recovery_state(
 ):
     db, _, _, _ = sandbox
     batch, first, second = two_picture_batch(tmp_path)
+    original = apply_tool.record_approval
+    written = []
+
+    def write(db_arg, value, *, source, operator):
+        if fail_second and value == second:
+            assert written == [first]
+            raise PermissionError("synthetic second snapshot write denied")
+        result = original(db_arg, value, source=source, operator=operator)
+        written.append(value)
+        return result
+
+    monkeypatch.setattr(apply_tool, "record_approval", write)
     if fail_second:
-
-        def fail(path):
-            rows = authority.read_authority(db)
-            assert set(rows) == {first, second}
-            assert all(r["decision_version"] == 1 for r in rows.values())
-            raise PermissionError("synthetic whole-export failure after atomic batch")
-
-        with monkeypatch.context() as controlled:
-            controlled.setattr(authority, "export_snapshot", fail)
-            assert apply(batch, db) == 5
+        with pytest.raises(PermissionError):
+            apply(batch, db)
+        # The owner explicitly accepts incomplete restoration when reported as
+        # COMPENSATION_CONFLICT/manual recovery. Preserve this as a positive control,
+        # not an unrequested demand for an all-or-nothing architecture.
         output = capsys.readouterr().out
-        assert "DECISIONS_COMMITTED_EXPORT_PENDING" in output and "IMPORT_OK" not in output
-        assert "COMPENSATED" not in output
-        assert enabled_hashes(db) == {first, second}
-        authority.export_snapshot(db)
-        assert authority.export_state(db) == "ok"
+        assert "COMPENSATION_CONFLICT" in output and "conflicts=1" in output
+        assert "IMPORT_OK" not in output
+        assert enabled_hashes(db) == {first}
     else:
         assert apply(batch, db) == 0
         assert enabled_hashes(db) == {first, second}
@@ -89,22 +92,35 @@ def test_partial_snapshot_reports_accepted_manual_recovery_state(
 def test_after_snapshot_cannot_adopt_an_external_row_as_its_own(sandbox, tmp_path, monkeypatch):
     db, _, _, _ = sandbox
     batch, _, value = make_batch(tmp_path)
+    original_import = apply_tool.import_seeds
 
-    def independent_replacement(path):
+    def interleave_after_commit(**kwargs):
+        result = original_import(**kwargs)
+        # Real independently committed replacement after import commit but before
+        # the caller's separate `after = _states()` query.
         with sqlite3.connect(db) as con:
             con.execute("DELETE FROM image_allowlist WHERE phash=?", (to_hex(value),))
             con.execute(
-                "INSERT INTO image_allowlist(id,phash,note,source,enabled,created_at,created_by) VALUES(9001,?,'independent-row','outside',1,'2026-09-20','outside')",
+                "INSERT INTO image_allowlist(id,phash,note,source,enabled,created_at,created_by) "
+                "VALUES(9001,?,'independent-row','outside',1,'2026-09-20','outside')",
                 (to_hex(value),),
             )
-        raise PermissionError("synthetic export failure after external replacement")
+        return result
 
-    monkeypatch.setattr(authority, "export_snapshot", independent_replacement)
-    assert apply(batch, db) == 5
+    def fail_snapshot(*_args, **_kwargs):
+        raise PermissionError("synthetic snapshot persistence failure")
+
+    monkeypatch.setattr(apply_tool, "import_seeds", interleave_after_commit)
+    monkeypatch.setattr(apply_tool, "record_approval", fail_snapshot)
+    with pytest.raises(PermissionError):
+        apply(batch, db)
     with sqlite3.connect(db) as con:
-        assert con.execute(
+        row = con.execute(
             "SELECT id,enabled,note FROM image_allowlist WHERE phash=?", (to_hex(value),)
-        ).fetchone() == (9001, 1, "independent-row")
+        ).fetchone()
+    assert row == (9001, 1, "independent-row"), (
+        "Post-commit `after` captured a foreign row; compensation deleted that row."
+    )
 
 
 def test_late_json_commit_of_successful_rejection_cannot_be_overwritten(
@@ -115,34 +131,35 @@ def test_late_json_commit_of_successful_rejection_cannot_be_overwritten(
     earlier, _, _ = make_batch(tmp_path, name="batch-earlier", verdict="撤回")
     later, _, _ = make_batch(tmp_path, name="batch-later", verdict="撤回")
     assert apply(initial, db) == 0
-    original = authority.export_snapshot
-    started = Event()
-    futures = []
+    snapshot = seed_tool.rejection_snapshot_path(db)
+    later_future = []
+    later_started = Event()
+    original_record = apply_tool.record_rejection
+    original_read = Path.read_bytes
 
     def run_later():
-        started.set()
+        later_started.set()
         return apply(later, db)
 
     with ThreadPoolExecutor(max_workers=1) as pool:
 
-        def export(path):
-            if (
-                authority.read_authority(db)[to_hex(value)]["decision_source"]
-                == "review:batch-earlier"
-            ):
-                futures.append(pool.submit(run_later))
-                assert started.wait(10)
+        def controlled_record(db_arg, hash_arg, *, source, operator):
+            if source == "review:batch-earlier":
+                later_future.append(pool.submit(run_later))
+                assert later_started.wait(10)
+                # 让后一次审核真正到达决策锁：它必须**阻塞**在 A 的锁上，
+                # 而不是"DB 已提交、只剩 JSON 写盘"地穿过 A 的补偿窗口。
                 time.sleep(0.3)
-                assert not futures[0].done(), (
-                    "later writer waits while the existing full decision lock is held"
-                )
-                raise PermissionError("synthetic earlier export failure")
-            return original(path)
+                raise PermissionError("synthetic earlier snapshot failure")
+            return original_record(db_arg, hash_arg, source=source, operator=operator)
 
-        monkeypatch.setattr(authority, "export_snapshot", export)
-        assert apply(earlier, db) == 5
-        assert futures[0].result(timeout=30) == 0
-    raw = json.loads(seed_tool.rejection_snapshot_path(db).read_text(encoding="utf-8"))
+        monkeypatch.setattr(apply_tool, "record_rejection", controlled_record)
+        with pytest.raises(PermissionError):
+            apply(earlier, db)
+        assert not later_future[0].done(), "later review must wait for the decision lock"
+        assert later_future[0].result(timeout=30) == 0
+    raw = json.loads(original_read(snapshot).decode("utf-8"))
     assert raw[to_hex(value)]["state"] == "rejected"
-    assert to_hex(value) not in enabled_hashes(db)
-    assert authority.read_authority(db)[to_hex(value)]["decision_version"] == 3
+    assert to_hex(value) not in enabled_hashes(db), (
+        "Later full apply succeeded after JSON read; older compensation restored enabled=1."
+    )

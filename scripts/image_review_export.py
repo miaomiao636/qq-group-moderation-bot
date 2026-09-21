@@ -34,13 +34,13 @@ from app.moderation.image_hash import (  # noqa: E402
     frame_scope_of,
     to_hex,
 )
-from image_allowlist_seed import (  # noqa: E402
+from scripts.image_allowlist_seed import (  # noqa: E402
+    candidate_rejections,
     detail_blockers,
     disabled_hashes,
     effective_hashes,
     effective_state,
     load_excluded,
-    load_rejections,
     scan_history,
     scan_samples,
 )
@@ -98,7 +98,7 @@ def build_whitelist(samples_dir: Path, db: Path, media_dir: Path) -> list[tuple[
         # 在构建集合时偷偷补人，会让负责人以为这是生效名单。
         return [(int(value, 16), "db:enabled") for value in sorted(approved)]
     # 表缺失/不可读 → 候选：样本库 + 历史放行图 − 排除清单 − **拒绝快照**（R9-06 同源）
-    excluded = load_excluded(EXCLUDE_FILE) | load_rejections(db)
+    excluded = load_excluded(EXCLUDE_FILE) | candidate_rejections(db)
     seen: dict[int, str] = {}
     for path, source, note in scan_samples(samples_dir) + scan_history(db, media_dir):
         phash = dhash64_file(path)
@@ -114,7 +114,7 @@ def collect(
     """按"命中的白名单哈希"聚合出需要负责人审核的图片。"""
     candidates = [(index, value) for index, (value, _label) in enumerate(whitelist)]
     # R6-02-R：拒绝快照（导入侧记录）与排除清单、停用行一起构成"负责人已拒绝"的同一份事实。
-    rejected = load_rejections(db)
+    rejected = candidate_rejections(db)
     con = sqlite3.connect(f"file:{db}?mode=ro", uri=True)
     rows = con.execute(
         "select message_id, created_at, verdict, category, external_group_id, detail_json "

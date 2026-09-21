@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 
-from sqlalchemy import Boolean, DateTime, Integer, String, Text, UniqueConstraint
+from sqlalchemy import Boolean, DateTime, Index, Integer, String, Text, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db import Base
@@ -207,7 +207,10 @@ class ImageAllowlist(Base):
     """
 
     __tablename__ = "image_allowlist"
-    __table_args__ = (UniqueConstraint("phash", name="uq_image_allowlist_phash"),)
+    __table_args__ = (
+        UniqueConstraint("phash", name="uq_image_allowlist_phash"),
+        Index("ix_image_allowlist_decision_state", "decision_state"),
+    )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     phash: Mapped[str] = mapped_column(String(16))
@@ -217,6 +220,13 @@ class ImageAllowlist(Base):
     enabled: Mapped[bool] = mapped_column(Boolean, default=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
     created_by: Mapped[str] = mapped_column(String(64), default="")
+
+    decision_state: Mapped[str] = mapped_column(String(16), default="", server_default="")
+    decision_source: Mapped[str] = mapped_column(String(96), default="", server_default="")
+    decision_operator: Mapped[str] = mapped_column(String(64), default="", server_default="")
+    decision_version: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    decided_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    history_json: Mapped[str] = mapped_column(Text, default="{}", server_default="{}")
 
 
 class SystemSetting(Base):

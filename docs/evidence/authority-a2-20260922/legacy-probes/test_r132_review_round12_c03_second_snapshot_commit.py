@@ -1,6 +1,4 @@
 # ruff: noqa: E402, I001, F401, F811, SIM105, S101
-# A2 REGISTERED ADAPTATION: original bytes are sealed under docs/evidence/authority-a2-20260922/legacy-probes/.
-# Historical nodeids are retained; current contracts and every changed AST node are registered in docs/2026-09-22-authority-a2-adaptations.md.
 # Reviewer round-12 pack (166a1ab), from probes/images/test_c03_second_snapshot_commit.py.
 #
 # REGISTERED ADAPTATION (the only one; scheduler only):
@@ -32,7 +30,7 @@ from threading import Event
 import pytest
 
 from app.moderation.image_hash import to_hex
-from scripts import image_decision_authority as authority
+from scripts import apply_review_decisions as apply_tool
 from scripts import image_allowlist_seed as seed_tool
 from tests.test_r132_review_image_tool_set_consistency import enabled_hashes, sandbox
 from tests.test_r132_review_review_write_contract import apply, make_batch
@@ -46,39 +44,39 @@ def test_blocked_later_rejection_serializes_and_final_state_is_consistent(
     earlier, _, _ = make_batch(tmp_path, name="batch-earlier", verdict="撤回")
     later, _, _ = make_batch(tmp_path, name="batch-later", verdict="撤回")
     assert apply(initial, db) == 0
-    original = authority.export_snapshot
-    started = Event()
-    futures = []
+    snapshot = seed_tool.rejection_snapshot_path(db)
+    later_future = []
+    later_started = Event()
+    original_record = apply_tool.record_rejection
+    original_read = Path.read_bytes
 
     def run_later():
-        started.set()
+        later_started.set()
         return apply(later, db)
 
     with ThreadPoolExecutor(max_workers=1) as pool:
 
-        def export(path):
-            if (
-                authority.read_authority(db)[to_hex(value)]["decision_source"]
-                == "review:batch-earlier"
-            ):
-                futures.append(pool.submit(run_later))
-                assert started.wait(10)
+        def controlled_record(db_arg, hash_arg, *, source, operator):
+            if source == "review:batch-earlier":
+                later_future.append(pool.submit(run_later))
+                assert later_started.wait(10)
+                # The later review must be waiting on the decision lock here: A holds
+                # it across pre-state read -> DB change -> snapshot publish -> compensation.
                 time.sleep(0.3)
-                assert not futures[0].done(), (
-                    "later writer waits while the existing full decision lock is held"
-                )
-                raise PermissionError("synthetic earlier export failure")
-            return original(path)
+                raise PermissionError("synthetic earlier snapshot persistence failure")
+            return original_record(db_arg, hash_arg, source=source, operator=operator)
 
-        monkeypatch.setattr(authority, "export_snapshot", export)
-        assert apply(earlier, db) == 5
-        assert futures[0].result(timeout=30) == 0
-    raw = json.loads(seed_tool.rejection_snapshot_path(db).read_text(encoding="utf-8"))
+        monkeypatch.setattr(apply_tool, "record_rejection", controlled_record)
+        with pytest.raises(PermissionError):
+            apply(earlier, db)
+        assert not later_future[0].done(), "later review must be blocked on the decision lock"
+        assert later_future[0].result(timeout=30) == 0
+
+    raw = json.loads(original_read(snapshot).decode("utf-8"))
     assert raw[to_hex(value)]["state"] == "rejected"
-    assert to_hex(value) not in enabled_hashes(db)
-    assert authority.read_authority(db)[to_hex(value)]["decision_version"] == 3
-
     output = capsys.readouterr().out
-    assert "DECISIONS_COMMITTED_EXPORT_PENDING" in output
-    assert "COMPENSATED" not in output
-    assert output.count("IMPORT_OK") == 2
+    assert "COMPENSATED_APPROVAL_ROLLBACK" in output
+    assert output.count("IMPORT_OK") == 2  # Initial + later B; earlier A failed.
+    assert to_hex(value) not in enabled_hashes(db), (
+        f"Later review completed, but the older failed operation restored enabled=1. Output: {output}"
+    )

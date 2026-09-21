@@ -31,7 +31,6 @@ import argparse
 import hashlib
 import json
 import re
-import sqlite3
 import sys
 from datetime import UTC, datetime
 from pathlib import Path
@@ -41,7 +40,7 @@ sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(ROOT / "scripts"))
 
 from app.moderation.image_hash import dhash64, to_hex  # noqa: E402
-from image_allowlist_seed import load_rejections_state, rejection_snapshot_path  # noqa: E402
+from scripts.image_allowlist_seed import rejection_snapshot_path  # noqa: E402
 
 DEFAULT_DB = ROOT / "data" / "moderation.db"
 REVIEW_ROOT = ROOT / "docs" / "evidence" / "image-review"
@@ -164,15 +163,22 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
     db = Path(args.db)
 
-    con = sqlite3.connect(f"file:{db}?mode=ro", uri=True)
+    from scripts.image_decision_authority import AuthorityError, observe_authority, snapshot_payload
+
+    authority_error = ""
     try:
-        allowed = con.execute(
-            "select phash, note, created_at from image_allowlist where enabled=1 order by phash"
-        ).fetchall()
-    finally:
-        con.close()
-    _rejected_set, rejection_state = load_rejections_state(db)
-    snapshot_raw = load_snapshot_entries(db)
+        authority_rows, rejection_state = observe_authority(db)
+        allowed = [
+            (key, row["note"], row["created_at"])
+            for key, row in authority_rows.items()
+            if row["enabled"]
+        ]
+        snapshot_raw = snapshot_payload(authority_rows)
+    except AuthorityError as exc:
+        authority_error = str(exc)
+        allowed = []
+        snapshot_raw = {}
+        rejection_state = "authority_unavailable"
 
     cache: dict[Path, tuple[dict[str, dict[str, str]], dict[str, str], str, str]] = {}
 
@@ -437,9 +443,14 @@ def main(argv: list[str] | None = None) -> int:
         )
 
     problems_overall = [f for f in findings + reject_findings if f["problems"]]
-    if rejection_state == "corrupt":
+    if rejection_state in {"missing", "corrupt", "stale", "authority_unavailable"}:
         problems_overall.append(
-            {"phash": "-", "problems": ["拒绝快照损坏/不可读 → 不能宣称整体成功"]}
+            {
+                "phash": "-",
+                "problems": [
+                    authority_error or f"派生导出 {rejection_state}；当前决定来自 DB，导出需重试"
+                ],
+            }
         )
     lines = [
         "# 生效名单 / 拒绝快照 ↔ 负责人所审文件的身份关联（只读）",
@@ -485,25 +496,31 @@ def main(argv: list[str] | None = None) -> int:
             f"{item.get('file', '-')} | {item.get('decision', '-')} | {state_text} |"
         )
     OUT_DIR.mkdir(parents=True, exist_ok=True)
-    stamp = f"{datetime.now(UTC):%Y%m%dT%H%M%SZ}"
-    (OUT_DIR / f"identity-{stamp}.md").write_text("\n".join(lines) + "\n", encoding="utf-8")
-    (OUT_DIR / f"identity-{stamp}.json").write_text(
-        json.dumps(
-            {
-                "allowed_checked": len(allowed),
-                "rejected_checked": len(reject_findings),
-                "rejection_state": rejection_state,
-                "mismatches": problems_overall,
-                "allowed": findings,
-                "rejected": reject_findings,
-            },
-            ensure_ascii=True,
-            indent=2,
-        ),
-        encoding="utf-8",
+    stamp = f"{datetime.now(UTC):%Y%m%dT%H%M%S%fZ}"
+    with (OUT_DIR / f"identity-{stamp}.md").open("x", encoding="utf-8") as output:
+        output.write(
+            "\
+".join(lines)
+            + "\
+"
+        )
+    report_json = json.dumps(
+        {
+            "allowed_checked": len(allowed),
+            "rejected_checked": len(reject_findings),
+            "rejection_state": rejection_state,
+            "mismatches": problems_overall,
+            "allowed": findings,
+            "rejected": reject_findings,
+        },
+        ensure_ascii=True,
+        indent=2,
     )
+    with (OUT_DIR / f"identity-{stamp}.json").open("x", encoding="utf-8") as output:
+        output.write(report_json)
+    status = "IDENTITY_FAILED" if problems_overall else "IDENTITY_OK"
     print(
-        f"IDENTITY_OK allowed={len(allowed)} (mismatch {len([f for f in findings if f['problems']])}) "
+        f"{status} allowed={len(allowed)} (mismatch {len([f for f in findings if f['problems']])}) "
         f"rejected={len(reject_findings)} "
         f"(mismatch {len([f for f in reject_findings if f['problems']])}) "
         f"snapshot_state={rejection_state} → docs/evidence/image-review/identity-{stamp}.md"

@@ -1,6 +1,4 @@
 # ruff: noqa: E402, I001, F401, F811, SIM105, S101
-# A2 REGISTERED ADAPTATION: original bytes are sealed under docs/evidence/authority-a2-20260922/legacy-probes/.
-# Historical nodeids are retained; current contracts and every changed AST node are registered in docs/2026-09-22-authority-a2-adaptations.md.
 # Reviewer pack (round-11 review of 6505a79), promoted VERBATIM into the repo suite.
 # Only this header was added; no assertion and no logic was changed.
 """Synthetic C04/C05 follow-ups: exact identity ambiguity and accepted time precision.
@@ -32,9 +30,7 @@ def run_identity(verifier, db):
 
 
 def write_snapshot(verifier, db, phash, entry):
-    from tests.authority_fixtures import identity_snapshot
-
-    identity_snapshot(verifier, db, phash, entry)
+    verifier.rejection_snapshot_path(db).write_text(json.dumps({phash: entry}), encoding="utf-8")
 
 
 def collision_batch(verifier, name, verdicts):

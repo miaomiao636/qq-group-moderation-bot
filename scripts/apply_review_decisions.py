@@ -9,7 +9,8 @@
   清单里有图没给结论 → 打印 `APPLY_FAILED` 并以非零退出，**不做任何写库**；
 - **编号是正整数**（R9-07）：第 100 张及以后（三位编号）同样能渲染、能落库；
 - **区分普通重复导入与显式重新批准**（R9-05）：本工具是"显式重新批准"的入口——
-  放行会写 `record_approval` 并重新启用既有行（保留撤回历史）；普通 seed 导入仍必须尊重拒绝。
+  放行会在同一 DB 事务写入决定和历史并重新启用既有行；普通 seed 导入仍必须尊重拒绝。
+- A2：导出失败不会撤销已提交决定；非零返回 PENDING，重试仅重新导出。
 """
 
 from __future__ import annotations
@@ -27,12 +28,15 @@ sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(ROOT / "scripts"))
 
 from app.moderation.image_hash import dhash64, to_hex  # noqa: E402
-from image_allowlist_seed import (  # noqa: E402
-    decision_lock,
-    import_seeds,
-    record_approval,
-    record_rejection,
-    rejection_snapshot_path,
+from scripts.image_decision_authority import (  # noqa: E402
+    AuthorityError,
+    Decision,
+    ExportPending,
+    apply_decisions,
+    export_snapshot,
+    export_state,
+    read_authority,
+    validate_decisions,
 )
 
 REVIEW_ROOT = ROOT / "docs" / "evidence" / "image-review"
@@ -93,7 +97,25 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--batch", default=None)
     parser.add_argument("--db", default=str(DEFAULT_DB))
     parser.add_argument("--dry-run", action="store_true")
+    parser.add_argument("--export-only", action="store_true")
+    parser.add_argument("--verify-authority", action="store_true")
     args = parser.parse_args(argv)
+    if args.export_only or args.verify_authority:
+        try:
+            if args.export_only:
+                export_snapshot(Path(args.db))
+            state = export_state(Path(args.db))
+            print(f"AUTHORITY_EXPORT_{state.upper()}")
+            return 0 if state == "ok" else 5
+        except (AuthorityError, OSError, ValueError) as exc:
+            print(str(exc))
+            return 5
+    db = Path(args.db)
+    try:
+        initial_rows = read_authority(db)
+    except AuthorityError as exc:
+        print(f"APPLY_FAILED {exc}")
+        return 4
     batch = (
         Path(args.batch)
         if args.batch
@@ -174,129 +196,35 @@ def main(argv: list[str] | None = None) -> int:
         return 4
 
     print(f"批次 {batch.name}：放行 {len(approved)} 张、撤回 {len(rejected)} 张")
-    if args.dry_run:
-        print("DRY_RUN_OK（未做任何改动）")
-        return 0
-
-    def _persist_decisions() -> None:
-        for _picture, _source, _note, value in approved:
-            record_approval(db, value, source=f"review:{batch.name}", operator=OPERATOR)
-        for value in sorted(rejected):
-            record_rejection(db, value, source=f"review:{batch.name}", operator=OPERATOR)
-
-    def _row_state(con: sqlite3.Connection, value: str) -> tuple[int, int, str] | None:
-        """``(id, enabled, note)``；行不存在 → ``None``。"""
-        row = con.execute(
-            "select id, enabled, note from image_allowlist where phash=?", (value,)
-        ).fetchone()
-        return None if row is None else (int(row[0] or 0), int(row[1] or 0), str(row[2] or ""))
-
-    def _states() -> dict[str, tuple[int, int, str] | None]:
-        """本次涉及哈希的**完整行状态**（id / enabled / note）——用于"只撤销自己那一份"。"""
-        state: dict[str, tuple[int, int, str] | None] = {}
-        con = sqlite3.connect(f"file:{db}?mode=ro", uri=True)
-        try:
-            for value in [seed[3] for seed in approved] + sorted(rejected):
-                state[value] = _row_state(con, value)
-        finally:
-            con.close()
-        return state
-
-    def _snapshot_state(value: str) -> str:
-        """拒绝快照里该哈希**当前的决定状态**（``approved`` / ``rejected`` / 无条目 → 空串）。"""
-        try:
-            data = json.loads(rejection_snapshot_path(db).read_bytes().decode("utf-8"))
-        except (OSError, ValueError):
-            return ""
-        entry = data.get(value) if isinstance(data, dict) else None
-        return str(entry.get("state", "rejected")) if isinstance(entry, dict) else ""
-
-    def _compensate(
-        prior: dict[str, tuple[int, int, str] | None],
-        credential: dict[str, tuple[int, int, str] | None],
-    ) -> None:
-        """C03/P2（主审第十/十一轮）：**只撤销本操作确实写入的那一份**。
-
-        仍采用"先提交 DB（保住并发语义）+ 失败补偿"，但补偿必须满足：
-        ① **归属凭据**（R1）：该行必须仍等于**本次写事务内**记录的状态（`credential`）才动手。
-           `credential` 是写入事务自己看到的最终状态；提交后另起连接读到的三元组**不是**
-           归属证明（外部删除/重建会被误认为"自己写的"）；
-        ② 拒绝快照里已有矛盾决定 → 有更晚的成功决定，**不得覆盖**；
-        ③ **提交前再校验**（R2）：恢复期间快照是否出现"后续成功决定"（DB 已提交、只剩 JSON
-           写盘的另一次审核）→ 出现即 `ROLLBACK` 本次恢复并报冲突，不覆盖后续结果；
-        ④ 恢复**精确的原 note 字符串**；恢复不完整如实报告，不假称已回滚。
-        """
-        reverted: list[str] = []
-        conflicts: list[str] = []
-        con = sqlite3.connect(db, timeout=10)
-        try:
-            con.execute("BEGIN IMMEDIATE")
-            # 决策依据：**恢复开始前**读到的快照决定状态（提交前会再读一次比对漂移）。
-            observed = {value: _snapshot_state(value) for value in prior}
-            for value, before in prior.items():
-                if _row_state(con, value) != credential.get(value):
-                    conflicts.append(f"{value}:行状态不等于本次写入凭据（外部/后续写入，不撤销）")
-                    continue
-                # ② 若快照里的**现存决定**与"回滚后应有的状态"矛盾，说明有更晚的成功决定 → 不覆盖。
-                target_enabled = 0 if before is None else int(before[1])
-                entry_state = observed[value]
-                if (entry_state == "approved" and target_enabled != 1) or (
-                    entry_state == "rejected" and target_enabled != 0
-                ):
-                    conflicts.append(f"{value}:快照现存决定 state={entry_state} 与回滚结果矛盾")
-                    continue
-                if before is None:
-                    con.execute("delete from image_allowlist where phash=?", (value,))
-                else:
-                    con.execute(
-                        "update image_allowlist set enabled=?, note=? where phash=?",
-                        (before[1], before[2], value),
-                    )
-                reverted.append(value)
-            # ③ 提交前再校验：恢复期间是否被**后续成功决定**改写（例如 DB 已提交、只剩 JSON 写盘的审核）。
-            drifted = [value for value in reverted if _snapshot_state(value) != observed[value]]
-            if drifted:
-                con.rollback()
-                reverted = []
-                conflicts.extend(
-                    f"{value}:恢复期间快照出现后续决定（已放弃本次恢复，保留后续结果）"
-                    for value in drifted
-                )
-            else:
-                con.commit()
-        finally:
-            con.close()
-        print(
-            f"COMPENSATED_APPROVAL_ROLLBACK reverted={len(reverted)} conflicts={len(conflicts)}"
-            "（决定快照写盘失败 → 只复位本操作拥有的行）"
-        )
-        if conflicts:
-            print("COMPENSATION_CONFLICT " + "；".join(conflicts) + "（未完全回滚，需人工确认）")
-
-    # C03-R2-2（主审第十二轮）：**前态读取 → DB 变更 → 决定快照发布 → 失败补偿**
-    # 全部在同一把跨进程锁内（`decision_lock` 可重入，锁内的 `import_seeds` 不会自锁）。
-    # 只锁补偿的最后一段挡不住"DB 已提交、只剩 JSON 写盘"的并发审核。
-    with decision_lock(db):
-        prior = _states()
-        credential: dict[str, tuple[int, int, str] | None] = {}
-        result = import_seeds(
-            db=db,
-            seeds=approved,
-            dry_run=False,
-            operator=OPERATOR,
-            excluded=rejected,
-            # 显式重新批准：只有这条路可以覆盖既有拒绝并重新启用
-            reapproved={seed[3] for seed in approved},
-            # C03-R1：写事务内产出归属凭据（不是提交后另读的近似状态）
-            write_credential=credential,
-        )
-        try:
-            _persist_decisions()
-        except (OSError, ValueError, RuntimeError):
-            _compensate(prior, credential)
-            raise
-    added, duplicate, failed, skipped = result
-    print(f"IMPORT_OK 新增={added} 已存在={duplicate} 失败={failed} 排除={skipped}")
+    changes = [
+        Decision(value, "allowed", f"review:{batch.name}", OPERATOR, note)
+        for _picture, _source, note, value in approved
+    ] + [
+        Decision(value, "rejected", f"review:{batch.name}", OPERATOR) for value in sorted(rejected)
+    ]
+    try:
+        planned = validate_decisions(changes)
+        expected = {
+            key: int(initial_rows[key]["decision_version"]) if key in initial_rows else 0
+            for key in planned
+        }
+        if args.dry_run:
+            current = read_authority(db)
+            if any(
+                (int(current[key]["decision_version"]) if key in current else 0) != version
+                for key, version in expected.items()
+            ):
+                raise AuthorityError("DECISION_CONFLICT: stale expected_version")
+            print("DRY_RUN_OK（未做任何改动）")
+            return 0
+        apply_decisions(db, changes, expected_versions=expected)
+    except ExportPending as exc:
+        print(str(exc))
+        return 5
+    except (AuthorityError, sqlite3.Error, OSError, ValueError) as exc:
+        print(f"APPLY_FAILED {exc}")
+        return 4
+    print(f"IMPORT_OK approved={len(approved)} rejected={len(rejected)}")
     return 0
 
 

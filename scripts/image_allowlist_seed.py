@@ -5,8 +5,8 @@
 2. ``--from-history``：历史判定里 ``has_miniprogram_code=true`` 且 verdict=allow、且原图仍在
    ``data/media`` 的记录（相当于"负责人已认可的那类图"的真实样本）。
 
-行为：算 64 位 dHash → ``INSERT OR IGNORE``（phash 唯一，重复导入不会重复入库）。
-``--dry-run`` 只统计不写库。**只写白名单表，不改判定逻辑**（判定是否使用白名单由 shadow/enforce 开关决定）。
+行为：算 64 位 dHash → A2 权威事务写入决定和历史（phash 唯一，普通重复导入跳过）。
+``--dry-run`` 只统计不写库。不改判定逻辑；派生 JSON 失败返回待重导出，已提交决定保留。
 """
 
 from __future__ import annotations
@@ -19,8 +19,7 @@ import sqlite3
 import sys
 import threading
 import time
-from collections.abc import Callable, Iterator
-from datetime import UTC, datetime
+from collections.abc import Iterator
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -110,33 +109,23 @@ def effective_state(db: Path) -> tuple[set[str] | None, str]:
         return None, "unreadable"
     try:
         try:
-            rows = con.execute("select phash from image_allowlist where enabled=1").fetchall()
+            con.execute("select phash from image_allowlist where enabled=1").fetchall()
         except sqlite3.OperationalError as exc:
             return None, "missing_table" if "no such table" in str(exc).lower() else "bad_schema"
     finally:
         con.close()
-    return {str(row[0]).lower() for row in rows}, "ok"
+    from scripts.image_decision_authority import AuthorityError, read_authority
+
+    try:
+        authority = read_authority(db)
+    except AuthorityError as exc:
+        return None, str(exc).split(":", 1)[0].lower()
+    return {key for key, row in authority.items() if row["enabled"]}, "ok"
 
 
 def effective_hashes(db: Path) -> set[str] | None:
-    """**生效名单**：已导入且 ``enabled=1`` 的哈希集合（A05-R）。
-
-    导入 / 回放 / 导出 / shadow **必须读同一集合**：有生效名单就用它；
-    没有（尚未导入）时离线工具只能输出**候选**，不得声称"已批准 / 可直接启用"。
-    """
-    try:
-        con = sqlite3.connect(f"file:{db}?mode=ro", uri=True)
-        try:
-            rows = con.execute("select phash from image_allowlist where enabled=1").fetchall()
-        finally:
-            con.close()
-    except sqlite3.Error:
-        return None
-    # **表存在但为空 ≠ 表缺失**（主审探针）：空集合表示"生效名单存在且为空"（默认导入按设计什么都没加、
-    # 或被负责人停用/排除），离线工具必须原样输出 ∅；只有表缺失/不可读（sqlite 错误）才返回 None
-    # 表示"无法判定"，此时才退化为候选。此前 `values or None` 把两者混为一谈，于是**已被停用或被排除的
-    # 样本会被重新当成候选报出来**，与"生效名单优先"的承诺不符。
-    return {str(row[0]).lower() for row in rows}
+    """Approved assessment requires initialized consistent authority; otherwise unavailable."""
+    return effective_state(db)[0]
 
 
 def detail_blockers(detail: dict) -> list[str]:
@@ -240,60 +229,76 @@ def _snapshot_lock(path: Path, *, timeout: float = 10.0, stale: float = 60.0) ->
 
 
 _DECISION_LOCK_LOCAL = threading.local()
+_DECISION_THREAD_GUARD = threading.Lock()
+_DECISION_THREADS: dict[str, threading.RLock] = {}
 
 
 @contextlib.contextmanager
 def decision_lock(db: Path, *, timeout: float = 30.0, stale: float = 120.0) -> Iterator[None]:
-    """审核决定/补偿的**跨进程串行化边界**（C03-R2-2，主审第十二轮）。
+    """Per-database reentrant OS lock; crashes release it, age never steals it.
 
-    覆盖范围（全链同一把锁）：**前态读取 → DB 变更 → 决定快照发布 → 失败补偿**。
-    此前"补偿读快照 → commit"与"别处的 JSON 发布"没有共同边界，所以再多的复读也可能
-    被后续成功决定穿过（主审反例：最终 JSON=rejected、DB=enabled=1）。
-
-    - **跨进程**：`O_CREAT|O_EXCL` 锁文件（POSIX 与 Windows 同样可用），
-      不只挡线程，也不依赖 SQLite 写锁；
-    - **可重入**：同进程同线程嵌套调用只累加计数（`apply_review_decisions` 会在锁内
-      调用本模块的 `import_seeds`），避免自锁死；
-    - **超时即显式失败**：等待 `timeout` 秒后抛 `RuntimeError`（本次**不做任何改动**），
-      绝不静默继续；锁文件超过 `stale` 秒视为崩溃残留并回收；
-    - **锁顺序**：本锁（外）→ 拒绝快照锁 `_snapshot_lock`（内）；不得反向获取。
+    The persistent lock file is deliberately not unlinked: otherwise another
+    process could lock a different inode at the same path. The stale argument
+    remains API-compatible but never permits stealing a live owner's lock.
     """
-    depth = getattr(_DECISION_LOCK_LOCAL, "depth", 0)
-    if depth:
-        _DECISION_LOCK_LOCAL.depth = depth + 1
+    key = os.path.normcase(str(db.resolve()))
+    with _DECISION_THREAD_GUARD:
+        local_lock = _DECISION_THREADS.setdefault(key, threading.RLock())
+    if not local_lock.acquire(timeout=timeout):
+        raise RuntimeError("decision lock busy; no changes committed")
+    depths = getattr(_DECISION_LOCK_LOCAL, "depths", {})
+    _DECISION_LOCK_LOCAL.depths = depths
+    handle = None
+    acquired = False
+    try:
+        if depths.get(key, 0):
+            depths[key] += 1
+            try:
+                yield
+            finally:
+                depths[key] -= 1
+            return
+        handle = open(str(db.resolve()) + ".review.lock", "a+b")  # noqa: SIM115 - lock lifetime spans yield/finally
+        handle.seek(0, os.SEEK_END)
+        if handle.tell() == 0:
+            handle.write(b"0")
+            handle.flush()
+        deadline = time.monotonic() + timeout
+        while not acquired:
+            try:
+                if sys.platform == "win32":
+                    import msvcrt
+
+                    handle.seek(0)
+                    msvcrt.locking(handle.fileno(), msvcrt.LK_NBLCK, 1)
+                else:
+                    import fcntl
+
+                    fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+                acquired = True
+            except OSError:
+                if time.monotonic() >= deadline:
+                    raise RuntimeError("decision lock busy; no changes committed") from None
+                time.sleep(0.02)
+        depths[key] = 1
         try:
             yield
         finally:
-            _DECISION_LOCK_LOCAL.depth = depth
-        return
-    path = Path(f"{db}.review.lock")
-    deadline = time.monotonic() + timeout
-    handle: int | None = None
-    while handle is None:
-        try:
-            handle = os.open(path, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
-        except FileExistsError:
-            try:
-                if time.time() - path.stat().st_mtime > stale:
-                    path.unlink(missing_ok=True)
-                    continue
-            except OSError:
-                pass
-            if time.monotonic() > deadline:
-                raise RuntimeError(
-                    f"审核决定锁被占用，等待 {timeout:.0f}s 超时：{path}"
-                    "（另有审核/补偿进程仍持有；本次未做任何改动，可稍后重试）"
-                ) from None
-            time.sleep(0.02)
-    _DECISION_LOCK_LOCAL.depth = 1
-    try:
-        with contextlib.suppress(OSError):
-            os.write(handle, f"pid={os.getpid()} at={time.time():.0f}\n".encode())
-        yield
+            depths.pop(key, None)
     finally:
-        _DECISION_LOCK_LOCAL.depth = 0
-        os.close(handle)
-        path.unlink(missing_ok=True)
+        if handle is not None:
+            if acquired:
+                if sys.platform == "win32":
+                    import msvcrt
+
+                    handle.seek(0)
+                    msvcrt.locking(handle.fileno(), msvcrt.LK_UNLCK, 1)
+                else:
+                    import fcntl
+
+                    fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+            handle.close()
+        local_lock.release()
 
 
 def _read_snapshot(path: Path) -> dict[str, object]:
@@ -321,59 +326,24 @@ def _write_snapshot(path: Path, data: dict[str, object]) -> None:
 
 
 def record_rejection(db: Path, value: str, *, source: str = "exclude", operator: str = "") -> None:
-    """把**已应用的拒绝**写进快照（锁内读改写 + 原子替换；保留最早来源与完整历史）。"""
-    path = rejection_snapshot_path(db)
-    key = str(value).lower()
-    with _snapshot_lock(path):
-        data = _read_snapshot(path)
-        entry = data.get(key)
-        if isinstance(entry, dict) and str(entry.get("state", "rejected")) == "rejected":
-            return  # 已处于"撤回"状态：不覆盖最早记录
-        now = datetime.now(UTC).isoformat(timespec="seconds")
-        history = list(entry.get("history") or []) if isinstance(entry, dict) else []
-        first = entry.get("first_rejected") if isinstance(entry, dict) else ""
-        data[key] = {
-            "state": "rejected",
-            "source": source,
-            "operator": operator,
-            "at": now,
-            "first_rejected": first or now,
-            "history": [
-                *history,
-                {"state": "rejected", "at": now, "source": source, "operator": operator},
-            ],
-        }
-        _write_snapshot(path, data)
+    """Commit one explicit rejection to SQLite, then export its derived snapshot."""
+    from scripts.image_decision_authority import Decision, apply_decisions, versions
+
+    value = value.lower()
+    expected = versions(db, {value})
+    apply_decisions(db, [Decision(value, "rejected", source, operator)], expected_versions=expected)
 
 
 def record_approval(db: Path, value: str, *, source: str = "review", operator: str = "") -> None:
-    """**显式重新批准**（R9-05）：最新人工决定置为"放行"，**保留**此前拒绝历史。
+    """Commit one explicit reapproval; ordinary seed imports cannot call this implicitly."""
+    from scripts.image_decision_authority import Decision, apply_decisions, versions
 
-    与"普通重复导入"区分：普通导入必须**尊重**拒绝，只有这条路能撤销拒绝。
-    """
-    path = rejection_snapshot_path(db)
-    key = str(value).lower()
-    with _snapshot_lock(path):
-        data = _read_snapshot(path)
-        entry = data.get(key)
-        now = datetime.now(UTC).isoformat(timespec="seconds")
-        history = list(entry.get("history") or []) if isinstance(entry, dict) else []
-        first = entry.get("first_rejected") if isinstance(entry, dict) else ""
-        data[key] = {
-            "state": "approved",
-            "source": source,
-            "operator": operator,
-            "at": now,
-            "first_rejected": first or "",
-            "history": [
-                *history,
-                {"state": "approved", "at": now, "source": source, "operator": operator},
-            ],
-        }
-        _write_snapshot(path, data)
+    value = value.lower()
+    expected = versions(db, {value})
+    apply_decisions(db, [Decision(value, "allowed", source, operator)], expected_versions=expected)
 
 
-def load_rejections_state(db: Path) -> tuple[set[str], str]:
+def _legacy_candidate_rejections_state(db: Path) -> tuple[set[str], str]:
     """→ (当前被撤回的哈希集合, 读取状态：``ok`` / ``missing`` / ``corrupt``)。
 
     "损坏/不可读"必须由调用方**显式报告**（记录不可用 ≠ 没有拒绝记录）。
@@ -408,9 +378,28 @@ def load_rejections_state(db: Path) -> tuple[set[str], str]:
     return {key.lower() for key in rejected} - masked, "ok"
 
 
+def load_rejections_state(db: Path) -> tuple[set[str], str]:
+    """Current decisions come only from initialized DB authority."""
+    from scripts.image_decision_authority import read_authority
+
+    rows = read_authority(db)
+    return {key for key, row in rows.items() if row["decision_state"] == "rejected"}, "ok"
+
+
 def load_rejections(db: Path) -> set[str]:
-    """读取**当前**处于"撤回"状态的哈希（最新决定为放行则不计入）。"""
     return load_rejections_state(db)[0]
+
+
+def candidate_rejections(db: Path) -> set[str]:
+    """Read-only legacy candidate filtering; never certifies approval or permits writes."""
+    from scripts.image_decision_authority import AuthorityError
+
+    try:
+        return load_rejections(db)
+    except AuthorityError as exc:
+        if not str(exc).startswith("AUTHORITY_UNAVAILABLE"):
+            raise
+        return _legacy_candidate_rejections_state(db)[0]
 
 
 def import_seeds(
@@ -421,159 +410,42 @@ def import_seeds(
     operator: str,
     excluded: set[str] | None = None,
     reapproved: set[str] | None = None,
-    pre_commit: Callable[[], None] | None = None,
-    write_credential: dict[str, tuple[int, int, str] | None] | None = None,
 ) -> tuple[int, int, int, int]:
-    """写入白名单的**唯一入口**：整个写入（含决定快照发布）都在 `decision_lock(db)` 内串行化。
+    """Import a batch through one authority transaction; reject is persistent."""
+    from scripts.image_decision_authority import Decision, apply_decisions, read_authority
 
-    C03-R2-2（主审第十二轮）：DB 变更与决定快照发布必须与"其它审核/补偿"处于**同一个**
-    串行化边界——只锁最后一段挡不住"DB 已提交、只剩 JSON 写盘"的并发审核。锁可重入，
-    所以 `apply_review_decisions` 在锁内再调用本函数不会自锁。`dry_run` 只读，不加锁。
-    """
-    if dry_run:
-        return _import_seeds_impl(
-            db=db,
-            seeds=seeds,
-            dry_run=True,
-            operator=operator,
-            excluded=excluded,
-            reapproved=reapproved,
-            pre_commit=pre_commit,
-            write_credential=write_credential,
-        )
-    with decision_lock(db):
-        return _import_seeds_impl(
-            db=db,
-            seeds=seeds,
-            dry_run=False,
-            operator=operator,
-            excluded=excluded,
-            reapproved=reapproved,
-            pre_commit=pre_commit,
-            write_credential=write_credential,
-        )
-
-
-def _import_seeds_impl(
-    *,
-    db: Path,
-    seeds: list[tuple[Path, str, str]],
-    dry_run: bool,
-    operator: str,
-    excluded: set[str] | None = None,
-    reapproved: set[str] | None = None,
-    pre_commit: Callable[[], None] | None = None,
-    write_credential: dict[str, tuple[int, int, str] | None] | None = None,
-) -> tuple[int, int, int, int]:
-    """写入白名单；返回 (新增, 已存在(重复), 计算失败, 被排除清单跳过)。
-
-    - `seeds` 元素可为 3 元组，或 4 元组 `(path, source, note, 已验证的哈希十六进制)`——
-      后者用于**批准工具**：它已在同一份字节上校验过 SHA-256/dHash，这里不再二次读盘；
-    - `excluded`：负责人判"撤回"的哈希 → 停用既有行 + 写拒绝快照；
-    - `reapproved`（R9-05）：**显式重新批准**——只有这些哈希可以覆盖拒绝快照并重新启用；
-      普通重复导入（`excluded`/`reapproved` 都没提到、但快照里记着"撤回"的图）必须**尊重拒绝**；
-    - `write_credential`（C03-R1，主审第十一轮）：在**同一个写事务内**回填每个涉及的哈希
-      「写入后的完整行状态」（``(id, enabled, note)``／行不存在 → ``None``）。
-      这是"这一行确实由本次操作写入"的**凭据**——提交后另起连接读到的状态可能已被
-      外部或后续写入替换，不能当归属证明。
-    """
-    excluded = excluded or set()
-    reapproved = {value.lower() for value in (reapproved or set())}
-    touched: set[str] = set(excluded)
-    if not dry_run:
-        # R9-06-R：拒绝快照**损坏/不可读**时，任何写入前就阻断——坏状态不得被当成空集。
-        _rejected_now, snapshot_state = load_rejections_state(db)
-        if snapshot_state == "corrupt":
-            raise ValueError(
-                f"拒绝快照损坏/不可读：{rejection_snapshot_path(db)}"
-                "（拒绝写入；先人工修复或隔离该文件）"
-            )
-    persisted_rejected = load_rejections(db)
+    rows = read_authority(db)
+    excluded = {v.lower() for v in (excluded or set())}
+    reapproved = {v.lower() for v in (reapproved or set())}
+    decisions = {v: Decision(v, "rejected", "exclude", operator) for v in excluded}
     added = duplicate = failed = skipped = 0
-    con = None if dry_run else sqlite3.connect(db)
-    try:
-        for seed in seeds:
-            path, source, note = seed[0], seed[1], seed[2]
-            precomputed = str(seed[3]).lower() if len(seed) > 3 and seed[3] else ""
-            if precomputed:
-                value = precomputed
-            else:
-                phash = dhash64_file(path)
-                if phash is None:
-                    failed += 1
-                    print(f"  [跳过] 无法计算哈希：{path.name}")
-                    continue
-                value = to_hex(phash)
-            touched.add(value)
-            if value in persisted_rejected and value not in reapproved and value not in excluded:
-                skipped += 1
-                print(f"  [尊重已记录的撤回] {value}（普通导入不得静默撤销人工结论）")
-                continue
-            if value in excluded:
-                skipped += 1
-                print(f"  [排除] 负责人在审核清单中判为撤回：{value} {path.name}")
-                if con is not None:
-                    # A05：排除必须**真正停用**既有启用条目——只跳过 INSERT 等于没撤权
-                    con.execute(
-                        "update image_allowlist set enabled=0, "
-                        "note = note || ';excluded:2026-09-19' "
-                        "where phash = ? and enabled = 1",
-                        (value,),
-                    )
-                    # R6-02-R：同时写**拒绝快照**（导出/回放的候选收集与它共用一份）。
-                    record_rejection(db, value, source="exclude", operator=operator)
-                continue
-            if dry_run:
-                added += 1
-                print(f"  [dry-run] {value} {source} {path.name}")
-                continue
-            assert con is not None
-            cursor = con.execute(
-                "insert or ignore into image_allowlist "
-                "(phash, note, source, enabled, created_at, created_by) values (?,?,?,1,?,?)",
-                (value, f"{source}:{note}"[:64], source, datetime.now(UTC).isoformat(), operator),
-            )
-            if cursor.rowcount:
-                added += 1
-            else:
-                duplicate += 1
-                if value in reapproved:
-                    # R9-05：**显式重新批准**必须把此前被撤回的行重新启用——`INSERT OR IGNORE`
-                    # 只会"什么都不做"，于是"第三次放行"永远不生效。
-                    con.execute(
-                        "update image_allowlist set enabled=1, "
-                        "note = note || ';reapproved:2026-09-19' where phash = ? and enabled = 0",
-                        (value,),
-                    )
-                    print(f"  [重新批准] {value} 已重新启用（保留此前撤回历史）")
-        if con is not None:
-            # A05：即使该哈希不是本次种子（例如上一批已导入后才被判撤回），
-            # 也必须按排除清单停用——保证"生效名单"与负责人结论一致。
-            for value in sorted(excluded):
-                con.execute(
-                    "update image_allowlist set enabled=0, note = note || ';excluded:2026-09-19' "
-                    "where phash = ? and enabled = 1",
-                    (value,),
-                )
-            if write_credential is not None:
-                # C03-R1：**写事务内**记录写入后的行状态（凭据），供失败补偿做归属判定。
-                for value in sorted(touched):
-                    row = con.execute(
-                        "select id, enabled, note from image_allowlist where phash=?", (value,)
-                    ).fetchone()
-                    write_credential[value] = (
-                        None
-                        if row is None
-                        else (int(row[0] or 0), int(row[1] or 0), str(row[2] or ""))
-                    )
-            if pre_commit is not None:
-                # R9-05-R/R9-06-R：**先让"决定/拒绝快照"落盘，再提交 DB**——
-                # 任一步失败都不会留下"已提交 enabled=1 但没有对应决定记录"的部分生效。
-                pre_commit()
-            con.commit()
-    finally:
-        if con is not None:
-            con.close()
+    seen: set[str] = set()
+    for seed in seeds:
+        path, source, note = seed[:3]
+        computed = str(seed[3]).lower() if len(seed) > 3 and seed[3] else ""
+        phash = None if computed else dhash64_file(path)
+        if not computed and phash is None:
+            failed += 1
+            continue
+        value = computed or to_hex(phash)
+        row = rows.get(value)
+        if value in excluded or (
+            row and row["decision_state"] == "rejected" and value not in reapproved
+        ):
+            skipped += 1
+            continue
+        if row or value in seen:
+            duplicate += 1
+        else:
+            added += 1
+        if not row or value in reapproved:
+            decisions[value] = Decision(value, "allowed", source, operator, f"{source}:{note}"[:64])
+        seen.add(value)
+    if not dry_run:
+        expected = {
+            key: int(rows[key]["decision_version"]) if key in rows else 0 for key in decisions
+        }
+        apply_decisions(db, list(decisions.values()), expected_versions=expected)
     return added, duplicate, failed, skipped
 
 

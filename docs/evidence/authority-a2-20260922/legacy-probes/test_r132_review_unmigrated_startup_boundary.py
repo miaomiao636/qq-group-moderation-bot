@@ -1,6 +1,4 @@
 # ruff: noqa: E402, I001, F401, F811
-# A2 REGISTERED ADAPTATION: original bytes are sealed under docs/evidence/authority-a2-20260922/legacy-probes/.
-# Historical nodeids are retained; current contracts and every changed AST node are registered in docs/2026-09-22-authority-a2-adaptations.md.
 # Reviewer round-6 probe pack (85b0c0b), promoted VERBATIM into the repo suite.
 # Only this header was added; no assertion and no logic was changed.
 """Observed startup boundary, not permission to migrate a production database."""
@@ -44,7 +42,7 @@ def test_new_code_old_schema_blocks_startup_and_daily_cleanup_even_when_hash_off
         "import asyncio; from app.db import check_db_migrated; asyncio.run(check_db_migrated())",
     )
     assert check.returncode != 0
-    assert "c9a1f4d27e30" in check.stderr and "e1c7d4b8a902" in check.stderr
+    assert "c9a1f4d27e30" in check.stderr and "d4b7c1e9a502" in check.stderr
     cleanup = child(database, "-m", "app.reports.maintenance", "cleanup")
     assert cleanup.returncode == 1, cleanup.stdout + cleanup.stderr
     assert json.loads(cleanup.stdout)["error"] == "startup_or_metadata_failed"

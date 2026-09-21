@@ -1,6 +1,4 @@
 # ruff: noqa: E402, I001, F401, F811, SIM105
-# A2 REGISTERED ADAPTATION: original bytes are sealed under docs/evidence/authority-a2-20260922/legacy-probes/.
-# Historical nodeids are retained; current contracts and every changed AST node are registered in docs/2026-09-22-authority-a2-adaptations.md.
 # Reviewer round-8 probe pack (b7d7e78), promoted VERBATIM into the repo suite.
 # Only this header was added; no assertion and no logic was changed.
 """b7d7e78: synthetic probes beyond builder-only R6-02 assertions."""
@@ -99,10 +97,8 @@ def test_candidate_collection_preserves_explicit_rejection(sandbox, tmp_path, re
             dry_run=False,
             operator="synthetic",
         )
-        from tests.authority_fixtures import decide
-
-        for key in seed_tool.effective_hashes(db):
-            decide(db, key, "rejected", "exclude")
+        with sqlite3.connect(db) as con:
+            con.execute("UPDATE image_allowlist SET enabled=0")
     assert export_tool.build_whitelist(samples, db, media) == []
     assert _collect(db, media, samples) == {}, "Previously rejected image was reintroduced."
 

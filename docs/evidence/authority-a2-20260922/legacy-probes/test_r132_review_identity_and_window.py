@@ -1,6 +1,4 @@
 # ruff: noqa: E402, I001, F401, F811, SIM105, S101
-# A2 REGISTERED ADAPTATION: original bytes are sealed under docs/evidence/authority-a2-20260922/legacy-probes/.
-# Historical nodeids are retained; current contracts and every changed AST node are registered in docs/2026-09-22-authority-a2-adaptations.md.
 # Reviewer round-9 probe pack (dbd80a5), promoted into the repo suite.
 # Only this header was added, PLUS one documented platform adaptation:
 #   `test_shadow_window_cli_is_executable_and_half_open` 用 `read_text()`（无 encoding）
@@ -87,16 +85,13 @@ def make_db(tmp_path, phash=None, batch=None):
     db = tmp_path / "synthetic.db"
     with sqlite3.connect(db) as con:
         con.execute(
-            "CREATE TABLE image_allowlist (id INTEGER PRIMARY KEY, phash TEXT UNIQUE, note TEXT DEFAULT '', source TEXT DEFAULT '', created_at TEXT NOT NULL, enabled INTEGER DEFAULT 1, created_by TEXT DEFAULT '', hit_count INTEGER DEFAULT 0)"
+            "CREATE TABLE image_allowlist (phash TEXT, note TEXT, created_at TEXT, enabled INTEGER)"
         )
         if phash:
             con.execute(
-                "INSERT INTO image_allowlist(phash,note,created_at,enabled,source) VALUES (?, ?, ?, 1, '')",
+                "INSERT INTO image_allowlist VALUES (?, ?, ?, 1)",
                 (phash, f"review:{batch.name}:no=1", "2026-01-02 00:00:00"),
             )
-    from tests.authority_fixtures import initialize_authority
-
-    initialize_authority(db)
     return db
 
 
@@ -114,9 +109,7 @@ def run_identity(verifier, db, *extra):
 def test_valid_identity_control_is_read_only(verifier, tmp_path):
     batch, phash = make_batch(verifier)
     db = make_db(tmp_path, phash, batch)
-    from scripts.image_decision_authority import export_snapshot
-
-    export_snapshot(db)
+    verifier.rejection_snapshot_path(db).write_text("{}")
     code, report = run_identity(verifier, db)
     assert code == 0 and report["allowed_checked"] == 1 and not report["mismatches"]
 
@@ -177,9 +170,6 @@ def test_rejection_must_bind_current_snapshot_source_not_any_old_batch(verifier,
             }
         )
     )
-    from tests.authority_fixtures import decide
-
-    decide(db, phash, "rejected", f"review:{current.name}")
     code, report = run_identity(verifier, db)
     assert code != 0, report
 
@@ -201,9 +191,6 @@ def test_latest_reapproval_source_must_be_verified(verifier, tmp_path):
             }
         )
     )
-    from tests.authority_fixtures import decide
-
-    decide(db, phash, "allowed", f"review:{current.name}")
     code, report = run_identity(verifier, db)
     assert code != 0, report
 

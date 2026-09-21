@@ -70,7 +70,7 @@ def test_decision_lock_blocks_other_processes_and_times_out(tmp_path):
             pytest.fail(f"子进程未进入锁：rc={child.returncode} stderr={err}")
         started = time.monotonic()
         with (
-            pytest.raises(RuntimeError, match="超时"),
+            pytest.raises(RuntimeError, match="decision lock busy"),
             seed_tool.decision_lock(db, timeout=0.5),
         ):
             pytest.fail("另一进程持锁时不应拿到锁")
@@ -84,4 +84,5 @@ def test_decision_lock_blocks_other_processes_and_times_out(tmp_path):
     # 对方释放后，本进程可以正常进入。
     with seed_tool.decision_lock(db, timeout=5):
         pass
-    assert not lock_path.exists(), "释放后不应残留锁文件"
+    # A2 retains the inode; OS ownership is released, never inferred from existence.
+    assert lock_path.exists(), "固定锁文件应保留，避免并发进程锁住不同 inode"

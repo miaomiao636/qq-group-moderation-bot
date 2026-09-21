@@ -1,6 +1,4 @@
 # ruff: noqa: E402, I001, F401, F811, SIM105
-# A2 REGISTERED ADAPTATION: original bytes are sealed under docs/evidence/authority-a2-20260922/legacy-probes/.
-# Historical nodeids are retained; current contracts and every changed AST node are registered in docs/2026-09-22-authority-a2-adaptations.md.
 # Reviewer round-6 probe pack (85b0c0b), promoted VERBATIM into the repo suite.
 # Only this header was added; no assertion and no logic was changed.
 """Independent review probes. All databases/images are synthetic in pytest tmp_path.
@@ -40,9 +38,6 @@ def sandbox(tmp_path):
             "enabled INTEGER NOT NULL DEFAULT 1, hit_count INTEGER NOT NULL DEFAULT 0, "
             "created_at TEXT NOT NULL, created_by TEXT NOT NULL DEFAULT '');"
         )
-    from tests.authority_fixtures import initialize_authority
-
-    initialize_authority(db)
     return db, media, samples
 
 
@@ -87,9 +82,7 @@ def test_seed_excludes_first_insert_control(sandbox):
         excluded={to_hex(value)},
     ) == (0, 0, 0, 1)
     with sqlite3.connect(db) as con:
-        assert con.execute(
-            "SELECT phash,enabled,decision_state,decision_version FROM image_allowlist"
-        ).fetchall() == [(to_hex(value), 0, "rejected", 1)]
+        assert con.execute("SELECT COUNT(*) FROM image_allowlist").fetchone()[0] == 0
 
 
 def test_exclusion_after_import_must_not_leave_enabled_entry(sandbox):
