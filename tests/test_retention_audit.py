@@ -287,3 +287,58 @@ def test_path_reference_cannot_escape_media_root(tmp_path: Path) -> None:
     result = audit_module.audit(db, data, as_of=AS_OF)
     assert result["source_summary"]["invalid_file_references"] == 1
     assert "912340876" not in json.dumps(result)
+
+
+@pytest.mark.parametrize(
+    ("created", "recent", "future"),
+    [
+        ("2026-09-07T00:00:00+00:00", 0, 0),
+        (RECENT, 1, 0),
+        (AS_OF, 1, 0),
+        ("2026-09-22T00:00:01+00:00", 0, 1),
+    ],
+)
+def test_processing_window_excludes_future_timestamps(tmp_path, created, recent, future):
+    data = tmp_path / "data"
+    db = make_db(data)
+    add_source(db, "item.jpg", OLD)
+    with sqlite3.connect(db) as connection:
+        connection.execute("UPDATE shadow_decisions SET created_at=?", (created,))
+    before = snapshot(data)
+    counts = audit_module.audit(db, data, as_of=AS_OF)["source_summary"]
+    assert counts["expired_source_processed_recent"] == recent
+    assert counts["source_processed_in_future"] == future
+    assert snapshot(data) == before
+
+
+@pytest.mark.parametrize("table", ["shadow_decisions", "violation_records"])
+def test_empty_file_metadata_is_separate_from_invalid_reference(tmp_path, table):
+    data = tmp_path / "data"
+    db = make_db(data)
+    column, array, field = (
+        ("detail_json", "media_files", "name")
+        if table == "shadow_decisions"
+        else ("message_snapshot_json", "attachments", "filename")
+    )
+    entries = [
+        {},
+        {field: None},
+        {field: ""},
+        {field: 7},
+        {field: "../escape"},
+        {field: "x" * 256},
+        7,
+        None,
+        {field: "valid.jpg"},
+    ]
+    with sqlite3.connect(db) as connection:
+        connection.execute(
+            f"INSERT INTO {table}({column},created_at) VALUES (?,?)",
+            (json.dumps({array: entries, "sent_at": OLD}), RECENT),
+        )
+    before = snapshot(data)
+    counts = audit_module.audit(db, data, as_of=AS_OF)["source_summary"]
+    assert counts["reference_rows"] == 9
+    assert counts["empty_file_references"] == 3
+    assert counts["invalid_file_references"] == 5
+    assert snapshot(data) == before

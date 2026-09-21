@@ -138,7 +138,9 @@ def _read_sources(
             "sources": 0,
             "invalid_payload": 0,
             "invalid_file_references": 0,
+            "empty_file_references": 0,
             "expired_source_processed_recent": 0,
+            "source_processed_in_future": 0,
         }
     )
     warnings: list[str] = []
@@ -192,11 +194,19 @@ def _read_sources(
                         source = Source(stamp, quality)
                         counts[f"source_time_{quality}"] += 1
                         created = _date(created_raw, aware_required=False)
+                        if created and created > now:
+                            counts["source_processed_in_future"] += 1
                         if stamp and stamp + timedelta(days=days) <= now:
                             counts["known_source_expired"] += 1
-                            if created and created > now - timedelta(days=days):
+                            if created and now - timedelta(days=days) < created <= now:
                                 counts["expired_source_processed_recent"] += 1
                     if entry_type is None:
+                        continue
+                    if entry_type == "object" and (
+                        filename_type in (None, "null")
+                        or (filename_type == "text" and filename == "")
+                    ):
+                        counts["empty_file_references"] += 1
                         continue
                     name = _file_name(filename) if filename_type == "text" else None
                     if name is None:
