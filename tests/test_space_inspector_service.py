@@ -115,6 +115,68 @@ def test_platform_block_saves_incomplete_result_and_never_visits_next_member():
     assert "SECRET" not in str(raised.value)
 
 
+def test_experimental_batch_limit_stops_before_visiting_remaining_members():
+    store, reader = MemoryStore(), Reader()
+    run_scan(store, reader, "98765432", threading.Event(), lambda _: None, delay=0, max_checks=1)
+    assert reader.calls == ["12345678"]
+    assert len(store.saved) == 1
+
+
+@pytest.mark.parametrize("limit", [0, -1, True])
+def test_invalid_batch_limit_never_visits_members(limit):
+    reader = Reader()
+    with pytest.raises(InspectionError):
+        run_scan(
+            MemoryStore(),
+            reader,
+            "98765432",
+            threading.Event(),
+            lambda _: None,
+            delay=0,
+            max_checks=limit,
+        )
+    assert not reader.calls
+
+
+def test_desktop_scan_uses_explicit_low_frequency_bounded_experiment(monkeypatch):
+    import app.space_inspector.service as module
+
+    calls = []
+    service = Service.__new__(Service)
+    service._store = SimpleNamespace(bind_source=lambda _: None, bind_viewer=lambda _: None)
+    service._directory = SimpleNamespace(verify_identity=lambda: None)
+    service._browser = Reader()
+    service.source_id = "12345678"
+    service.viewer = lambda: "98765432"
+    monkeypatch.setattr(module, "run_scan", lambda *args, **kwargs: calls.append(kwargs))
+    service.scan(threading.Event(), lambda _: None)
+    assert calls == [{"delay": 30.0, "max_checks": 10}]
+
+
+def test_batch_waits_between_visits_but_not_after_last_member():
+    waits = []
+    stop = SimpleNamespace(is_set=lambda: False, wait=lambda seconds: waits.append(seconds))
+    store, reader = MemoryStore(), Reader()
+    run_scan(store, reader, "98765432", stop, lambda _: None, delay=30, max_checks=2)
+    assert reader.calls == ["12345678", "22345678"]
+    assert waits == [30]
+
+
+def test_pause_during_low_frequency_wait_preserves_last_result():
+    waits = []
+
+    def wait(seconds):
+        waits.append(seconds)
+        return True
+
+    stop = SimpleNamespace(is_set=lambda: False, wait=wait)
+    store, reader = MemoryStore(), Reader()
+    run_scan(store, reader, "98765432", stop, lambda _: None, delay=30, max_checks=10)
+    assert waits == [30]
+    assert len(store.saved) == 1
+    assert reader.calls == ["12345678"]
+
+
 def test_pause_after_visit_preserves_result_without_next_request() -> None:
     store, reader, stop = MemoryStore(), Reader(), threading.Event()
     run_scan(store, reader, "98765432", stop, lambda _: stop.set(), delay=10)
