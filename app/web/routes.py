@@ -18,7 +18,7 @@ from urllib.parse import quote
 
 from fastapi import APIRouter, File, Form, HTTPException, Request, Response, UploadFile
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse
-from sqlalchemy import func, select, text, update
+from sqlalchemy import and_, case, func, select, text, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.cases.case_sm import IllegalTransitionError
@@ -27,9 +27,10 @@ from app.config import get_settings
 from app.db import SessionLocal
 from app.models import AdminAudit
 from app.reports.cleanup import purge_expired
-from app.reports.service import build_daily, build_weekly, pending_manual_review
+from app.reports.service import build_daily, build_weekly
 from app.reports.stats import build_stats
 from app.web import auth
+from app.web.pagination import Page, page_controls
 
 router = APIRouter(prefix="/admin", include_in_schema=False)
 
@@ -42,7 +43,9 @@ _STYLE = (
     ".btn{display:inline-block;padding:6px 14px;border:1px solid #ccc;border-radius:6px;background:#fff;cursor:pointer;margin-right:8px}"
     ".btn.danger{border-color:#c0392b;color:#c0392b}.btn.ok{border-color:#16804b;color:#16804b}"
     ".card{background:#fff;border:1px solid #e2e4e8;border-radius:8px;padding:16px;margin-bottom:16px}"
-    ".warn{color:#b45309}.muted{color:#888;font-size:13px}pre{background:#f7f7f8;padding:10px;overflow:auto}</style>"
+    ".warn{color:#b45309}.muted{color:#888;font-size:13px}pre{background:#f7f7f8;padding:10px;overflow:auto}"
+    ".pagination{margin:12px 0}.pagination .page-links,.pagination form{display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin:8px 0}"
+    ".pagination .btn{margin-right:0}.pagination .current-page{background:#eef0f3}.pagination p{margin:6px 0}</style>"
 )
 
 
@@ -329,6 +332,25 @@ def _group_display(alias_map: dict[str, str], group: str) -> str:
     return name if name else (group or "-")
 
 
+async def _pending_review_page(
+    session: AsyncSession, number: int, size: int
+) -> tuple[Page, list[Case]]:
+    # Keep the report contract: all PENDING_REVIEW cases, including historical archived rows.
+    condition = Case.status == "PENDING_REVIEW"
+    total = await session.scalar(select(func.count()).select_from(Case).where(condition)) or 0
+    pagination = Page.from_request(total, number, size)
+    cases = list(
+        await session.scalars(
+            select(Case)
+            .where(condition)
+            .order_by(Case.created_at, Case.id)
+            .limit(pagination.size)
+            .offset(pagination.offset)
+        )
+    )
+    return pagination, cases
+
+
 @router.get("/", response_class=HTMLResponse)
 async def dashboard(
     request: Request,
@@ -339,6 +361,8 @@ async def dashboard(
     date_from: str = "",
     date_to: str = "",
     archived: str = "",
+    pending_page: int = 1,
+    pending_page_size: int = 20,
 ) -> Response:
     token = await _require_login(request)
     if not token:
@@ -347,7 +371,9 @@ async def dashboard(
     page_size = 50
     show_archived = archived == "1"
     async with SessionLocal() as session:
-        pending = await pending_manual_review(session)
+        pending_pagination, pending = await _pending_review_page(
+            session, pending_page, pending_page_size
+        )
         alias_map = await _alias_map(session)
         conditions: list[Any] = []
         # R02/R03 整改：归档语义替代硬删除——默认只看未归档；archived=1 查看已归档
@@ -384,6 +410,14 @@ async def dashboard(
             .all()
         )
     total_pages = max(1, (total + page_size - 1) // page_size)
+    pending_params = (
+        {
+            "pending_page": str(pending_pagination.number),
+            "pending_page_size": str(pending_pagination.size),
+        }
+        if "pending_page" in request.query_params or "pending_page_size" in request.query_params
+        else {}
+    )
 
     def _qs(p: int) -> str:
         from urllib.parse import urlencode
@@ -401,6 +435,7 @@ async def dashboard(
                         "date_from": date_from,
                         "date_to": date_to,
                         **extra,
+                        **pending_params,
                     }.items()
                     if v
                 }
@@ -424,6 +459,10 @@ async def dashboard(
     filter_form = (
         '<form method=get class=card style="display:flex;gap:12px;flex-wrap:wrap;align-items:end">'
         + ('<input type=hidden name=archived value="1">' if show_archived else "")
+        + "".join(
+            f'<input type=hidden name="{key}" value="{value}">'
+            for key, value in pending_params.items()
+        )
         + "<label>状态 <select name=status><option value=''>全部</option>"
         f"{status_opts}</select></label>"
         f'<label>群（群号或群名） <input name=group value="{_esc(group)}" style=width:140px></label>'
@@ -447,8 +486,8 @@ async def dashboard(
     )
     pending_rows = (
         "".join(
-            f"<li>{_esc(p['case_no'])}　群 {_esc(_group_display(alias_map, p.get('group_openid') or ''))}　"
-            f"成员{_esc(p['member_openid'])}</li>"
+            f'<li><a href="/admin/cases/{p.id}">{_esc(p.case_no)}</a>　'
+            f"群 {_esc(_group_display(alias_map, p.group_openid))}　成员{_esc(p.member_openid)}</li>"
             for p in pending
         )
         or "<li>无</li>"
@@ -465,9 +504,19 @@ async def dashboard(
     )
     # 负责人 2026-09-18：待人工清单默认折叠（条目多时页面过长；证据与操作在下方案件列表/详情页）。
     pending_block = (
-        '<details><summary style="cursor:pointer"><h2 style="display:inline">'
-        f"待人工处理（{len(pending)}）</h2> <span class=muted>（点击展开清单）</span></summary>"
-        f"<ul>{pending_rows}</ul></details>"
+        f"<details id=pending-list {'open' if 'pending_page' in request.query_params or 'pending_page_size' in request.query_params else ''}>"
+        '<summary style="cursor:pointer"><h2 style="display:inline">'
+        f"待人工处理（{pending_pagination.total}）</h2> <span class=muted>（点击展开清单）</span></summary>"
+        f"<ul>{pending_rows}</ul>"
+        + page_controls(
+            request,
+            pending_pagination,
+            label="待人工清单分页",
+            fragment="pending-list",
+            page_key="pending_page",
+            size_key="pending_page_size",
+        )
+        + "</details>"
     )
     body = (
         f"{notice_html}{pending_block}"
@@ -1765,7 +1814,9 @@ async def copy_candidate_to_draft_submit(
 
 
 @router.get("/reports", response_class=HTMLResponse)
-async def reports_page(request: Request, notice: str = "") -> Response:
+async def reports_page(
+    request: Request, notice: str = "", page: int = 1, page_size: int = 20
+) -> Response:
     token = await _require_login(request)
     if not token:
         return _login_redirect()
@@ -1773,7 +1824,7 @@ async def reports_page(request: Request, notice: str = "") -> Response:
     async with SessionLocal() as session:
         daily = await build_daily(session)
         weekly = await build_weekly(session)
-        pending = await pending_manual_review(session)
+        pagination, pending = await _pending_review_page(session, page, page_size)
     notice_html = f"<p class=warn role=status>{_esc(notice)}</p>" if notice else ""
     body = (
         notice_html
@@ -1783,9 +1834,17 @@ async def reports_page(request: Request, notice: str = "") -> Response:
         "<div class=card><h3>近7天周报</h3><pre>"
         + _esc(json.dumps(weekly, ensure_ascii=False, indent=1))
         + "</pre></div>"
-        f"<div class=card><h3>待人工处理清单（{len(pending)}）</h3><ul>"
-        + "".join(f"<li>{_esc(p['case_no'])} — {_esc(p['member_openid'])}</li>" for p in pending)
-        + "</ul></div>"
+        f"<div class=card id=pending-list><h3>待人工处理清单（{pagination.total}）</h3><ul>"
+        + (
+            "".join(
+                f'<li><a href="/admin/cases/{p.id}">{_esc(p.case_no)}</a> — {_esc(p.member_openid)}</li>'
+                for p in pending
+            )
+            or "<li>暂无待人工处理案件。</li>"
+        )
+        + "</ul>"
+        + page_controls(request, pagination, label="待人工清单分页", fragment="pending-list")
+        + "</div>"
         "<div class=card><h3>数据保留清理</h3>"
         f'<form method=post action="/admin/cleanup">{csrf}<button class=btn>立即执行保留期清理</button></form></div>'
     )
@@ -1829,7 +1888,9 @@ async def _ensure_action_routes(
 
 
 @router.get("/allowlist", response_class=HTMLResponse)
-async def allowlist_page(request: Request, notice: str = "") -> Response:
+async def allowlist_page(
+    request: Request, notice: str = "", member_page: int = 1, member_page_size: int = 20
+) -> Response:
     """白名单设置：词语白名单 + 成员白名单（QQ号）。
 
     登录管理员可改，保存即生效（运行时逐消息直读，无需重启）。
@@ -1842,8 +1903,21 @@ async def allowlist_page(request: Request, notice: str = "") -> Response:
 
     async with SessionLocal() as session:
         terms = (await session.scalars(select(AllowlistTerm).order_by(AllowlistTerm.id))).all()
+        member_total, member_enabled = (
+            await session.execute(
+                select(
+                    func.count(), func.sum(case((AllowlistMember.enabled.is_(True), 1), else_=0))
+                ).select_from(AllowlistMember)
+            )
+        ).one()
+        member_pagination = Page.from_request(member_total, member_page, member_page_size)
         members = (
-            await session.scalars(select(AllowlistMember).order_by(AllowlistMember.id))
+            await session.scalars(
+                select(AllowlistMember)
+                .order_by(AllowlistMember.id)
+                .limit(member_pagination.size)
+                .offset(member_pagination.offset)
+            )
         ).all()
     rows = "".join(
         "<tr>"
@@ -1876,7 +1950,8 @@ async def allowlist_page(request: Request, notice: str = "") -> Response:
         for m in members
     )
     member_section = (
-        "<div class=card><h3>成员白名单（按QQ号，优先级最高）</h3>"
+        "<div class=card id=member-list><h3>成员白名单（按QQ号，优先级最高）</h3>"
+        f"<p>名单总数：{member_total}；启用：{member_enabled or 0}；停用：{member_total - (member_enabled or 0)}</p>"
         "<p class=muted>命中成员的全部消息<b>完全放行</b>（含诈骗/色情/暴力/刷屏，"
         "负责人 2026-09-18 明确口径）：不撤回、不处罚、不转人工；合并转发与群名片"
         "的撤回规则同样不作用于名单内成员。仅对 NapCat/OneBot 主通道（数字QQ号）生效，"
@@ -1906,7 +1981,16 @@ async def allowlist_page(request: Request, notice: str = "") -> Response:
         "<table><tr><th>QQ号</th><th>备注</th><th>通道</th><th>状态</th><th>添加人</th>"
         "<th>时间</th><th>操作</th></tr>"
         f"{member_rows or '<tr><td colspan=7>暂无成员白名单。可用文件批量设置。</td></tr>'}"
-        "</table></div>"
+        "</table>"
+        + page_controls(
+            request,
+            member_pagination,
+            label="成员白名单分页",
+            fragment="member-list",
+            page_key="member_page",
+            size_key="member_page_size",
+        )
+        + "</div>"
     )
     body = (
         "<h2>白名单设置</h2>"
@@ -2344,53 +2428,118 @@ async def allowlist_members_export(request: Request) -> Response:
 
 
 @router.get("/groups", response_class=HTMLResponse)
-async def groups_page(request: Request, notice: str = "", show_hidden: str = "") -> Response:
+async def groups_page(
+    request: Request, notice: str = "", show_hidden: str = "", page: int = 1, page_size: int = 20
+) -> Response:
     """Provider-qualified controls with an explicit, human-approved action owner."""
     token = await _require_login(request)
     if not token:
         return _login_redirect()
     csrf = _csrf_field(token)
     from app.core.emergency_stop import emergency_stop_active
-    from app.models import GroupActionOwner, HiddenGroup, ProviderGroupSettings
+    from app.models import GroupActionOwner, GroupAlias, HiddenGroup, ProviderGroupSettings
     from app.runtime.models import ShadowDecision
 
     async with SessionLocal() as session:
-        seen = {
-            tuple(row)
-            for row in (
-                await session.execute(
-                    select(ShadowDecision.provider, ShadowDecision.external_group_id).distinct()
-                )
-            ).all()
-        }
-        settings_rows = (await session.scalars(select(ProviderGroupSettings))).all()
-        settings_map = {(row.provider, row.external_group_id): row for row in settings_rows}
-        from app.models import GroupAlias
-
-        # 群备注与「群名称备注」统一为同一份数据（影子判定页显示的就是它）
-        alias_map = {
-            row.group_openid: row.name for row in (await session.scalars(select(GroupAlias))).all()
-        }
-        seen.update(settings_map)
-        owners = {
-            row.external_group_id: row.provider
-            for row in (await session.scalars(select(GroupActionOwner))).all()
-        }
-        hidden = set(
-            (row.provider, row.external_group_id)
-            for row in (await session.scalars(select(HiddenGroup))).all()
+        # Same identity scope as before: seen messages UNION persisted settings.
+        # UNION deduplicates messages while retaining identical IDs from different providers.
+        identities = (
+            select(ShadowDecision.provider, ShadowDecision.external_group_id)
+            .where(ShadowDecision.external_group_id != "")
+            .union(
+                select(
+                    ProviderGroupSettings.provider, ProviderGroupSettings.external_group_id
+                ).where(ProviderGroupSettings.external_group_id != "")
+            )
+            .subquery()
         )
+        settings_join = and_(
+            ProviderGroupSettings.provider == identities.c.provider,
+            ProviderGroupSettings.external_group_id == identities.c.external_group_id,
+        )
+        hidden_identity = (
+            select(HiddenGroup.external_group_id)
+            .where(
+                HiddenGroup.provider == identities.c.provider,
+                HiddenGroup.external_group_id == identities.c.external_group_id,
+            )
+            .exists()
+        )
+        flags = (
+            select(
+                identities.c.provider,
+                identities.c.external_group_id,
+                func.coalesce(ProviderGroupSettings.moderation_enabled, True).label(
+                    "review_enabled"
+                ),
+                func.coalesce(ProviderGroupSettings.action_enabled, False).label("action_enabled"),
+                hidden_identity.label("is_hidden"),
+            )
+            .select_from(identities)
+            .outerjoin(ProviderGroupSettings, settings_join)
+            .subquery()
+        )
+        total, reviewing, action_configured, hidden_total = (
+            await session.execute(
+                select(
+                    func.count(),
+                    func.sum(case((flags.c.review_enabled.is_(True), 1), else_=0)),
+                    func.sum(
+                        case(
+                            (
+                                and_(
+                                    flags.c.review_enabled.is_(True),
+                                    flags.c.action_enabled.is_(True),
+                                ),
+                                1,
+                            ),
+                            else_=0,
+                        )
+                    ),
+                    func.sum(case((flags.c.is_hidden.is_(True), 1), else_=0)),
+                ).select_from(flags)
+            )
+        ).one()
+        reviewing, action_configured, hidden_total = (
+            reviewing or 0,
+            action_configured or 0,
+            hidden_total or 0,
+        )
+        pagination = Page.from_request(
+            hidden_total if show_hidden else total - hidden_total, page, page_size
+        )
+        group_rows = (
+            await session.execute(
+                select(
+                    flags.c.provider,
+                    flags.c.external_group_id,
+                    ProviderGroupSettings,
+                    GroupAlias.name,
+                    GroupActionOwner.provider,
+                )
+                .select_from(flags)
+                .outerjoin(
+                    ProviderGroupSettings,
+                    and_(
+                        ProviderGroupSettings.provider == flags.c.provider,
+                        ProviderGroupSettings.external_group_id == flags.c.external_group_id,
+                    ),
+                )
+                .outerjoin(GroupAlias, GroupAlias.group_openid == flags.c.external_group_id)
+                .outerjoin(
+                    GroupActionOwner,
+                    GroupActionOwner.external_group_id == flags.c.external_group_id,
+                )
+                .where(flags.c.is_hidden.is_(bool(show_hidden)))
+                .order_by(flags.c.provider, flags.c.external_group_id)
+                .limit(pagination.size)
+                .offset(pagination.offset)
+            )
+        ).all()
         stopped = await emergency_stop_active(session)
     rows = []
-    for provider, group in sorted(seen):
-        if not group:
-            continue
-        key = (provider, group)
-        is_hidden = key in hidden
-        # 正常视图隐藏已隐藏群；show_hidden=1 只显示已隐藏群（可恢复/彻底删除）
-        if (not show_hidden and is_hidden) or (show_hidden and not is_hidden):
-            continue
-        gs = settings_map.get(key)
+    for provider, group, gs, alias_name, owner in group_rows:
+        is_hidden = bool(show_hidden)
         if show_hidden:
             action_buttons = (
                 f'<form method=post style="display:inline" action="/admin/groups/unhide">{csrf}'
@@ -2406,16 +2555,16 @@ async def groups_page(request: Request, notice: str = "", show_hidden: str = "")
                 f'<input type=hidden name=group_openid value="{_esc(group)}">'
                 "<button class=btn>隐藏</button></form>"
             )
-        display_name = alias_map.get(group) or (gs.name if gs else "")
+        display_name = alias_name or (gs.name if gs else "")
         rows.append(
             f"<tr><td>{_esc(provider)}<br>{f'<b>{_esc(display_name)}</b><br>' if display_name else ''}"
             f"<code>{_esc(group)}</code>{' <span class=warn>（已隐藏）</span>' if is_hidden else ''}</td>"
-            f"<td>{_esc(owners.get(group) or '未选择 / 有歧义')}</td><td>"
+            f"<td>{_esc(owner or '未选择 / 有歧义')}</td><td>"
             f'<form method=post action="/admin/groups/settings">{csrf}'
             f'<input type=hidden name=provider value="{_esc(provider)}">'
             f'<input type=hidden name=group_openid value="{_esc(group)}">'
             f'<label>群备注 <input name=name maxlength=64 value="'
-            f'{_esc(alias_map.get(group) or (gs.name if gs else ""))}"></label> '
+            f'{_esc(display_name)}"></label> '
             f"<label><input type=checkbox name=moderation_enabled value=1 {'checked' if gs is None or gs.moderation_enabled else ''}>审核</label> "
             f"<label><input type=checkbox name=action_enabled value=1 {'checked' if gs and gs.action_enabled else ''}>真实动作</label> "
             "<button class=btn>保存 / 预览高风险变更</button></form>"
@@ -2426,9 +2575,22 @@ async def groups_page(request: Request, notice: str = "", show_hidden: str = "")
         if show_hidden
         else '<a class=btn href="/admin/groups?show_hidden=1">查看已隐藏群</a>'
     )
+    summary = _kpis(
+        [
+            ("后台已记录群", total),
+            ("审核开启", reviewing),
+            ("仅审核", reviewing - action_configured),
+            ("审核＋真实动作已配置", action_configured),
+            ("审核关闭", total - reviewing),
+            ("已隐藏群", hidden_total),
+        ]
+    )
+    pager = page_controls(request, pagination, label="群聊列表分页", fragment="group-list")
     body = (
         "<h2>群管理</h2><p>群设置按来源和群 ID 隔离。开启真实动作或改变出口需预览并由登录管理员确认；"
         "选择出口会关闭同 ID 其他来源的动作。不同通道 ID 不做猜测映射。</p>"
+        f"{summary}<p class=muted>统计范围为后台已记录群（含隐藏），按来源与群 ID 分开计数，不等同于机器人当前在群数。"
+        "审核开启＝仅审核＋审核与真实动作已配置；隐藏仅影响列表。动作配置不代表实际动作已生效，仍受急停、全局开关、出口与当前动作阶段约束。</p>"
         f"<div role=status>{_esc(notice)}</div>"
         f"<p>{hidden_toggle}</p>"
         f"<div class=card><strong>急停：{'已开启，禁止外部动作' if stopped else '未开启'}</strong>"
@@ -2436,12 +2598,12 @@ async def groups_page(request: Request, notice: str = "", show_hidden: str = "")
         '<button class="btn danger">立即停止全部外部动作</button></form>'
         f'<form method=post action="/admin/emergency-resume">{csrf}'
         "<button class=btn>预览解除急停</button></form></div>"
-        "<table><tr><th>群身份</th><th>唯一动作出口</th><th>设置</th></tr>"
+        f"<div id=group-list>{pager}<table><tr><th>群身份</th><th>唯一动作出口</th><th>设置</th></tr>"
         + (
             "".join(rows)
             or f"<tr><td colspan=3>{'没有已隐藏的群。' if show_hidden else '暂无群消息。可在下方明确添加群来源。'}</td></tr>"
         )
-        + f'</table><div class=card><h3>添加明确的群身份</h3><form method=post action="/admin/groups/settings">{csrf}'
+        + f'</table>{pager}</div><div class=card><h3>添加明确的群身份</h3><form method=post action="/admin/groups/settings">{csrf}'
         "<label>来源 <select name=provider><option value=onebot>onebot</option>"
         "<option value=qq_official>qq_official</option></select></label> "
         "<label>群 ID <input name=group_openid required maxlength=128></label> "
