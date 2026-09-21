@@ -26,6 +26,7 @@ import io
 import logging
 from collections.abc import Iterable
 from pathlib import Path
+from typing import cast
 
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -87,7 +88,7 @@ def dhash64(data: bytes) -> int | None:
             if image.width < 9 or image.height < 8:
                 return None
             gray = image.convert("L").resize((9, 8), Image.Resampling.LANCZOS)
-            pixels = list(gray.getdata())
+            pixels = list(cast(tuple[int, ...], gray.get_flattened_data()))
     except Exception:  # noqa: BLE001 - 任何解码问题都按"未命中"处理
         return None
     if len(pixels) < 72:
