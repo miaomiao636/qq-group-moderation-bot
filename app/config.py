@@ -119,6 +119,8 @@ class Settings(BaseSettings):
     # 数据保留期（天）
     raw_retention_days: int = Field(default=30, ge=1, alias="RAW_RETENTION_DAYS")
     decision_retention_days: int = Field(default=180, ge=1, alias="DECISION_RETENTION_DAYS")
+    # Independent of retention and per-file limits. No eviction to satisfy quota.
+    media_quota_bytes: int = Field(default=2 * 1024**3, ge=1, alias="MEDIA_QUOTA_BYTES")
 
     # 日志级别
     log_level: str = Field(default="INFO", alias="LOG_LEVEL")

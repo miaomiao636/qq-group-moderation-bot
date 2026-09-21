@@ -24,6 +24,7 @@ from app.actions.orchestrator import (
 from app.core.async_utils import blocking_call
 from app.core.contracts import MessageParseError, MessageSource, StandardMessage
 from app.core.dedup import begin_processing, mark_failed, mark_processed
+from app.core.media_diagnostics import safe_download_errors
 from app.moderation.ai import AIReviewService
 from app.moderation.allowlist import load_allowlist_members, load_allowlist_terms
 from app.moderation.decision import (
@@ -482,6 +483,7 @@ async def _run_pipeline(
             "media_kinds": [a.content_type for a in msg.attachments],
             # T-306增强：媒体文件名（SHA安全名），供后台详情页回看原图/视频
             "media_files": [{"name": a.filename, "type": a.content_type} for a in msg.attachments],
+            "media_download_errors": safe_download_errors(payload.get("_media_download_errors")),
             "rule_version_ids": list(rule_version_ids),
             "ai_results": [r.model_dump() for r in ai_results],
             "evidence_vetoes": list(dict.fromkeys(evidence_vetoes)),

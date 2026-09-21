@@ -94,6 +94,29 @@ def _esc(value: object) -> str:
     return html.escape(str(value))
 
 
+async def _media_capacity_banner() -> str:
+    import asyncio
+
+    from app.adapters.qq_official.media import capacity_status
+    from app.runtime.pipeline import MEDIA_DIR
+
+    status = await asyncio.to_thread(capacity_status, MEDIA_DIR)
+    if status["state"] == "unknown":
+        return "<div class='card warn' role=alert>无法读取媒体存储容量，请检查磁盘与权限。</div>"
+    used, quota = status["used_bytes"] / 1024**3, status["quota_bytes"] / 1024**3
+    warning = status["state"] in {"warning", "full"}
+    note = (
+        "<b>媒体容量预警：</b>已接近或达到上限，新图片可能无法下载并转人工。请安排扩容；不要直接删除证据。"
+        if warning
+        else "媒体存储"
+    )
+    return (
+        f"<div class='card{' warn' if warning else ''}' role=status>{note} "
+        f"已用 {used:.2f} / {quota:.2f} GiB；"
+        f"磁盘可用 {status['disk_free_bytes'] / 1024**3:.1f} GiB。</div>"
+    )
+
+
 def _kpis(cards: list[tuple[str, object]]) -> str:
     items = "".join(
         "<div class=card style='flex:1;min-width:140px;text-align:center;margin:0 8px 16px 0'>"
@@ -532,7 +555,7 @@ async def dashboard(
         + "</details>"
     )
     body = (
-        f"{notice_html}{pending_block}"
+        f"{await _media_capacity_banner()}{notice_html}{pending_block}"
         f"<h2>{'已归档案件' if show_archived else '案件'}</h2>{archive_note}{archive_toggle}"
         f"{filter_form}{batch_form}{pager}"
     )
@@ -1067,7 +1090,7 @@ async def shadow_page(request: Request, verdict: str = "") -> Response:
     )
 
     body = (
-        f"<h2>影子模式判定（最近100条）</h2><p>分布：{_esc(summary)}　"
+        f"{await _media_capacity_banner()}<h2>影子模式判定（最近100条）</h2><p>分布：{_esc(summary)}　"
         "<span class=muted>影子模式只记录不处罚；时间为北京时间</span></p>"
         f'<form style="display:none">{csrf}</form>'
         "<div class=card><b>判定说明：</b>高置信违规=确定违规（正式模式自动撤回+禁言+警告）；"
@@ -1217,6 +1240,16 @@ async def shadow_detail(request: Request, message_id: str = "") -> Response:
         else "<p class=muted>尚未保存反馈</p>"
     )
     text_preview = _esc(str(detail.get("text_preview") or ""))
+    from app.core.media_diagnostics import DOWNLOAD_ERROR_LABELS, safe_download_errors
+
+    errors = safe_download_errors(detail.get("media_download_errors"))
+    download_diagnostic = (
+        "<div class='card warn'><b>媒体下载诊断：</b>"
+        + "；".join(_esc(DOWNLOAD_ERROR_LABELS[code]) for code in dict.fromkeys(errors))
+        + "</div>"
+        if errors
+        else ""
+    )
 
     body = (
         f'<p><a href="/admin/shadow">← 返回影子判定列表</a></p><h2>判定详情</h2>'
@@ -1228,7 +1261,7 @@ async def shadow_detail(request: Request, message_id: str = "") -> Response:
         f"<tr><th>类型</th><td>{_zh_kind(record.kind)}</td></tr>"
         f"<tr><th>判定</th><td><b>{_zh_verdict(record.verdict)}</b>　置信度 {record.confidence}</td></tr>"
         f"<tr><th>判定原因</th><td>{_esc(record.reason)}</td></tr>"
-        f"</table>{fb_line}</div>"
+        f"</table>{fb_line}</div>{download_diagnostic}"
         "<div class=card><h3>文字内容</h3>"
         f"<p>{text_preview or '<span class=muted>（无文字）</span>'}</p>"
         "<p class=muted>隐私设计：文字仅保留前60字预览，完整原文不留存。</p></div>"

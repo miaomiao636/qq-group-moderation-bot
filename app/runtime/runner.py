@@ -21,6 +21,7 @@ from websockets.asyncio.client import connect
 
 from app.adapters.qq_official.media import download_attachment
 from app.core.async_utils import blocking_call
+from app.core.media_diagnostics import download_error_code
 from app.db import SessionLocal
 from app.moderation.image_engine import ImageModerationEngine
 from app.moderation.imaging import dhash
@@ -100,9 +101,12 @@ async def _download_attachments(client: httpx.AsyncClient, payload: dict[str, An
     下载失败/超限/超配额时 filename 留空，流水线据此判 record_only（不处罚）。
     """
     message_id = str(payload.get("id") or "msg")
+    errors: list[str] = []
+    payload["_media_download_errors"] = errors
     for idx, att in enumerate(payload.get("attachments") or []):
         url = str(att.get("url") or "")
         if not url:
+            errors.append("missing_url")
             continue
         declared = str(att.get("content_type") or "")
         name, _ext, reason = await download_attachment(
@@ -114,6 +118,7 @@ async def _download_attachments(client: httpx.AsyncClient, payload: dict[str, An
             # 下载失败：流水线将判 record_only
             att["filename"] = ""
             att["_download_error"] = reason
+            errors.append(download_error_code(reason or ""))
 
 
 async def _listen_once(app_id: str, app_secret: str, stop: asyncio.Event) -> float:
