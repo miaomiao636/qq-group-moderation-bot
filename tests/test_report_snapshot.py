@@ -4,7 +4,6 @@ import sqlite3
 from datetime import UTC, datetime
 
 import pytest
-
 from scripts import shadow_report, window_stats
 
 START = datetime(2026, 9, 21, tzinfo=UTC)
