@@ -115,3 +115,49 @@ def test_nonstandard_dialog_does_not_use_underlying_qq_as_normal_profile():
         ("dialog_message", "安全验证", "[100,600][900,800]"),
     )
     assert parse_page(raw).kind == "unknown"
+
+
+def custom_profile(nickname="测试(12345602)", identity="测试(12345602)(12345601)"):
+    root = ET.fromstring(xml(("tu_", nickname, "[300,1700][700,1800]")))
+    section = ET.SubElement(
+        root,
+        "node",
+        {"package": "com.tencent.mobileqq", "resource-id": "com.tencent.mobileqq:id/ag"},
+    )
+    row = ET.SubElement(section, "node", {"class": "android.widget.LinearLayout"})
+    ET.SubElement(
+        row,
+        "node",
+        {"package": "com.tencent.mobileqq", "resource-id": "com.tencent.mobileqq:id/icon"},
+    )
+    ET.SubElement(
+        row,
+        "node",
+        {
+            "package": "com.tencent.mobileqq",
+            "resource-id": "com.tencent.mobileqq:id/info",
+            "text": identity,
+        },
+    )
+    return root
+
+
+def test_custom_profile_reads_identity_row_not_digits_in_nickname():
+    page = parse_page(ET.tostring(custom_profile()))
+    assert page.kind == "profile"
+    assert page.qq == "12345601"
+
+
+def test_arbitrary_info_text_or_mismatched_nickname_is_not_identity():
+    assert parse_page(xml(("info", "测试(12345601)", "[100,100][800,160]"))).kind == "unknown"
+    page = parse_page(ET.tostring(custom_profile(identity="其他名字(12345601)")))
+    assert page.kind == "unknown"
+
+
+def test_custom_profile_duplicate_identity_rows_are_rejected():
+    import copy
+
+    root = custom_profile()
+    root.append(copy.deepcopy(root[1]))
+    with pytest.raises(InspectionError):
+        parse_page(ET.tostring(root))
