@@ -10,7 +10,7 @@
 
 1. 打开工具，刷新群列表。群成员来源是项目已配置的机器人账号；QQ 空间观察账号由专用浏览器正常登录，两者分别显示。
 2. 点击“打开空间登录”，在独立 Microsoft Edge 中登录 QQ 空间，然后点击“确认已登录”。首次登录和之后的会话过期需要本人处理；不复制现有浏览器或 QQ 的凭据。
-3. 正常访问恢复后，选择需要检查的群，点击“开始检查所选群”。当前为低频试验：每批最多 10 人，批内相邻检查之间等待 30 秒，批末停止，由本人手动继续下一批；并非腾讯允许频率，仍可能被拦截。每个任务最多选择 10 个群；同一账号跨群只访问一次，导出保留每个群的关联。
+3. 正常访问恢复后，选择需要检查的群，点击“开始检查所选群”。当前按负责人 2026-09-22 要求试用每批最多 300 人，批内相邻检查之间等待 30 秒，批末停止，由本人手动继续下一批；并非腾讯允许频率，仍可能被拦截。每个任务最多选择 10 个群；同一账号跨群只访问一次，导出保留每个群的关联。
 4. 可以暂停、关闭后载入任务继续。点击“载入已有任务”，在窗口内按创建时间、群名和进度选择任务，再点“载入所选”；默认选择最新任务，不必寻找隐藏的 AppData 目录。“其他位置”保留手动选择入口。载入不会自动开始巡检；点“继续检查”才续扫。任务逐项保存；同一任务必须使用原成员来源账号和空间观察账号才能续扫。仅查看或导出已有任务不需要重新登录空间。需要查看文件时点“打开任务目录”；未载入任务时打开任务根目录。AppData 默认隐藏，也可按 Win+R 输入 `%LOCALAPPDATA%\QQSpaceInspector\tasks` 直接进入。
 5. 点击“导出结果”，再点“打开导出目录”。`restricted.csv` 仅包含明确空间违规限制提示；`report.csv` 包含全部快照成员；`report.json` 保存观察依据、统计和群快照信息；`说明.txt` 解释范围与未完成数量。CSV 可用 Excel 打开。
 
@@ -293,3 +293,39 @@ uv run python 'C:/Users/81596/AppData/Local/Temp/qqbot-space-inspector-20260921/
 ```
 
 全量 2189 项：2172 passed、17 skipped、0 failed/error；主审 31 文件/262 项全通过；巡检内部回归 192 项中 191 passed、1 skipped（原有 Windows symlink 权限差异）。格式 345 文件、类型 111 源文件，三门禁通过。证据目录 `verification-period-template/` 保留 full.log/xml、summary.json、gates.json 和三门禁输出。代码、内部回归分别提交，主审探针未改；最终文档 HEAD 的 CI 另按 `gh run list --branch windows-deploy-2026-09-10 --limit 5 --json databaseId,headSha,status,conclusion,url`、`gh run view <run-id> --json headSha,status,conclusion,jobs` 查询，最终回执不借用旧 SHA。
+
+
+## 每批上限调整为 300 人
+
+负责人明确要求把一次检查上限改为 300 人试用，并确认已暂停另一个任务的仓库修改，由本任务接手单一写入。对齐基线 `adef6ee558be3ba9d53de7111c6eecfd21a74ef9`，工作区干净。代码提交 `e4d582e7d10f3e2f4c0122eb14102a8fed042c15` 仅把 `EXPERIMENT_BATCH_SIZE` 从 10 改为 300；内部回归提交 `2623031f7dabdb65703bc047507478ceda302517` 更新用户已变更的参数预期，并覆盖批次边界和剩余成员续扫。未修改外部主审探针或降低暂停/身份/存储保护。
+
+GUI 说明直接引用同一常量；批内间隔仍为 30 秒，每次点击开始或继续最多访问 300 个待检查成员，批末手动续批。遇平台拦截、登录失效或未知页面仍提前停止；本次不安排无人值守连批、不自动开始真实扫描。满批仅间隔时间为 `(300 - 1) * 30 = 8970` 秒，约 2.5 小时，另加网页加载时间；不能把增大批次当作已经解决访问限制。
+
+为避免与另一任务同时写仓库，先将候选内部回归放入 TEMP，在上述基线运行：
+
+```powershell
+uv run pytest 'C:/Users/81596/AppData/Local/Temp/qqbot-space-inspector-20260922-batch300/test_space_inspector_service.py' -k 'desktop_scan_uses or desktop_batch_300' -q -o addopts= --tb=short
+```
+
+结果 2 failed、14 deselected，复现旧桌面仍传入 10 人、到第 10 人就停止。取得写入交接后候选入库；最终回归证明模拟 301 人任务首批恰好访问 300 人、第二批只访问剩余 1 人，不重复已完成成员。该合成回归不接 QQ，不能当作 300 人实机成功证据。
+
+执行 SHA `2623031f7dabdb65703bc047507478ceda302517`：独立桌面运行环境确认导入本仓库 `service.py`，参数输出 `300 30.0`：
+
+```powershell
+& 'C:/Users/81596/AppData/Local/QQSpaceInspector/runtime/Scripts/python.exe' -c 'from app.space_inspector import service; print(service.__file__); print(service.EXPERIMENT_BATCH_SIZE, service.EXPERIMENT_DELAY_SECONDS)'
+```
+
+旧 GUI 不热加载模块，需要先暂停、关闭后从桌面重开，再通过“载入已有任务”选择原任务继续。无需重建快照或重扫已完成成员。真实 300 人批次和新导出尚未验收。
+
+
+冻结验证执行 SHA `2623031f7dabdb65703bc047507478ceda302517`，源码和测试在验证期间不变：
+
+```powershell
+uv run ruff check app tests alembic scripts
+uv run ruff format --check app tests alembic scripts
+uv run mypy app
+uv run pytest --junitxml='C:/Users/81596/AppData/Local/Temp/qqbot-space-inspector-20260922-batch300/full.xml'
+uv run python 'C:/Users/81596/AppData/Local/Temp/qqbot-space-inspector-20260922-batch300/summarize.py'
+```
+
+全量 2215 项：2198 passed、17 skipped、0 failed/error；主审 31 文件/262 项全通过；巡检内部回归 193 项中 192 passed、1 skipped（原有 Windows symlink 权限差异）。三门禁通过，格式 348 文件、类型 111 源文件。证据在上述 TEMP 目录 full.log/xml、summary.json、gates.json 和门禁输出。最终文档 SHA 推送后仍按同 SHA 查询 GitHub 三个 job，不将本机通过称为远程已通过；远程结果见最终交付回执链接。本批完成推送后释放仓库写入，不代推其他任务提交。
