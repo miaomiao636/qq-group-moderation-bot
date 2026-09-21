@@ -14,6 +14,7 @@ import argparse
 import json
 import sqlite3
 import sys
+from contextlib import closing
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -29,16 +30,29 @@ FAILURE_NOTE = (
 
 
 def _parse_utc(value: str) -> datetime:
-    return datetime.fromisoformat(value.replace("Z", "+00:00")).astimezone(UTC)
+    parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    return parsed.replace(tzinfo=UTC) if parsed.tzinfo is None else parsed.astimezone(UTC)
 
 
 def _iso(dt: datetime) -> str:
-    return dt.astimezone(UTC).replace(tzinfo=None).isoformat(sep=" ")
+    utc = dt.replace(tzinfo=UTC) if dt.tzinfo is None else dt.astimezone(UTC)
+    return utc.replace(tzinfo=None).isoformat(sep=" ")
 
 
 def collect(*, db: Path, start: datetime, end: datetime) -> dict[str, object]:
+    if _iso(start) >= _iso(end):
+        raise ValueError("start must be earlier than end")
+    # An explicit transaction fixes the snapshot at the first SELECT, including in WAL mode.
+    # closing() releases the read transaction on success and on query/render failures.
+    with closing(sqlite3.connect(db.resolve().as_uri() + "?mode=ro", uri=True)) as con:
+        con.execute("BEGIN")
+        return _collect_snapshot(con=con, start=start, end=end)
+
+
+def _collect_snapshot(
+    *, con: sqlite3.Connection, start: datetime, end: datetime
+) -> dict[str, object]:
     lo, hi = _iso(start), _iso(end)
-    con = sqlite3.connect(f"file:{db}?mode=ro", uri=True)
     q = lambda sql, *a: con.execute(sql, a).fetchall()  # noqa: E731
 
     account = [
@@ -324,15 +338,15 @@ def main(argv: list[str] | None = None) -> int:
     out_dir = Path(args.out)
     out_dir.mkdir(parents=True, exist_ok=True)
     out = out_dir / f"window-{start:%Y%m%dT%H%M%SZ}-{end:%Y%m%dT%H%M%SZ}.md"
-    out.write_text(
-        render(
-            data,
-            deployment=args.deployment_sha,
-            prompt_version=prompt_version or "?",
-            db=Path(args.db),
-        ),
-        encoding="utf-8",
+    report = render(
+        data,
+        deployment=args.deployment_sha,
+        prompt_version=prompt_version or "?",
+        db=Path(args.db),
     )
+    # Preserve an existing report for this window; choose a fresh --out directory to rerun.
+    with out.open("x", encoding="utf-8") as stream:
+        stream.write(report)
     print(f"WINDOW_STATS_OK {out}")
     print(json.dumps({"verdicts": data["decisions_by_verdict"]}, ensure_ascii=False))
     return 0

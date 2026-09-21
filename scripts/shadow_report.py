@@ -100,8 +100,10 @@ def main(argv: list[str] | None = None) -> int:
             print(f"WINDOW_INVALID 起点不早于终点：{start} → {end} → 拒绝生成报告")
             return 2
         window = (start, end)
-    con = sqlite3.connect(f"file:{db}?mode=ro", uri=True)
+    con = sqlite3.connect(db.resolve().as_uri() + "?mode=ro", uri=True)
     try:
+        # Keep rows and every denominator on the same SQLite read snapshot.
+        con.execute("BEGIN")
         if window is not None:
             # 起点**含**、终点**不含**；观测、总数、图片数**同一范围**（窗外一律不计入）。
             lo, hi = window
@@ -221,7 +223,9 @@ def main(argv: list[str] | None = None) -> int:
             )
     out = OUT_DIR / f"shadow-{datetime.now(UTC):%Y%m%dT%H%M%SZ}.md"
     out.parent.mkdir(parents=True, exist_ok=True)
-    out.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    # Never overwrite sealed evidence, even when exports happen in the same second.
+    with out.open("x", encoding="utf-8") as stream:
+        stream.write("\n".join(lines) + "\n")
     print(f"SHADOW_REPORT_OK {out}")
     print(
         json.dumps(
