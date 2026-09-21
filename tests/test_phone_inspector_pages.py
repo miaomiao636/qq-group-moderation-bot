@@ -178,3 +178,31 @@ def test_known_full_cover_is_scrollable_but_supplies_no_account_identity():
     assert page.qq == ""
     assert page.viewport.top >= 228
     assert page.viewport.bottom <= 2128
+
+
+def test_clipped_member_without_visible_name_does_not_block_next_viewport():
+    root = ET.fromstring(
+        xml(
+            ("ivTitleName", "群聊成员", "[400,100][600,160]"),
+            ("k05", "", "[0,200][1080,2200]"),
+            ("jzt", "", "[0,2180][1080,2200]"),
+        )
+    )
+    assert parse_page(ET.tostring(root)).kind == "members"
+
+
+@pytest.mark.parametrize("header,expected", [("机器人", 0), ("Q(1人)", 1)])
+def test_native_robot_section_is_excluded_without_using_member_nickname(header, expected):
+    root = ET.fromstring(
+        xml(
+            ("ivTitleName", "群聊成员", "[400,100][600,160]"),
+            ("k05", "", "[0,200][1080,2200]"),
+            ("k8u", header, "[0,300][1080,390]"),
+            ("jzt", "", "[0,400][1080,550]"),
+        )
+    )
+    row = root[-1]
+    for resource in ("tv_name", "kab"):
+        child = ET.fromstring(xml((resource, "Q群管家", "[200,430][400,500]")))[0]
+        row.append(child)
+    assert len(parse_page(ET.tostring(root)).rows) == expected
