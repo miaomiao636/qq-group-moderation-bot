@@ -1,5 +1,6 @@
 """Model-based navigation contracts; these are NOT phone acceptance evidence."""
 
+import json
 import threading
 
 from app.phone_inspector.device import DeviceIdentity
@@ -113,4 +114,15 @@ def test_unknown_page_stops_without_guessing_qq_or_dismissing_unknown_dialog(tmp
     assert result["checked"] == 0
     assert result["unresolved"] == 1
     assert not any(kind == "unknown" for kind, _ in phone.actions)
+    store.close()
+
+
+def test_resume_records_each_execution_instead_of_reusing_first_sha(tmp_path):
+    phone = FakePhone([["12345601"]])
+    store = Store(tmp_path / "task", create=True)
+    Scanner(phone, store, stamp={"execution_sha": "first"}).run(limit=1)
+    Scanner(phone, store, stamp={"execution_sha": "second"}).run(limit=1)
+    manifest = tmp_path / "task" / "passes" / "2.json"
+    assert manifest.is_file()
+    assert json.loads(manifest.read_text(encoding="utf-8"))["execution_sha"] == "second"
     store.close()
