@@ -8,7 +8,7 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import cast
 
-from app.space_inspector.contracts import Group, InspectionError
+from app.space_inspector.contracts import Group, InspectionError, PlatformAccessBlocked
 from app.space_inspector.service import Service
 from app.space_inspector.worker import Command, Event, run_worker
 
@@ -257,3 +257,20 @@ def test_history_does_not_open_browser_replace_task_or_start_scan() -> None:
         ("history", {"tasks": [{"folder": Path("saved-task"), "checked": 3, "total": 10}]}),
         ("closed", {}),
     ]
+
+
+def test_platform_block_requires_browser_confirmation_but_keeps_task_exportable():
+    class Blocked(FakeService):
+        def scan(self, stop, on_progress):
+            raise PlatformAccessBlocked("QQ 空间访问被腾讯安全防护拦截，请停止重试")
+
+    commands, events = queue.Queue(), queue.Queue(maxsize=100)
+    commands.put(("create", ["23456789"]))
+    commands.put(("export", None))
+    commands.put(("close", None))
+    run_worker(commands, events, threading.Event(), lambda: cast(Service, Blocked([])))
+    emitted = drain(events)
+    error = next(payload for kind, payload in emitted if kind == "error")
+    assert error["requires_browser_confirmation"] is True
+    assert error["folder"] == Path("synthetic-task")
+    assert any(kind == "exported" for kind, _ in emitted)

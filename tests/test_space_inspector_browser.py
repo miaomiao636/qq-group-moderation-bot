@@ -132,6 +132,42 @@ def test_login_redirect_is_a_job_blocker_not_an_account_result() -> None:
     assert "SECRET" not in repr(result)
 
 
+def test_tencent_waf_redirect_stops_job_without_exposing_query_or_accusing_member():
+    raw = page()
+    raw["url"] = "https://waf.tencent.com/501page.html?u=https://user.qzone.qq.com&id=SECRET"
+    result = classify_page(raw, QQ, VIEWER)
+    assert result.status == BLOCKED
+    assert result.reason == "platform_access_blocked"
+    assert result.evidence["notice_source"] == "platform_access_block"
+    assert result.evidence["notice"] == ""
+    assert result.evidence["page_url"] == ""
+    assert "SECRET" not in repr(result)
+
+
+def test_viewer_check_on_waf_page_explains_platform_block_without_navigation(tmp_path):
+    browser = Browser(tmp_path / "profile")
+    browser._page = SimpleNamespace(
+        evaluate=lambda _: {"url": "https://waf.tencent.com/501page.html?id=SECRET"}
+    )
+    with pytest.raises(InspectionError, match="腾讯安全防护") as raised:
+        browser.viewer()
+    assert "SECRET" not in str(raised.value)
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        "https://waf.tencent.com.evil.test/501page.html",
+        "https://waf.tencent.com@evil.test/501page.html",
+        "https://waf.tencent.com/other.html",
+    ],
+)
+def test_unverified_waf_lookalikes_remain_unexpected_locations(url):
+    raw = page()
+    raw["url"] = url
+    assert classify_page(raw, QQ, VIEWER).reason == "unexpected_location"
+
+
 @pytest.mark.parametrize(
     "viewers", [[], ["11111111"], [VIEWER, "11111111"], [VIEWER, VIEWER], True]
 )

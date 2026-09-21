@@ -328,6 +328,28 @@ def test_unopened_space_can_resume_blocked_member_without_losing_history(tmp_pat
         resumed.close()
 
 
+def test_platform_block_stays_pending_and_cannot_be_exported_as_restricted(tmp_path):
+    from app.space_inspector.browser import classify_page
+
+    store = make_store(tmp_path / "task")
+    try:
+        result = classify_page(
+            {"url": "https://waf.tencent.com/501page.html?id=SECRET"}, MEMBER, "98765432"
+        )
+        store.save(result)
+        assert MEMBER in store.pending()
+        assert store.summary()["checked"] == 0
+        assert store.summary()["restricted"] == 0
+        output = store.export()
+        report = json.loads((output / "report.json").read_text(encoding="utf-8"))
+        row = next(row for row in report["rows"] if row["qq"] == MEMBER)
+        assert row["status"] == BLOCKED
+        assert row["evidence"]["notice_source"] == "platform_access_block"
+        assert "SECRET" not in (output / "report.json").read_text(encoding="utf-8")
+    finally:
+        store.close()
+
+
 def test_cannot_overwrite_existing_task_or_create_on_resume(tmp_path):
     folder = tmp_path / "task"
     store = make_store(folder)

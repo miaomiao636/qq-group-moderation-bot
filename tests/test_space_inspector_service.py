@@ -7,7 +7,13 @@ from types import SimpleNamespace
 
 import pytest
 from app.space_inspector.browser import classify_page
-from app.space_inspector.contracts import BLOCKED, UNCONFIRMED, InspectionError, Observation
+from app.space_inspector.contracts import (
+    BLOCKED,
+    UNCONFIRMED,
+    InspectionError,
+    Observation,
+    PlatformAccessBlocked,
+)
 from app.space_inspector.service import Service, run_scan
 
 
@@ -89,6 +95,24 @@ def test_pause_before_scan_makes_no_requests() -> None:
     reader = Reader()
     run_scan(MemoryStore(), reader, "98765432", stop, lambda _: None, delay=0)
     assert not reader.calls
+
+
+def test_platform_block_saves_incomplete_result_and_never_visits_next_member():
+    class BlockedReader(Reader):
+        def inspect(self, qq: str, viewer_qq: str) -> Observation:
+            self.calls.append(qq)
+            return classify_page(
+                {"url": "https://waf.tencent.com/501page.html?id=SECRET"}, qq, viewer_qq
+            )
+
+    store, reader = MemoryStore(), BlockedReader()
+    with pytest.raises(PlatformAccessBlocked, match="停止重试") as raised:
+        run_scan(store, reader, "98765432", threading.Event(), lambda _: None, delay=0)
+    assert reader.calls == ["12345678"]
+    assert len(store.saved) == 1
+    assert store.saved[0].status == BLOCKED
+    assert store.saved[0].reason == "platform_access_blocked"
+    assert "SECRET" not in str(raised.value)
 
 
 def test_pause_after_visit_preserves_result_without_next_request() -> None:
