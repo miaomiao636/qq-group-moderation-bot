@@ -11,7 +11,7 @@
 | --- | --- |
 | 仓库 | `https://github.com/miaomiao636/qq-group-moderation-bot.git` |
 | 分支 | `windows-deploy-2026-09-10`（长期工作分支，直接推送；**不要**推 main） |
-| HEAD | **`d36fc1d`**（= 本文件所在提交；状态快照以 `2e9e686` 为基线生成）；工作区**干净** |
+| HEAD | **以 `git log -1` 的实际值为准**（本文件即在该提交中；状态快照以 `2e9e686` 为基线生成）；接手时先确认工作区**干净** |
 | CI | 最近 3 次全绿：`2e9e686` run 35504293242、`c42157a` run 35503631797、`0827fda` run 35503172408（attempt 1，三 job success） |
 | 测试基线 | 仓库全量 **1895 用例 / 0 failed / 0 error / 15 skipped**（Windows 本机） |
 | 主审探针 | `tests/test_r132_review_*.py` = **31 文件 / 262 项**（全部通过） |
