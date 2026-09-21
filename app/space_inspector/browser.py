@@ -63,6 +63,16 @@ def classify_page(raw: object, qq: str, viewer_qq: str) -> Observation:
     if not panels and raw.get("normal_profile") is True:
         evidence["notice_source"] = "qzone_profile"
         return result(UNCONFIRMED, "no_restriction_notice_observed")
+    permission_panels = raw.get("permission_panels", [])
+    if (
+        not panels
+        and raw.get("normal_profile") is False
+        and permission_panels
+        == [{"tips": "主人设置了权限，您可通过以下方式访问", "apply_link": True}]
+    ):
+        evidence["notice_source"] = "qzone_permission_page"
+        evidence["panel_count"] = 1
+        return result(UNCONFIRMED, "space_access_permission_required")
     if len(panels) == 1 and isinstance(panels[0], dict):
         panel = panels[0]
         icons = panel.get("report_icons")
@@ -101,6 +111,12 @@ SNAPSHOT_SCRIPT = r"""() => {
         url: location.href, ready: document.readyState, viewers,
         normal_profile: !!document.querySelector('#top_head_title') &&
             !!document.querySelector('#tb_logout'),
+        permission_panels: [...document.querySelectorAll('.page > .page_main > .main_content.main_login')]
+            .filter(visible).slice(0, 2).map(panel => ({
+                tips: panel.querySelector(':scope > p.tips')?.textContent.trim().slice(0, 500) || '',
+                apply_link: [...panel.querySelectorAll('.apply_access a[data-cmd="apply_request"]')]
+                    .some(a => visible(a) && a.textContent.trim() === '申请访问')
+            })),
         panels: [...document.querySelectorAll('.page > .page_main > .error_content')]
             .filter(visible).slice(0, 11).map(panel => ({
                 paragraphs: [...panel.children].filter(e => e.tagName === 'P')
