@@ -2,7 +2,7 @@
 
 任务：`SPACE-INSPECT-20260921`。负责人已接受首版只识别 QQ 空间明确限制提示，未命中保留待确认；正式使用不连接手机。此为明确追加的新功能，不是重开主审已关闭问题。
 
-**当前可用性结论：有界续扫和部分结果导出已有实机证据，但整群连续扫描遭腾讯 WAF 拦截，整群一次扫完验收未通过。当前不能承诺为稳定的全群批量巡检工具。平台拦截必须停止，不作为成员异常依据；恢复时间、触发规则及低频分批是否可行均未验证。**
+**当前可用性结论：有界续扫和部分结果导出已有实机证据，但整群连续扫描遭腾讯 WAF 拦截，整群一次扫完验收未通过。当前不能承诺为稳定的全群批量巡检工具。平台拦截必须停止，不作为成员异常依据；后续续扫已有新增保存进度，但触发规则、持续恢复及低频分批整体可行性均未验证。**
 
 ## 使用
 
@@ -20,7 +20,7 @@
 
 ## 判据与边界
 
-- 唯一阳性判据是已核验的 QQ 空间顶层系统错误区域，明确显示“您访问的空间存在违规信息,已被多名用户举报,暂时无法查看！”。同时核对目标 URL、完整加载状态和当前查看账号。
+- 唯一阳性判据是已核验的 QQ 空间顶层系统错误区域，精确匹配已核验的两套完整提示：英文冒号“温馨提示:”配句末“！”，或全角冒号“温馨提示：”配句末“。”；正文均为“您访问的空间存在违规信息,已被多名用户举报,暂时无法查看”加对应标点，末段均为“返回我的空间”。同时核对目标 URL、完整加载状态和当前查看账号。
 - 不根据昵称、头像、等级、在线状态或上传名单推断异常；用户内容里的相同文字也不能命中。
 - “未观察到该提示”不代表账号正常；空间限制也不等于 QQ 账号永久失效。首版不是完整 QQ 异常账号检测器。
 - 成员关联依据为本机接口返回后保存的快照，不是扫描结束时服务器成员关系的证明。接口声明人数、快照人数分别保存，可能不一致；`saved_at` 是快照本地保存时间，`checked_at` 是页面检查时间。
@@ -246,3 +246,50 @@ uv run python 'C:/Users/81596/AppData/Local/Temp/qqbot-space-inspector-20260921/
 全量 2179 项：2162 passed、17 skipped、0 failed/error；主审 31 文件/262 项全部通过；巡检内部回归 182 项中 181 passed、1 skipped（同前 Windows symlink 权限）。格式 345 文件、类型 111 源文件，三门禁通过。`verification-low-frequency/` 保留 full.log/xml、summary.json、gates.json 与门禁输出。独立 Tk 验证通过批末手动继续提示、WAF 禁用继续和保留导出；该私有脚本不是入库 CI 用例，不访问 QQ、不替代实机验收。
 
 最终文档 HEAD 推送后，按前述 `gh run list` / `gh run view` 命令核对同一 SHA 的三个 job；最终 CI 结果见对应 GitHub run 与交付回执。旧 `2076e402612ed2acefa1135c458d6aed7fa55f16` 的 run `35607666860` 三 job 已成功（`gh run view 35607666860 --json headSha,status,conclusion,jobs`），只证明旧版本，不能代替本轮 CI。
+
+
+## 第二种限制提示模板
+
+负责人反馈某成员页已显示空间违规提示，工具却暂停为 `unrecognized_page`。本轮通过 Codex 浏览器 `reviewTab.goto(...)`、`getAXState()`、`playwright.evaluate(...)` 核对实页：相同顶层系统区域 `.page > .page_main > .error_content`、单个 `.report_img`、正确目标和查看账号；段落为全角冒号“温馨提示：”、正文句末“。”和“返回我的空间”。旧版本仅接受英文冒号搭配句末“！”，因此漏识别。本次暂停不是批次上限，也没有观察到 WAF 页面。
+
+代码提交 `d9ac14b021e94d2f2b54aa6d552206ad3acadebc`；内部回归提交 `94427140777b76e245f6f400a193de1c35830cef`。共享契约维护两套已观察的完整模板，浏览器分类与持久化使用同一来源；保留原文标点，不做模糊匹配或任意标点归一化。错误身份、页面未完成、正文混入用户内容和未知模板仍阻断，WAF 停止与批次参数未改；无生产服务重启、业务判定调整或数据库迁移。
+
+先在 `d2a4f6b22b7b1629a4a08b64f7b355d604e5a06d` 加未提交内部测试执行：
+
+```powershell
+uv run pytest tests/test_space_inspector_browser.py tests/test_space_inspector_store.py -k 'period or fullwidth' -q -o addopts= --tb=short
+```
+
+结果 2 failed、8 passed、55 deselected：分别复现分类器漏识别与存储拒绝新原文。新增测试已原样入库，保留此前标点严格匹配测试及所有主审探针；覆盖模板成对匹配、身份/完整性校验、续扫保留旧访问历史、重开任务和导出保留原文。
+
+执行 SHA `94427140777b76e245f6f400a193de1c35830cef`：对上述真实页面的最小 DOM 工具输出做忠实转录，调用生产分类器得到 `RESTRICTION_OBSERVED`。转录保存在本机 `QQSpaceInspector/evidence/period-template-dom-20260921.json`，不是原始 HTTP，也不是专用桌面 GUI 已重开的证据：
+
+```powershell
+uv run python 'C:/Users/81596/AppData/Local/Temp/qqbot-space-inspector-20260921/verify_period_template.py'
+uv run python 'C:/Users/81596/AppData/Local/QQSpaceInspector/evidence/inspect_saved_task.py' 'C:/Users/81596/AppData/Local/QQSpaceInspector/tasks/20260921T124031Z-621478da' --output 'C:/Users/81596/AppData/Local/QQSpaceInspector/evidence/period-template-live-read-20260921.json'
+```
+
+同 SHA 的只读任务快照：993 人、已检查 281、观察到限制 24、待确认 257、未完成 712（含当前受阻 1）；是负责人旧窗口已保存结果，不是新补丁续扫证明。原任务未改写，BLOCKED 仍待重查，成功后追加访问记录而保留旧历史。独立运行环境已确认导入本仓库新代码；旧窗口需要关闭后从桌面重开，通过窗口内“载入已有任务”选择原群后继续，不要求新建任务或寻找隐藏目录。本补丁 GUI 续扫与新增结果导出仍待实机核对。
+
+
+### 补丁后的实机续扫与冻结验证
+
+负责人重开窗口后反馈“已越过，继续检查了”。同执行 SHA `94427140777b76e245f6f400a193de1c35830cef` 只读核对保存结果：
+
+```powershell
+uv run python 'C:/Users/81596/AppData/Local/QQSpaceInspector/evidence/inspect_saved_task.py' 'C:/Users/81596/AppData/Local/QQSpaceInspector/tasks/20260921T124031Z-621478da' --output 'C:/Users/81596/AppData/Local/QQSpaceInspector/evidence/period-template-resumed-read-20260921.json'
+```
+
+快照时间 `2026-09-21T15:57:14Z`：已检查 284/993，限制提示 25、待确认 259、未完成 709、当前受阻 0。原暂停成员现新增 `RESTRICTION_OBSERVED` 记录，依据保留句号版本正文；之前 4 条 `BLOCKED / unrecognized_page` 历史仍在。结合用户反馈与落盘记录，可确认本次实机续扫越过该模板，不能据此推断全群完成、低频参数安全或新版 GUI 导出已验收。
+
+冻结源码/测试执行 SHA 同上，命令：
+
+```powershell
+uv run ruff check app tests alembic scripts
+uv run ruff format --check app tests alembic scripts
+uv run mypy app
+uv run pytest --junitxml='C:/Users/81596/AppData/Local/Temp/qqbot-space-inspector-20260921/verification-period-template/full.xml'
+uv run python 'C:/Users/81596/AppData/Local/Temp/qqbot-space-inspector-20260921/summarize_period_verification.py'
+```
+
+全量 2189 项：2172 passed、17 skipped、0 failed/error；主审 31 文件/262 项全通过；巡检内部回归 192 项中 191 passed、1 skipped（原有 Windows symlink 权限差异）。格式 345 文件、类型 111 源文件，三门禁通过。证据目录 `verification-period-template/` 保留 full.log/xml、summary.json、gates.json 和三门禁输出。代码、内部回归分别提交，主审探针未改；最终文档 HEAD 的 CI 另按 `gh run list --branch windows-deploy-2026-09-10 --limit 5 --json databaseId,headSha,status,conclusion,url`、`gh run view <run-id> --json headSha,status,conclusion,jobs` 查询，最终回执不借用旧 SHA。
