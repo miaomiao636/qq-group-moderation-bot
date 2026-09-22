@@ -1,8 +1,39 @@
 # CAMPUS-SCOPE-20260922：小程序码豁免限于明确校园墙来源
 
-## CAMPUS-TEMPLATE-20260922：分享卡修正已提交、未生产加载
+## CAMPUS-TEMPLATE-20260922：已上线，保留急停
 
-线上 `t204-v17` 必须读到品牌全文，未覆盖负责人认可的无品牌分享卡，因而图片及图后窗口均失去资格。数据库只读核查已确认实际误撤及急停后跳过动作，原始记录不修改。负责人随后提供原图并明确批准按「紫橙三点气泡图标＋完整两行页脚＋同卡左右布局」识别，不能仅看任意码、颜色或通用文案。
+### 最新生产加载及文图组合补正
+
+负责人明确选择“现在上线，保持急停”。首次固定加载 `246fdb518e69e12a87fa8f9f9fb05c752d94437f`，仅将提示词标签从 v17 改为 v18；随后自然消息确认认可模板被识别、图片放行，但普通文字配图被归类为 `mixed`，旧类型过滤没有保存窗口来源资格。该遗漏有只读原始记录支撑，不能把首次图片放行写成完整窗口验收，历史记录未重写。见 [首次部署及自然遗漏证据](evidence/campus-template-20260922/deployment-01.json)、[首次加载 SHA 的 CI](evidence/campus-template-20260922/ci-first-deployment.json)。
+
+补正源码及当前加载提交为 **`06324fedab4baf8d0ee14e09991c5385627a01ed`**。新增的 mixed 入口仅允许普通文字与完整静态图片的组合作为来源/后续候选；逐段、逐附件索引验证，群卡、合并转发、语音视频、文件、GIF、未知段及缺失附件不会借用此入口。新 mixed 来源须有本地政策收据，旧 mixed 记录不能追授；窗口内普通消息不能续期。待处理来源只保护为待定，不提前授予豁免；内存中只新增必要结构，不保留正文、URL 或文件名。账号/群/成员/时间隔离、严重内容、刷屏、复核与本地硬证据门不变。
+
+冻结源码 `06324fedab4baf8d0ee14e09991c5385627a01ed`，生产虚拟环境解释器、`PYTHONUTF8=1` / `PYTHONIOENCODING=utf-8`，执行证据见 [mixed 验证收据](evidence/campus-template-20260922/validation-mixed.json)：
+
+| 命令（省略解释器路径） | 实际结果 |
+| --- | --- |
+| `-m pytest -o addopts= -q --tb=short` | 2374 passed / 4 skipped |
+| `-m pytest tests -k r132_review -o addopts= -q --tb=short` | 262 passed / 2116 deselected |
+| `-m pytest tests/test_campus_share_template.py -o addopts= -q` | 58 passed |
+| `-m pytest tests/test_campus_mixed_window.py -o addopts= -q` | 41 passed |
+| `-m ruff check app tests alembic scripts` | 通过 |
+| `-m ruff format --check app tests alembic scripts` | 361 文件通过 |
+| `-m mypy app` | 114 文件通过 |
+
+同一执行 SHA 下，以 `-m pytest -c pyproject.toml -p tests.conftest <私有验证目录>/test_real_mixed_replay.py -o addopts= -q --tb=short` 完成 36 项离线回放：原图字节和之前已保存的真实响应经实际管线按文图组合发送，分别验证文字、图片及文图后续在 30/120/121 秒的结果。模型响应产生于 `ff4d1a2`，本次没有新增远程模型调用；不能把离线回放计成新的模型准确率样本。首次 red 夹具曾有暴力缺独立复核、刷屏误用模型类别的问题，保留失败日志并修正新夹具，最终仍断言违规/撤回，没有放松原探针。新 mixed 回归已入库；真实原图、原始响应与私有回放脚本不在仓库、也不在 CI 覆盖范围内。
+
+源码 [CI 35707930568](https://github.com/miaomiao636/qq-group-moderation-bot/actions/runs/35707930568) 全部 job success，实际合并检出 SHA `e911fc76fa9572fa7167aa58ad31764842c65587` 的父提交包含精确源 SHA `06324fe`。三个 job 的执行命令、测试/静态检查结果及日志摘要逐项收录在 [CI 收据](evidence/campus-template-20260922/ci-mixed-source.json)；核验使用 `gh run view 35707930568 --json headSha,status,conclusion,jobs,url,startedAt,updatedAt` 和各 job 的 `--log`。后续仅文档收据提交的 CI 单独核对，不冒记为本次源 SHA 的执行结果。
+
+第二次上线沿用本次已批准目标，在新私有目录 `%LOCALAPPDATA%/QQBotDeploy/campus-template-deploy-20260922-02` 正常停止 Runtime/Web、生成并检验新一致性备份、快进至固定目标、启动并验证。命令为 `<生产 .venv Python> -B <私有部署目录>/deploy.py preflight`、`pwsh -NoProfile -File <私有部署目录>/deploy-services.ps1`、`<生产 .venv Python> -B <私有部署目录>/deploy.py verify`；没有迁移、配置替换、历史重放、数据库恢复或清急停。`.env` 和规则文件字节摘要与此次部署前一致，策略/群授权/动作开关摘要一致，revision 仍 `e1c7d4b8a902`。服务停启记录、目标源码文件摘要、健康与自然新消息见 [第二次部署收据](evidence/campus-template-20260922/deployment-02.json)。前后版本都为 v18，因此不能单靠版本标签证明本次 mixed 修复加载。
+
+第二次验收收据已确认自然新消息和视觉处理恢复，新增动作意图均被急停跳过；当次尚无新合格 mixed 来源及其两分钟后续配对样本。窗口行为已经通过上述回归与真实响应离线管线验证，不能冒记为完整线上自然配对验收。首次 UAC 取消发生在停服之前，负责人明确要求重新弹出后才成功启动本次部署，两次启动收据均保留。
+
+以下原图识别和初始源码验证保留原执行 SHA；当时的“未部署”状态已由本节部署证据取代。急停保持开启，修复已加载不等于恢复自动撤回。窗口适用新消息；同秒无法确认来源先后的消息不直接授予豁免，120 秒边界包含、121 秒恢复常规审核。线上完整配对效果仅按实际自然样本列证，不能用孤立模板命中代替。
+
+
+### 初始实现与首次验证（历史执行记录）
+
+原 `t204-v17` 必须读到品牌全文，未覆盖负责人认可的无品牌分享卡，因而图片及图后窗口均失去资格。数据库只读核查已确认实际误撤及急停后跳过动作，原始记录不修改。负责人随后提供原图并明确批准按「紫橙三点气泡图标＋完整两行页脚＋同卡左右布局」识别，不能仅看任意码、颜色或通用文案。
 
 候选 `t204-v18`：新增严格结构 `campus_share_card`，区分 matched / uncertain / not_matched；逐项验证同一附件的图标、完整页脚文字、布局及页脚小程序码，保留旧品牌文字路径。正文普通方码与页脚小程序码可以共存；正文原始广告/诈骗类别保留，由既有本地政策判断是否豁免。未知模板或非法字段拒收；疑似模板转人工且不授予窗口。仅明确非校园的图片仍按内容正常审核。
 
@@ -33,7 +64,7 @@
 
 源码已直接推送既有工作分支。[源码 CI 35702856001](https://github.com/miaomiao636/qq-group-moderation-bot/actions/runs/35702856001) 三个 job 全部 success；实际合并检出 SHA 为 `07eea15c61d69ca899b284831f2f1968e75094d6`，已核实包含源码 `ff4d1a2`。Ubuntu `106664719762`、Windows `106664719755` 的 `uv run pytest` 均为 2334 passed / 3 skipped；两平台 `uv run ruff check app tests alembic`、`uv run ruff format --check app tests alembic`（334 文件）、`uv run mypy app`（113 文件）均通过。干净依赖 job `106664719528` 通过仅运行时安装、应用导入和 pytest 不可导入的反向断言。核验命令 `gh run view 35702856001 --json headSha,status,conclusion,jobs,url,startedAt,updatedAt` 及 `gh run view 35702856001 --job <job_id> --log`；[CI 收据](evidence/campus-template-20260922/ci-source.json) 区分源 SHA 与实际执行 SHA。文档证据随后单独提交，不把该次 CI 冒记为后续文档提交的执行结果。
 
-本轮没有生产部署、服务重启、配置修改或解除急停。只读生产核验 `-B <私有目录>/production-readonly.py`：生产 checkout 仍为 `b3ee1b0df4fdafa7a7561624ebc1a7748b26249d`，近期视觉记录仍为 `t204-v17`，数据库急停为 true，健康 HTTP 200、OneBot ready/connected；最近一次有部署收据的加载源码仍为 `8f4617e`。后续加载需更新代码与提示词标签、正常重启并核验新视觉记录；保持急停，不补罚历史消息。
+**初始源码验证完成时的历史快照（已被上述部署取代）**：当时没有生产部署、服务重启、配置修改或解除急停。只读生产核验 `-B <私有目录>/production-readonly.py`：生产 checkout 仍为 `b3ee1b0df4fdafa7a7561624ebc1a7748b26249d`，近期视觉记录仍为 `t204-v17`，数据库急停为 true，健康 HTTP 200、OneBot ready/connected；最近一次有部署收据的加载源码仍为 `8f4617e`。后续加载需更新代码与提示词标签、正常重启并核验新视觉记录；保持急停，不补罚历史消息。
 
 ## 上一轮 t204-v17 上线记录（历史，非本轮模板修正）
 
