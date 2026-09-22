@@ -14,7 +14,7 @@
 
 ## 保存与调度
 
-新目录 E:/qqbot-backups/daily-plain-v1，状态配置 C:/ProgramData/QQBotBackupPlain/config.json；新模式不生成或读取恢复密钥。Windows 任务 QQBotDailyBackup 计划每日当地时间 04:30，以 SYSTEM 运行，错过时间补跑、重复实例忽略，硬上限 40 分钟；程序流式操作期限 30 分钟。若 QQBotAutoCleanup 正在运行或无法确认其状态，本次失败留证，不终止清理或机器人服务。
+目录 E:/qqbot-backups/daily-plain-v1，状态配置 C:/ProgramData/QQBotBackupPlain/config.json；新模式不生成或读取恢复密钥。Windows 任务 QQBotDailyBackup 已注册，每日当地时间 04:30，以 SYSTEM 运行，错过时间补跑、重复实例忽略，硬上限 40 分钟；程序流式操作期限 30 分钟。若 QQBotAutoCleanup 正在运行或无法确认其状态，本次失败留证，不终止清理或机器人服务。
 
 默认备份总上限 100 GiB、输出盘保留空闲 5 GiB，可调整私有配置 max_bytes、min_free_bytes；不是预分配空间。达到限制后停止本次，保留最后成功备份；不自动删除旧快照。保留期清理仍须 N03 准确清单和负责人授权。
 
@@ -31,7 +31,7 @@
 .venv\Scripts\python.exe -m app.reports.scheduled_backup status --config C:\ProgramData\QQBotBackupPlain\config.json
 ~~~
 
-手工验收触发 Start-ScheduledTask -TaskName QQBotDailyBackup，核对 Get-ScheduledTaskInfo 的 LastTaskResult、state/last_attempt.json 与 E 盘 last_success.json。不能用注册成功替代实际运行。本轮按负责人要求保留通知渠道但不配置或发送 QQ/邮件通知。
+管理员 PowerShell 手工验收触发 Start-ScheduledTask -TaskName QQBotDailyBackup，核对 Get-ScheduledTaskInfo 的 LastTaskResult、state/last_attempt.json 与 E 盘 last_success.json。普通进程可能无法枚举或读取 SYSTEM 任务；此时使用上述 status 命令查看备份收据，或在管理员窗口查询任务。不能用注册成功替代实际运行。本轮按负责人要求保留通知渠道但不配置或发送 QQ/邮件通知。
 
 恢复必须使用全新、私有且与生产/备份/state 不重叠的目录：
 
@@ -51,9 +51,13 @@
 
 [源码 CI 35736054871](https://github.com/miaomiao636/qq-group-moderation-bot/actions/runs/35736054871) 三 job 全部成功：PR head 7b040b8710f10831f478a519b7e022751d8c2b76，实际合并 checkout d4a6a0d9e0c7e93b5f58225fd70f6e88fc59776b；uv run pytest，Ubuntu 2518 passed/6 skipped，Windows 2520 passed/4 skipped，两平台门禁及 runtime-deps clean 通过。原始日志与元数据见私有 ci-plain-source/，汇总 SHA256：849dbd49624b122d4750be4e9aaba1f309ae11f0b24e6ab30d6fb695764d339f。
 
-生产工作区已干净快进至 7b040b8；只追加锁定的 cryptography/cffi/pycparser 依赖，原有包版本未改变。真实 SYSTEM 调度尚未启用：Start-Process powershell.exe -Verb RunAs 启动注册助手未成功（InvalidOperationException），没有注册收据；Get-ScheduledTask -TaskName QQBot* 仅见原有 QQBotAutoCleanup。已请求负责人选择重试 UAC 或暂缓，不能把已生成的手动快照当作定时任务验收。
+生产工作区先干净快进至 7b040b8，后同步仅文档 HEAD 4182767；只追加锁定的 cryptography/cffi/pycparser 依赖，原有包版本未改变。[文档 CI 35738746024](https://github.com/miaomiao636/qq-group-moderation-bot/actions/runs/35738746024) 三 job 成功：HEAD 4182767592be57f5b246675d9da1382738f7891e，实际 checkout 7775f948ebd090c422945acc3f8e39f650675281；uv run pytest，Ubuntu 2518 passed/6 skipped，Windows 2520 passed/4 skipped；门禁和 runtime clean 通过。私有 ci-plain-docs/ 汇总 SHA256：275e239b9bf3795d3d2415b17ec33095832e70b047f4a3df3c1937fee265bf25。
 
-同源码执行私有 capture_state.py 与服务查询，比较 plain-before/after-state.json、plain-before/after-services.json：.env 摘要、急停 false、群设置/动作所有者/成员白名单摘要、数据库 revision/A2 标记未变，Web/Runtime 均为原 PID 且 Running，healthz HTTP 200。比较结果 plain-production-comparison.json。注册成功后仍须 Start-ScheduledTask 实跑，核对 LastTaskResult、last_attempt 与新成功快照；该步骤尚未完成。
+负责人明确“继续”后已重试管理员启动并完成任务注册与首跑。执行 SHA 4182767592be57f5b246675d9da1382738f7891e，管理员注册命令 scripts/register_backup_task.ps1 -ProjectRoot <生产仓库> -ConfigPath C:/ProgramData/QQBotBackupPlain/config.json，随后 Start-ScheduledTask -TaskName QQBotDailyBackup。任务实际命令为生产 .venv/Scripts/python.exe -m app.reports.scheduled_backup run --config C:/ProgramData/QQBotBackupPlain/config.json；SYSTEM、IgnoreNew、StartWhenAvailable 和每日触发已核对。Get-ScheduledTaskInfo 返回 LastTaskResult=0，任务 Ready；下次运行 2026-09-23 04:30:30 +08:00（StartBoundary 为每日 04:30）。这是手工触发已注册任务的实际验收；尚不声称多日连续定时运行。
+
+首个 SYSTEM 成功快照 20260922T144130Z-ba1d122c71774d09bdc9e4afe15b11c9：11272 文件、缺失媒体引用 0，plain/credentials_omitted/verified 均符合预期；last_attempt 与 last_success 完全一致。私有 task-verification.json、task.xml、first-system-success.json 保留原始证据。
+
+同执行 SHA 使用 .venv/Scripts/python.exe -m app.reports.scheduled_backup restore --config C:/ProgramData/QQBotBackupPlain/config.json --snapshot <上述SYSTEM快照ID> --to C:/ProgramData/QQBotScheduledRestoreCheck-20260922，再次完整隔离恢复成功。私有 verify_scheduled_backup.py 核对 DB 摘要、完整性、外键、模板白名单与新密钥不存在；结果 scheduled-verification-summary.json。同轮 capture_state.py 与服务查询比较确认 .env 摘要、急停 false、群设置/动作所有者/成员白名单摘要、revision/A2 标记均未变，Web/Runtime 原 PID 且 Running、healthz HTTP 200。未启动隔离恢复服务，未覆盖生产或删除证据。
 
 先前加密试验（历史，不作为新 plain 模式验收）：
 - 执行源码 aaa4159514bc087f1f98ca956a2d07e0aef87f7b；uv run --locked pytest --junitxml=<私有证据>/full.xml：2510 passed、6 skipped；ruff check、format --check app tests alembic 和 mypy app 通过。私有记录 full-command.json、gates.json。
