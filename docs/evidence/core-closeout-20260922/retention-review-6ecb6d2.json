@@ -1,0 +1,107 @@
+{
+  "execution_sha": "6ecb6d28e38b64b597c95edfb1c312f4cd33a049",
+  "observed_at": "2026-09-22T16:01:47.312451+00:00",
+  "command": [
+    "D:\\CodeBuddy工作空间\\CB 项目\\qq-group-moderation-bot\\.venv\\Scripts\\python.exe",
+    "-B",
+    "D:\\QQBotAudits\\n03-campus-20260922\\build_retention_review.py"
+  ],
+  "script_sha256": "c29b6a4baeb124d9907c0bd8e9b870240174f91ef4659b8b30ef2307608aacf9",
+  "metadata_helper_sha256": "cf76e7c4eb1863f92c2fd4d0e9f5f60a5cf2f95e580f2b706f91bc2a57bb22c9",
+  "inventory_sha256": "6472936a6195df6a3ddab5129272ccd2921483c377163006ad2be642042e2bfc",
+  "retention_days": 15,
+  "retention_basis": "D-024/D-026 and explicit current .env numeric settings separately read; file config is not proof of loaded process settings",
+  "revision": "e1c7d4b8a902",
+  "source_records": 34510,
+  "historical_backup_recovered_source_records": 0,
+  "files": 11872,
+  "file_scopes": {
+    "backups": 21,
+    "media": 11257,
+    "purge_drill": 8,
+    "sample_pool": 59,
+    "external_evidence_1": 522,
+    "external_evidence_2": 5
+  },
+  "dispositions": {
+    "CONTAINER_OR_EVIDENCE_CONTENT_REVIEW_REQUIRED": 606,
+    "BACKUP_COMPANION_NOT_READ_KEEP": 8,
+    "CREDENTIAL_CONTAINER_NOT_READ": 1,
+    "KNOWN_SOURCES_WITHIN_RETENTION": 8819,
+    "SOURCE_TIME_UNRESOLVED": 1847,
+    "NO_DIRECT_SOURCE_REFERENCE": 591
+  },
+  "bytes_by_disposition": {
+    "BACKUP_COMPANION_NOT_READ_KEEP": 131072,
+    "NO_DIRECT_SOURCE_REFERENCE": 412874864,
+    "CONTAINER_OR_EVIDENCE_CONTENT_REVIEW_REQUIRED": 1132256073,
+    "CREDENTIAL_CONTAINER_NOT_READ": 967,
+    "KNOWN_SOURCES_WITHIN_RETENTION": 1911134803,
+    "SOURCE_TIME_UNRESOLVED": 348950421
+  },
+  "media_with_plain_backup_match": 11225,
+  "unresolved_media_with_plain_backup_match": 2438,
+  "sample_exact_media_duplicates": 52,
+  "safe_to_delete_count": 0,
+  "deletion_authorized": false,
+  "n03_closed": false,
+  "plain_snapshot_count": 2,
+  "plain_unique_objects_verified": 2589,
+  "plain_objects_shared_across_snapshots": 2576,
+  "limitations": [
+    "Live filesystem and database projections are bounded observations, not an atomic whole-system snapshot.",
+    "Source timestamps are metadata evidence; copies do not restart retention.",
+    "Exact restored backup equality proves recoverability only, not permission to delete or historical source identity.",
+    "Unknown original source time remains unresolved; no mtime substitute or synthetic expiry is assigned.",
+    "Old encrypted store, private deployment evidence outside enumerated roots, and every original field inside sample/evidence containers have not received complete TTL review.",
+    "No executable cleanup plan is generated; all files require approved final disposition."
+  ],
+  "database_logical_writes": false,
+  "sqlite_shm_bookkeeping_may_change": true,
+  "audit_self_checks": 12,
+  "historical_scope": "Declared production data and evidence roots, all known DB artifacts under data/backups, top-level E:/qqbot-backups DBs, and verified plain snapshots. Other deployment copies and encrypted store TTL remain outside this pass.",
+  "inventory_command": [
+    ".venv/Scripts/python.exe",
+    "-B",
+    "scripts/retention_audit.py",
+    "--db",
+    "data/moderation.db",
+    "--data-root",
+    "data",
+    "--days",
+    "15",
+    "--evidence-root",
+    "docs/evidence/image-review",
+    "--evidence-root",
+    "docs/evidence/allowlist-samples",
+    "--as-of",
+    "2026-09-22T15:51:31.985493+00:00",
+    "--out",
+    "D:\\QQBotAudits\\n03-campus-20260922\\retention-inventory.json"
+  ],
+  "backup_metadata_outcomes": {
+    "metadata_read": 14,
+    "metadata_unproven_schema_or_read_failure": 1
+  },
+  "private_artifacts": {
+    "retention-inventory.json": {
+      "sha256": "6472936a6195df6a3ddab5129272ccd2921483c377163006ad2be642042e2bfc",
+      "bytes": 6142819
+    },
+    "retention-review-items.json": {
+      "sha256": "84cfa8d1d9a9763ff040c28b6bb0ead9add2af3d48b4ff9bddadbee52b37634b",
+      "bytes": 20307434
+    },
+    "plain-snapshot-object-graph.json": {
+      "sha256": "f640c1dc2ac1e21fb6a7c2107fd308684eed4c762301511b30bc73971b074401",
+      "bytes": 382938
+    },
+    "retention-review-summary.json": {
+      "sha256": "f3ded047f736b334429990618722b76e07091a151250fd980c676af3c4e91ff4",
+      "bytes": 10365
+    }
+  },
+  "private_root": "D:\\QQBotAudits\\n03-campus-20260922",
+  "validation": "Report size/hash/count/category invariants verified; no safe_to_delete entries; private audit scripts are not repository test cases.",
+  "first_attempt": "Not accepted: conflicting timestamp and incomplete-identity fallback, credential-backup hash scope and expanded duplicate-object output were corrected. Interrupted output preserved losslessly as Brotli (32,483,113 bytes); no credential content printed. SQLite SHM bookkeeping may have changed; no logical SQL writes."
+}

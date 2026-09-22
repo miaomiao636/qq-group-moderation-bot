@@ -65,6 +65,22 @@ AI、OneBot、动作、通知关闭，没有启动官方 runtime 或计划任务
 
 ## N03 与验证进度
 
+### 2026-09-23 处置清单补查（只读，未批准删除）
+
+负责人同意优先补齐处置清单和校园墙线上核验。本次执行 SHA `6ecb6d28e38b64b597c95edfb1c312f4cd33a049`；实际 `.env` 仅核对 `RAW_RETENTION_DAYS` / `DECISION_RETENTION_DAYS` 数字项，均为 15，与 D-024/D-026 一致，不能用模板 30/180 默认值替代。文件值本身不证明当前进程已加载值，本轮未改配置。
+
+仓库根执行 `.venv/Scripts/python.exe -B scripts/retention_audit.py --db data/moderation.db --data-root data --days 15 --evidence-root docs/evidence/image-review --evidence-root docs/evidence/allowlist-samples --as-of <收据内固定UTC> --out D:/QQBotAudits/n03-campus-20260922/retention-inventory.json`；随后 `.venv/Scripts/python.exe -B D:/QQBotAudits/n03-campus-20260922/build_retention_review.py`。完整实参、脚本及报告摘要见 [脱敏收据](evidence/core-closeout-20260922/retention-review-6ecb6d2.json)，逐文件私有路径/摘要/时间依据和审核说明位于该 D 盘目录。私有脚本不是入库测试；其分类与冲突保护自检通过，不计入主仓库用例数。
+
+本轮声明根内盘点 11872 项：媒体 11257、data/backups 21、sample_pool 59、审核证据 527、演练副本 8。媒体中 8819 项的直接/精确关联来源时间仍在窗口内；1847 项缺可靠源时间，591 项无直接来源引用，合计 2438 项继续保留待审核。没有发现具备完整到期依据的当前媒体，所有项仍为 `safe_to_delete=false`。没有用 mtime 或最早引用过期代替所有引用期限；混合到期、冲突、非法时间和不完整身份不能升级为可删。
+
+已流式核验新 E 盘 plain 成功快照 2 份、不同对象 2589 个，其中 2576 个被两个快照共用；2438 项未知/无直接引用媒体均有同字节备份。样本池 52 个文件与当前媒体同字节，这只能证明副本关系，不能声明已脱敏。旧 `data/backups`（含嵌套已知 DB）、E 盘顶层 DB 和 plain 快照数据库共 15 个检查对象，14 个完成来源元数据投影，1 个因旧 schema/读取边界未完成；这些旧库没有为当前未知来源新增可靠时间。未检查所有部署副本、旧加密存储及每个容器内的原文字段，不能把本轮称为全副本期限已核清。
+
+**工程缺口仍在**：现有媒体/副本清理主要使用 mtime，备份 manifest 没有固定源时间/到期字段。对象跨快照复用，不能单删 `.blob`；应先建立原消息期限记录、明确历史未知项处置口径，生成并验证合规替代快照，再审核旧快照与无引用对象清单。备份可恢复不等于保留期限合规，本轮清单不是可执行删除计划。
+
+审计初稿未被采信：修正了历史时间覆盖冲突/不完整身份、凭据备份摘要范围，以及重复展开共享对象导致输出膨胀的问题。中断输出已在 D 盘无损压缩保留，原大文件已移除；最终脚本拒绝读取 `.env*`/旧密钥，只统计此类文件元数据。初稿可能已计算旧凭据副本摘要，但未输出凭据内容。SQLite 只读查询可能更新 SHM 锁记账，报告只承诺无逻辑 SQL 写入，不声称文件系统每个字节未变。未运行清理、未发送消息、未改生产开关或服务；没有创建完整恢复副本。
+
+以下为旧轮次历史观察，不覆盖本节的新清单。
+
 已新增独立 `scripts/retention_audit.py` 与 `tests/test_retention_audit.py`，没有被维护任务/下载器/备份入口导入。只有显式只读 CLI，无删除参数。只投影源时间和媒体引用、不读取文件内容；固定目录、链接边界、查询和扫描上限、独占发布均有内部回归。所有文件均 `safe_to_delete=false`，整个报告 `n03_closed=false`。
 
 执行 SHA `e41368d0bac5469497ad187354683beda0b5d429`，实际命令及报告哈希见 [retention-summary.json](evidence/core-closeout-20260922/retention-summary.json)。观测 UTC `2026-09-21T16:07:44.788898Z`：源记录 29449，其中时间已知 24512、缺失 4937；文件元数据 9614 项，其中媒体 9005、备份 15、sample_pool 59、审核证据 527、隔离演练副本 8。媒体中 6483 项来源时间已知且在窗口内、1931 项存在未知来源时间、591 项无来源引用。不可关联文件引用 4353 包括空文件名等，不据此声称数据库损坏。

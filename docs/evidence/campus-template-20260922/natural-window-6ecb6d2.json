@@ -1,0 +1,633 @@
+{
+  "counts": {
+    "image_record_only_source_candidates": 68,
+    "source_evidence_not_revalidated": 68,
+    "image_allow_source_candidates": 33,
+    "mixed_allow_source_candidates": 2,
+    "mixed_record_only_source_candidates": 3,
+    "mixed_source_missing_local_policy": 3
+  },
+  "qualified_source_count": 35,
+  "qualified_sources": [
+    {
+      "rowid": 30792,
+      "kind": "image",
+      "stored_verdict": "allow",
+      "source_recommended_actions_empty": true,
+      "source_evidence_revalidated": true,
+      "account_scope_proven": true,
+      "source_qr_qualified": true
+    },
+    {
+      "rowid": 30796,
+      "kind": "image",
+      "stored_verdict": "allow",
+      "source_recommended_actions_empty": true,
+      "source_evidence_revalidated": true,
+      "account_scope_proven": true,
+      "source_qr_qualified": true
+    },
+    {
+      "rowid": 30803,
+      "kind": "image",
+      "stored_verdict": "allow",
+      "source_recommended_actions_empty": true,
+      "source_evidence_revalidated": true,
+      "account_scope_proven": true,
+      "source_qr_qualified": true
+    },
+    {
+      "rowid": 30806,
+      "kind": "image",
+      "stored_verdict": "allow",
+      "source_recommended_actions_empty": true,
+      "source_evidence_revalidated": true,
+      "account_scope_proven": true,
+      "source_qr_qualified": true
+    },
+    {
+      "rowid": 30841,
+      "kind": "image",
+      "stored_verdict": "allow",
+      "source_recommended_actions_empty": true,
+      "source_evidence_revalidated": true,
+      "account_scope_proven": true,
+      "source_qr_qualified": true
+    },
+    {
+      "rowid": 30851,
+      "kind": "image",
+      "stored_verdict": "allow",
+      "source_recommended_actions_empty": true,
+      "source_evidence_revalidated": true,
+      "account_scope_proven": true,
+      "source_qr_qualified": true
+    },
+    {
+      "rowid": 30868,
+      "kind": "mixed",
+      "stored_verdict": "allow",
+      "source_recommended_actions_empty": true,
+      "source_evidence_revalidated": true,
+      "account_scope_proven": true,
+      "source_qr_qualified": true
+    },
+    {
+      "rowid": 30874,
+      "kind": "image",
+      "stored_verdict": "allow",
+      "source_recommended_actions_empty": true,
+      "source_evidence_revalidated": true,
+      "account_scope_proven": true,
+      "source_qr_qualified": true
+    },
+    {
+      "rowid": 30912,
+      "kind": "image",
+      "stored_verdict": "allow",
+      "source_recommended_actions_empty": true,
+      "source_evidence_revalidated": true,
+      "account_scope_proven": true,
+      "source_qr_qualified": true
+    },
+    {
+      "rowid": 30943,
+      "kind": "image",
+      "stored_verdict": "allow",
+      "source_recommended_actions_empty": true,
+      "source_evidence_revalidated": true,
+      "account_scope_proven": true,
+      "source_qr_qualified": true
+    },
+    {
+      "rowid": 30944,
+      "kind": "image",
+      "stored_verdict": "allow",
+      "source_recommended_actions_empty": true,
+      "source_evidence_revalidated": true,
+      "account_scope_proven": true,
+      "source_qr_qualified": true
+    },
+    {
+      "rowid": 30954,
+      "kind": "image",
+      "stored_verdict": "allow",
+      "source_recommended_actions_empty": true,
+      "source_evidence_revalidated": true,
+      "account_scope_proven": true,
+      "source_qr_qualified": true
+    },
+    {
+      "rowid": 30955,
+      "kind": "image",
+      "stored_verdict": "allow",
+      "source_recommended_actions_empty": true,
+      "source_evidence_revalidated": true,
+      "account_scope_proven": true,
+      "source_qr_qualified": true
+    },
+    {
+      "rowid": 30967,
+      "kind": "image",
+      "stored_verdict": "allow",
+      "source_recommended_actions_empty": true,
+      "source_evidence_revalidated": true,
+      "account_scope_proven": true,
+      "source_qr_qualified": true
+    },
+    {
+      "rowid": 31009,
+      "kind": "image",
+      "stored_verdict": "allow",
+      "source_recommended_actions_empty": true,
+      "source_evidence_revalidated": true,
+      "account_scope_proven": true,
+      "source_qr_qualified": true
+    },
+    {
+      "rowid": 31037,
+      "kind": "image",
+      "stored_verdict": "allow",
+      "source_recommended_actions_empty": true,
+      "source_evidence_revalidated": true,
+      "account_scope_proven": true,
+      "source_qr_qualified": true
+    },
+    {
+      "rowid": 31038,
+      "kind": "image",
+      "stored_verdict": "allow",
+      "source_recommended_actions_empty": true,
+      "source_evidence_revalidated": true,
+      "account_scope_proven": true,
+      "source_qr_qualified": true
+    },
+    {
+      "rowid": 31040,
+      "kind": "image",
+      "stored_verdict": "allow",
+      "source_recommended_actions_empty": true,
+      "source_evidence_revalidated": true,
+      "account_scope_proven": true,
+      "source_qr_qualified": true
+    },
+    {
+      "rowid": 31054,
+      "kind": "image",
+      "stored_verdict": "allow",
+      "source_recommended_actions_empty": true,
+      "source_evidence_revalidated": true,
+      "account_scope_proven": true,
+      "source_qr_qualified": true
+    },
+    {
+      "rowid": 31057,
+      "kind": "image",
+      "stored_verdict": "allow",
+      "source_recommended_actions_empty": true,
+      "source_evidence_revalidated": true,
+      "account_scope_proven": true,
+      "source_qr_qualified": true
+    },
+    {
+      "rowid": 31059,
+      "kind": "image",
+      "stored_verdict": "allow",
+      "source_recommended_actions_empty": true,
+      "source_evidence_revalidated": true,
+      "account_scope_proven": true,
+      "source_qr_qualified": true
+    },
+    {
+      "rowid": 31063,
+      "kind": "image",
+      "stored_verdict": "allow",
+      "source_recommended_actions_empty": true,
+      "source_evidence_revalidated": true,
+      "account_scope_proven": true,
+      "source_qr_qualified": true
+    },
+    {
+      "rowid": 31071,
+      "kind": "image",
+      "stored_verdict": "allow",
+      "source_recommended_actions_empty": true,
+      "source_evidence_revalidated": true,
+      "account_scope_proven": true,
+      "source_qr_qualified": true
+    },
+    {
+      "rowid": 31079,
+      "kind": "image",
+      "stored_verdict": "allow",
+      "source_recommended_actions_empty": true,
+      "source_evidence_revalidated": true,
+      "account_scope_proven": true,
+      "source_qr_qualified": true
+    },
+    {
+      "rowid": 31080,
+      "kind": "mixed",
+      "stored_verdict": "allow",
+      "source_recommended_actions_empty": true,
+      "source_evidence_revalidated": true,
+      "account_scope_proven": true,
+      "source_qr_qualified": true
+    },
+    {
+      "rowid": 31125,
+      "kind": "image",
+      "stored_verdict": "allow",
+      "source_recommended_actions_empty": true,
+      "source_evidence_revalidated": true,
+      "account_scope_proven": true,
+      "source_qr_qualified": true
+    },
+    {
+      "rowid": 31126,
+      "kind": "image",
+      "stored_verdict": "allow",
+      "source_recommended_actions_empty": true,
+      "source_evidence_revalidated": true,
+      "account_scope_proven": true,
+      "source_qr_qualified": true
+    },
+    {
+      "rowid": 31144,
+      "kind": "image",
+      "stored_verdict": "allow",
+      "source_recommended_actions_empty": true,
+      "source_evidence_revalidated": true,
+      "account_scope_proven": true,
+      "source_qr_qualified": true
+    },
+    {
+      "rowid": 31208,
+      "kind": "image",
+      "stored_verdict": "allow",
+      "source_recommended_actions_empty": true,
+      "source_evidence_revalidated": true,
+      "account_scope_proven": true,
+      "source_qr_qualified": true
+    },
+    {
+      "rowid": 31260,
+      "kind": "image",
+      "stored_verdict": "allow",
+      "source_recommended_actions_empty": true,
+      "source_evidence_revalidated": true,
+      "account_scope_proven": true,
+      "source_qr_qualified": true
+    },
+    {
+      "rowid": 31261,
+      "kind": "image",
+      "stored_verdict": "allow",
+      "source_recommended_actions_empty": true,
+      "source_evidence_revalidated": true,
+      "account_scope_proven": true,
+      "source_qr_qualified": true
+    },
+    {
+      "rowid": 31280,
+      "kind": "image",
+      "stored_verdict": "allow",
+      "source_recommended_actions_empty": true,
+      "source_evidence_revalidated": true,
+      "account_scope_proven": true,
+      "source_qr_qualified": true
+    },
+    {
+      "rowid": 31335,
+      "kind": "image",
+      "stored_verdict": "allow",
+      "source_recommended_actions_empty": true,
+      "source_evidence_revalidated": true,
+      "account_scope_proven": true,
+      "source_qr_qualified": true
+    },
+    {
+      "rowid": 31337,
+      "kind": "image",
+      "stored_verdict": "allow",
+      "source_recommended_actions_empty": true,
+      "source_evidence_revalidated": true,
+      "account_scope_proven": true,
+      "source_qr_qualified": true
+    },
+    {
+      "rowid": 31338,
+      "kind": "image",
+      "stored_verdict": "allow",
+      "source_recommended_actions_empty": true,
+      "source_evidence_revalidated": true,
+      "account_scope_proven": true,
+      "source_qr_qualified": true
+    }
+  ],
+  "pairs": [
+    {
+      "source_rowid": 30841,
+      "followup_rowid": 30842,
+      "kind": "text",
+      "delta_seconds": 18.0,
+      "scope_matches": true,
+      "reason_code": "WINDOW_EXEMPT_OBSERVED",
+      "stored_window_reason": true,
+      "record_only": true,
+      "recommended_actions_empty": true,
+      "window_exemption_observed": true,
+      "excluded_severe_or_structural": false,
+      "requires_review": false
+    },
+    {
+      "source_rowid": 30851,
+      "followup_rowid": 30852,
+      "kind": "image",
+      "delta_seconds": 1.0,
+      "scope_matches": true,
+      "reason_code": "WINDOW_EXEMPT_OBSERVED",
+      "stored_window_reason": true,
+      "record_only": true,
+      "recommended_actions_empty": true,
+      "window_exemption_observed": true,
+      "excluded_severe_or_structural": false,
+      "requires_review": false
+    },
+    {
+      "source_rowid": 31009,
+      "followup_rowid": 31010,
+      "kind": "text",
+      "delta_seconds": 5.0,
+      "scope_matches": true,
+      "reason_code": "NO_PRIMARY_CATEGORY_EXCLUDED",
+      "stored_window_reason": false,
+      "record_only": true,
+      "recommended_actions_empty": true,
+      "window_exemption_observed": false,
+      "excluded_severe_or_structural": false,
+      "requires_review": false
+    },
+    {
+      "source_rowid": 31054,
+      "followup_rowid": 31052,
+      "kind": "image",
+      "delta_seconds": 1.0,
+      "scope_matches": true,
+      "reason_code": "NO_PRIMARY_CATEGORY_EXCLUDED",
+      "stored_window_reason": false,
+      "record_only": true,
+      "recommended_actions_empty": true,
+      "window_exemption_observed": false,
+      "excluded_severe_or_structural": false,
+      "requires_review": false
+    },
+    {
+      "source_rowid": 31054,
+      "followup_rowid": 31053,
+      "kind": "voice",
+      "delta_seconds": 9.0,
+      "scope_matches": true,
+      "reason_code": "UNSUPPORTED_STRUCTURE_EXCLUDED",
+      "stored_window_reason": false,
+      "record_only": true,
+      "recommended_actions_empty": true,
+      "window_exemption_observed": false,
+      "excluded_severe_or_structural": false,
+      "requires_review": false
+    },
+    {
+      "source_rowid": 31057,
+      "followup_rowid": 31056,
+      "kind": "voice",
+      "delta_seconds": 4.0,
+      "scope_matches": true,
+      "reason_code": "UNSUPPORTED_STRUCTURE_EXCLUDED",
+      "stored_window_reason": false,
+      "record_only": true,
+      "recommended_actions_empty": true,
+      "window_exemption_observed": false,
+      "excluded_severe_or_structural": false,
+      "requires_review": false
+    },
+    {
+      "source_rowid": 31059,
+      "followup_rowid": 31058,
+      "kind": "image",
+      "delta_seconds": 1.0,
+      "scope_matches": true,
+      "reason_code": "NO_PRIMARY_CATEGORY_EXCLUDED",
+      "stored_window_reason": false,
+      "record_only": true,
+      "recommended_actions_empty": true,
+      "window_exemption_observed": false,
+      "excluded_severe_or_structural": false,
+      "requires_review": false
+    },
+    {
+      "source_rowid": 31059,
+      "followup_rowid": 31060,
+      "kind": "voice",
+      "delta_seconds": 5.0,
+      "scope_matches": true,
+      "reason_code": "UNSUPPORTED_STRUCTURE_EXCLUDED",
+      "stored_window_reason": false,
+      "record_only": true,
+      "recommended_actions_empty": true,
+      "window_exemption_observed": false,
+      "excluded_severe_or_structural": false,
+      "requires_review": false
+    },
+    {
+      "source_rowid": 31063,
+      "followup_rowid": 31062,
+      "kind": "image",
+      "delta_seconds": 1.0,
+      "scope_matches": true,
+      "reason_code": "NO_PRIMARY_CATEGORY_EXCLUDED",
+      "stored_window_reason": false,
+      "record_only": true,
+      "recommended_actions_empty": true,
+      "window_exemption_observed": false,
+      "excluded_severe_or_structural": false,
+      "requires_review": false
+    },
+    {
+      "source_rowid": 31063,
+      "followup_rowid": 31064,
+      "kind": "voice",
+      "delta_seconds": 5.0,
+      "scope_matches": true,
+      "reason_code": "UNSUPPORTED_STRUCTURE_EXCLUDED",
+      "stored_window_reason": false,
+      "record_only": true,
+      "recommended_actions_empty": true,
+      "window_exemption_observed": false,
+      "excluded_severe_or_structural": false,
+      "requires_review": false
+    }
+  ],
+  "pair_counts": {
+    "WINDOW_EXEMPT_OBSERVED": 2,
+    "NO_PRIMARY_CATEGORY_EXCLUDED": 4,
+    "UNSUPPORTED_STRUCTURE_EXCLUDED": 4
+  },
+  "unique_followups_observed": 10,
+  "pair_limit_reached": false,
+  "window_exemption_observed": true,
+  "possible_nonexempt_followups_require_review": false,
+  "synthetic_self_tests": {
+    "passed": 26,
+    "failed": 0,
+    "case_names": [
+      "image_source_exact_reason",
+      "record_only_source_is_eligible",
+      "mixed_source_valid_local_policy",
+      "mixed_without_local_policy_rejected",
+      "present_null_policy_rejected",
+      "boundary_same_second_excluded",
+      "boundary_negative_excluded",
+      "boundary_120_inclusive",
+      "boundary_over_120_excluded",
+      "cross_group_excluded",
+      "cross_member_excluded",
+      "cross_account_excluded",
+      "cross_provider_excluded",
+      "already_allow_not_window_hit",
+      "ordinary_record_only_not_window_hit",
+      "pending_not_window_hit",
+      "porn_excluded",
+      "violence_excluded",
+      "flood_excluded",
+      "severe_secondary_rule_excluded",
+      "structural_rule_excluded",
+      "no_primary_category_excluded",
+      "nonempty_actions_not_pass",
+      "tampered_receipt_rejected",
+      "source_veto_rejected",
+      "fraud_nonqr_not_window_hit"
+    ],
+    "scope": "Synthetic audit analysis only, not a live moderation or external-action test."
+  },
+  "action_intent_observations": {
+    "observed_at": "2026-09-22T15:57:11.152896+00:00",
+    "rows": [
+      {
+        "followup_rowid": 30842,
+        "matching_intent_count": 0,
+        "intents": [],
+        "unmatched_summary_reference_count": 0,
+        "independent_action_robot_account_binding": false
+      },
+      {
+        "followup_rowid": 30852,
+        "matching_intent_count": 0,
+        "intents": [],
+        "unmatched_summary_reference_count": 0,
+        "independent_action_robot_account_binding": false
+      },
+      {
+        "followup_rowid": 31010,
+        "matching_intent_count": 0,
+        "intents": [],
+        "unmatched_summary_reference_count": 0,
+        "independent_action_robot_account_binding": false
+      },
+      {
+        "followup_rowid": 31052,
+        "matching_intent_count": 0,
+        "intents": [],
+        "unmatched_summary_reference_count": 0,
+        "independent_action_robot_account_binding": false
+      },
+      {
+        "followup_rowid": 31053,
+        "matching_intent_count": 0,
+        "intents": [],
+        "unmatched_summary_reference_count": 0,
+        "independent_action_robot_account_binding": false
+      },
+      {
+        "followup_rowid": 31056,
+        "matching_intent_count": 0,
+        "intents": [],
+        "unmatched_summary_reference_count": 0,
+        "independent_action_robot_account_binding": false
+      },
+      {
+        "followup_rowid": 31058,
+        "matching_intent_count": 0,
+        "intents": [],
+        "unmatched_summary_reference_count": 0,
+        "independent_action_robot_account_binding": false
+      },
+      {
+        "followup_rowid": 31060,
+        "matching_intent_count": 0,
+        "intents": [],
+        "unmatched_summary_reference_count": 0,
+        "independent_action_robot_account_binding": false
+      },
+      {
+        "followup_rowid": 31062,
+        "matching_intent_count": 0,
+        "intents": [],
+        "unmatched_summary_reference_count": 0,
+        "independent_action_robot_account_binding": false
+      },
+      {
+        "followup_rowid": 31064,
+        "matching_intent_count": 0,
+        "intents": [],
+        "unmatched_summary_reference_count": 0,
+        "independent_action_robot_account_binding": false
+      }
+    ],
+    "relationship_basis": "app/actions/orchestrator.py _existing_message_intents/_create_intent and summarize_intents; app/runtime/pipeline.py persists summary ids.",
+    "limitations": "No intent or SKIPPED intent only describes this stored orchestrator record; it does not establish absence of manual/other-system QQ actions. No independent robot account exists on ActionIntent."
+  },
+  "observed_at": "2026-09-22T15:57:11.152896+00:00",
+  "execution_sha": "6ecb6d28e38b64b597c95edfb1c312f4cd33a049",
+  "expected_source_sha": "1c17ba09e5bef268a6162864830396e8d36c6107",
+  "command": [
+    "D:\\CodeBuddy工作空间\\CB 项目\\qq-group-moderation-bot\\.venv\\Scripts\\python.exe",
+    "-B",
+    "D:/QQBotAudits/n03-campus-20260922/campus/natural-window-audit.py",
+    "--out",
+    "D:/QQBotAudits/n03-campus-20260922/campus/natural-window-20260922-final.json"
+  ],
+  "script_sha256": "85d00db1f70bcc7a60e8344913f1d34fad185d62ef0dc955d3de652cb0b6c507",
+  "policy_code_sha256_lf": {
+    "app/config.py": "f3348a0c0a7b2d88bb99274aae344e91cc91f15ecf9aa5a806a1d411f12a7bcd",
+    "app/core/contracts.py": "03c510323c7fe62aec392bdd90ac858ca3dea7683a2535fc4a442e56df2febb0",
+    "app/moderation/decision.py": "35d223eed3885d53779a58243771824db90d1038012c6c6da1a0c796245c053b",
+    "app/moderation/ai.py": "27d0fc1d77241a413a95098c77a21d8364997adf6cac9a9e9147e3410af3e167",
+    "app/moderation/campus_source.py": "a5028f151803676fba60d377da2f5fc08afb65bc748ad7933b9c423c58964d41",
+    "app/moderation/campus_policy.py": "69bd23c508015b3244a6a27f972887e173345f8365c754f791aaec7e73a88631",
+    "app/moderation/campus_message.py": "c77a9c6ca860ec21caa6116c07581b11563758e905061019d1d22b470cbc810d",
+    "app/moderation/wall_pair.py": "a663c3e09b6ee8574e8cb65a1198323a807eef4e5668f2c2241bafdf71e66f2d",
+    "app/runtime/models.py": "798af16aebc9e52f30a6c2c41138b37313ea037c38adc4b661757b2855b81b65",
+    "app/runtime/pipeline.py": "1bdbb06b2df9a8f8c762e764262540ce3c41cd7938ea019e5cefa036ccac810d",
+    "app/actions/orchestrator.py": "ff052e4b0e3c7e98090163835704843b3573bbf620b84f680f2de4d2395c4439"
+  },
+  "baseline_shadow_max_rowid": 30780,
+  "live_shadow_max_rowid": 31353,
+  "new_rows_read": 573,
+  "live_snapshot_seconds": 0.031,
+  "database_access": "sqlite URI mode=ro; query_only; bounded read transaction",
+  "new_network_calls": 0,
+  "database_changes_made": false,
+  "limitations": [
+    "Only persisted OneBot account keys are accepted; other/unknown account scopes remain unproven.",
+    "Only post-baseline image/mixed allow or record_only sources with revalidated _confirmed_sources evidence are covered. Mixed additionally requires its completed local policy.",
+    "Time-scope matching is not itself a window hit; original pre-pair verdict and historical source availability are not reconstructed.",
+    "Severe/structural exclusions and ordinary allow/other record_only are not counted as missing exemptions.",
+    "A window reason does not identify which of several eligible sources was used; no exclusive source attribution is claimed.",
+    "Current evidence revalidation does not prove the source was complete and visible when the historical followup was decided.",
+    "Media child categories are appended after window evaluation; a stored-category conflict requires review, not a proven live policy failure.",
+    "Action table observations use a separate later read snapshot; absence is not proof of no external or manual operation.",
+    "No QQ/API/model call, action replay, setting change, or historical update is performed."
+  ],
+  "private_report_sha256": "9ec78c347184a348dadbf4dc315280c1409008a8f96540ca0e492ca913302b15",
+  "private_report_path": "D:\\QQBotAudits\\n03-campus-20260922\\campus\\natural-window-20260922-final.json"
+}
