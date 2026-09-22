@@ -19,6 +19,7 @@ import time
 from typing import Any
 
 import httpx
+from sqlalchemy.dialects.sqlite import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.adapters.onebot.parser import OneBotMessageSource
@@ -64,13 +65,18 @@ async def _autoname_group_task(group_id: str) -> bool:
             name = str(data.get("group_name") or "").strip() if isinstance(data, dict) else ""
             if not name:
                 return True  # 接口正常但无群名，无需重试
-            existing = await session.get(GroupAlias, group_id)
-            if existing is None:
-                existing = GroupAlias(group_openid=group_id)
-                session.add(existing)
-            existing.name = name[:64]
+            # The admin may save a name while get_group_info is in flight.
+            # Never update an existing alias, including a concurrent insert.
+            result = await session.execute(
+                insert(GroupAlias)
+                .values(group_openid=group_id, name=name[:64])
+                .on_conflict_do_nothing(index_elements=[GroupAlias.group_openid])
+                .returning(GroupAlias.group_openid)
+            )
+            inserted = result.scalar_one_or_none()
             await session.commit()
-            logger.info("自动备注群 %s -> %s", group_id, name[:64])
+            if inserted is not None:
+                logger.info("自动备注群 %s -> %s", group_id, name[:64])
             return True
     except Exception:  # noqa: BLE001 - 便利功能，任何失败都不影响审核主链
         logger.debug("自动备注群 %s 失败（忽略）", group_id, exc_info=True)

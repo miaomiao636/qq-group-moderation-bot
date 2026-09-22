@@ -516,19 +516,34 @@ def _managed_entry_files(target: Path) -> list[Path]:
 def _managed_keep_set(target: Path, entry: _ManagedCopy) -> set[Path]:
     """保底条目（最新 N 个顶层条目）内的全部文件。
 
-    条目新鲜度按**条目内最新文件的 mtime** 排序——目录自身的 mtime 只反映
-    创建/改名时间，不能代表备份内容时间。
+    backups 只用已知 DB 文件的 mtime 排序；未知/伴随文件保留且不参与保底。
+    其他登记项沿用文件 mtime。此处不把命名识别冒充数据库完整性验收。
     """
     if entry.keep_min_entries <= 0 or not target.is_dir():
         return set()
     try:
         pairs = []
+        preserved: set[Path] = set()
         for item in target.iterdir():
             files = _managed_entry_files(item)
             # A crash residue or empty placeholder cannot displace the last
             # completed backup. Preserve every companion of a retained set.
+            # Current online backups are *.db; legacy directory sets use db.bak.
+            # Naming is only a preservation boundary, not an integrity claim.
+            # Unknown/companion files cannot displace the last database artifact.
+            database_files = (
+                [f for f in files if f.suffix.lower() == ".db" or f.name.lower() == "db.bak"]
+                if entry.pattern == "backups"
+                else files
+            )
+            if entry.pattern == "backups":
+                preserved.update(
+                    f
+                    for f in set(files) - set(database_files)
+                    if not (f.name.startswith("moderation-") and f.suffix.lower() == ".partial")
+                )
             completed = [
-                f for f in files if f.suffix.lower() != ".partial" and f.stat().st_size > 0
+                f for f in database_files if f.suffix.lower() != ".partial" and f.stat().st_size > 0
             ]
             if completed:
                 pairs.append((files, completed))
@@ -543,7 +558,7 @@ def _managed_keep_set(target: Path, entry: _ManagedCopy) -> set[Path]:
         except OSError:
             return 0.0
 
-    kept: set[Path] = set()
+    kept: set[Path] = preserved
     for files, _completed in sorted(pairs, key=_freshness, reverse=True)[: entry.keep_min_entries]:
         kept.update(files)
     return kept

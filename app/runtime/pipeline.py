@@ -31,6 +31,7 @@ from app.moderation.decision import (
     ALLOWLIST_MEMBER_ALLOW_RULE_ID,
     POLICY_ALLOW_RULE_IDS,
     ModerationDecision,
+    RuleHit,
 )
 from app.moderation.dynamic_rules import load_cached_active_snapshot
 from app.moderation.image_engine import ImageModerationEngine, MediaAnalysis, merge_decisions
@@ -281,6 +282,7 @@ async def _run_pipeline(
     try:
         rule_version_ids: tuple[int, ...] = ()
         local_ai_media_paths: list[Path] = []
+        media_decisions: list[ModerationDecision] = []
         evidence_vetoes: list[str] = []
         ambiguous_scope = await ambiguous_legacy_rule_scope(
             session, msg.external_group_id, msg.provider
@@ -324,7 +326,6 @@ async def _run_pipeline(
 
         # R-102-1 按媒体类型分发对应引擎；R-102-3 媒体缺失/下载失败 → record_only
         if msg.attachments:
-            media_decisions: list[ModerationDecision] = []
             media_missing = False
             for att in msg.attachments:
                 local = _safe_media_path(att.filename)
@@ -472,6 +473,9 @@ async def _run_pipeline(
         decision = await maybe_wall_text_pairing(
             session, msg, decision, pending_messages=pending_messages, event_key=claim_key
         )
+        # Audit only: preserve child evidence after all policy decisions. Adding a
+        # category earlier could change AI review routing or window eligibility.
+        decision = _retain_media_evidence(decision, media_decisions)
         detail = {
             "external_message_id": msg.external_message_id,
             # R06（ad323b6 主审）：记录消息发送时间，供紧邻配对按真实发送顺序校验，
@@ -623,6 +627,31 @@ def _contains_unreviewable_content(msg: StandardMessage) -> bool:
     if msg.kind == "unknown":
         return True
     return any(s.kind == "unknown" for s in msg.segments)
+
+
+def _retain_media_evidence(
+    decision: ModerationDecision, media_decisions: list[ModerationDecision]
+) -> ModerationDecision:
+    """Retain local attachment evidence without changing verdict/actions/confidence."""
+    hits = list(decision.rule_hits)
+    for media in media_decisions:
+        hits.extend(media.rule_hits)
+        if media.category:
+            # The underlying R001/R003 hits can be ad while the child verdict is
+            # porn/violence. Keep every child category, not only the first one.
+            hits.append(
+                RuleHit(
+                    rule_id="MEDIA_CATEGORY",
+                    rule_name="local_media_category",
+                    category=media.category,
+                    confidence_delta=0.0,
+                    evidence_masked=f"本地媒体审核：{media.verdict}",
+                )
+            )
+    category = decision.category
+    if category is None and decision.verdict != "allow":
+        category = next((m.category for m in media_decisions if m.category), None)
+    return decision.model_copy(update={"rule_hits": hits, "category": category})
 
 
 def _media_decision_from(

@@ -488,7 +488,11 @@ def build_onebot_router(ws_path: str) -> APIRouter:
         """NapCat 就绪状态证据（连接/登录/心跳/积压/每群最后事件）。"""
         supplied = _request_bearer_token(request)
         expected = settings.onebot_access_token
-        if not supplied or not expected or not secrets.compare_digest(supplied, expected):
+        if (
+            not supplied
+            or not expected
+            or not secrets.compare_digest(supplied.encode("utf-8"), expected.encode("utf-8"))
+        ):
             raise HTTPException(
                 status_code=401,
                 detail="OneBot status authentication required",
@@ -505,7 +509,7 @@ def build_onebot_router(ws_path: str) -> APIRouter:
             not settings.onebot_ws_enabled
             or not supplied
             or not expected
-            or not secrets.compare_digest(supplied, expected)
+            or not secrets.compare_digest(supplied.encode("utf-8"), expected.encode("utf-8"))
         ):
             await websocket.close(code=1008)
             return

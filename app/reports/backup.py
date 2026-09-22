@@ -15,6 +15,8 @@ from pathlib import Path
 
 from sqlalchemy.engine import make_url
 
+from app.core.fs_guard import is_link_like
+
 
 def backup_sqlite(database_url: str, *, timeout_seconds: float = 30) -> Path:
     url = make_url(database_url)
@@ -29,9 +31,11 @@ def backup_sqlite(database_url: str, *, timeout_seconds: float = 30) -> Path:
     if not source_path.is_file():
         raise ValueError("database source is not a file")
     backup_dir = source_path.parent / "backups"
+    if backup_dir.exists() and is_link_like(backup_dir):
+        raise ValueError("backup directory cannot be a link or reparse point")
     backup_dir.mkdir(mode=0o700, exist_ok=True)
-    if backup_dir.is_symlink():
-        raise ValueError("backup directory cannot be a symbolic link")
+    if is_link_like(backup_dir):
+        raise ValueError("backup directory cannot be a link or reparse point")
     prefix = f"moderation-{datetime.now(UTC):%Y%m%dT%H%M%SZ}-"
     with tempfile.NamedTemporaryFile(
         prefix=prefix, suffix=".partial", dir=backup_dir, delete=False

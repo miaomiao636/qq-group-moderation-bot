@@ -62,15 +62,22 @@ class OfficialActionAdapter:
         token_manager: TokenManager,
         api_base: str = "https://api.bot.qq.com",
         client: httpx.AsyncClient | None = None,
+        *,
+        owns_token_manager: bool = False,
     ) -> None:
         self._token_manager = token_manager
+        self._owns_token_manager = owns_token_manager
         self._base = api_base.rstrip("/")
         self._client = client or httpx.AsyncClient(timeout=_ACTION_TIMEOUT, follow_redirects=True)
         self._owns_client = client is None
 
     async def aclose(self) -> None:
-        if self._owns_client:
-            await self._client.aclose()
+        try:
+            if self._owns_client:
+                await self._client.aclose()
+        finally:
+            if self._owns_token_manager:
+                await self._token_manager.aclose()
 
     def _group_url(self, group_openid: str, path: str) -> str:
         return f"{self._base}/v2/groups/{group_openid}/{path}"

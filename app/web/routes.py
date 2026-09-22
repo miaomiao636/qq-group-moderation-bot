@@ -3040,12 +3040,14 @@ def _require_api_token(request: Request, *, scope: str = "project:read") -> str 
     if auth_header.lower().startswith("bearer "):
         token = auth_header[7:].strip()
         if settings.agent_api_read_token and secrets.compare_digest(
-            token, settings.agent_api_read_token
+            token.encode("utf-8"), settings.agent_api_read_token.encode("utf-8")
         ):
             if scope != "project:read":
                 raise HTTPException(403, "read-only credential cannot write")
             return "agent:read:" + sha256(token.encode()).hexdigest()[:16]
-        if settings.agent_api_token and secrets.compare_digest(token, settings.agent_api_token):
+        if settings.agent_api_token and secrets.compare_digest(
+            token.encode("utf-8"), settings.agent_api_token.encode("utf-8")
+        ):
             if scope not in {value.strip() for value in settings.agent_api_write_scopes.split(",")}:
                 raise HTTPException(403, "credential lacks required scope")
             return "agent:write:" + sha256(token.encode()).hexdigest()[:16]

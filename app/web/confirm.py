@@ -48,7 +48,9 @@ def reserve_code(case_id: int, code: str) -> Iterator[bool]:
         del _pending[case_id]
         yield False
         return
-    if pending.reserved or not secrets.compare_digest(pending.code, code.strip()):
+    if pending.reserved or not secrets.compare_digest(
+        pending.code.encode("utf-8"), code.strip().encode("utf-8")
+    ):
         yield False
         return
     pending.reserved = True

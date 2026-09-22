@@ -17,7 +17,7 @@ from __future__ import annotations
 import asyncio
 import json
 from collections.abc import AsyncIterator
-from contextlib import asynccontextmanager
+from contextlib import AsyncExitStack, asynccontextmanager
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from hashlib import sha256
@@ -179,15 +179,17 @@ async def orchestrate_actions(
             )
             await session.commit()
             return [intent]
-        return await _orchestrate_member_actions(
-            session,
-            msg,
-            decision,
-            official_client=official_client,
-            onebot_client=onebot_client,
-            settings=settings,
-            actor=actor,
-        )
+        async with AsyncExitStack() as resources:
+            return await _orchestrate_member_actions(
+                session,
+                msg,
+                decision,
+                official_client=official_client,
+                onebot_client=onebot_client,
+                settings=settings,
+                actor=actor,
+                resources=resources,
+            )
 
 
 async def _orchestrate_member_actions(
@@ -199,6 +201,7 @@ async def _orchestrate_member_actions(
     onebot_client: ModerationActionClient | None,
     settings: Settings,
     actor: str,
+    resources: AsyncExitStack,
 ) -> list[ActionIntent]:
     """Hold one member's chain lock from strike allocation through external actions."""
     existing = await _existing_message_intents(session, msg)
@@ -249,7 +252,9 @@ async def _orchestrate_member_actions(
     client: ModerationActionClient | None
     if provider == "qq_official":
         client = (
-            official_client if official_client is not None else _default_official_client(settings)
+            official_client
+            if official_client is not None
+            else await resources.enter_async_context(_default_official_client(settings))
         )
         if client is None:
             return [
@@ -611,7 +616,10 @@ def _intent_key(msg: StandardMessage, action: str, params: dict[str, Any]) -> st
     return sha256(raw.encode("utf-8")).hexdigest()
 
 
-def _default_official_client(settings: Settings) -> ModerationActionClient | None:
+@asynccontextmanager
+async def _default_official_client(
+    settings: Settings,
+) -> AsyncIterator[ModerationActionClient | None]:
     """惰性构建官方动作客户端（组合根 seam，见模块 docstring）。
 
     未配置官方凭据时返回 None，由调用方记录 SKIPPED 意图（不抛异常、
@@ -623,8 +631,13 @@ def _default_official_client(settings: Settings) -> ModerationActionClient | Non
     )
 
     if not official_client_configured(settings):
-        return None
-    return build_official_action_client(settings)
+        yield None
+        return
+    client = build_official_action_client(settings)
+    try:
+        yield client
+    finally:
+        await client.aclose()
 
 
 def _default_onebot_client(settings: Settings) -> ModerationActionClient | None:

@@ -15,6 +15,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.cases.models import Case, ViolationRecord
 from app.moderation.ai import AIUsageLog, summarize_ai_usage
 from app.moderation.feedback import NEGATIVE_LABELS, POSITIVE_LABELS, FeedbackRecord
+from app.reports.snapshot import report_snapshot
 from app.runtime.models import ShadowDecision
 
 
@@ -34,6 +35,11 @@ async def _group_counts(
 
 
 async def build_stats(session: AsyncSession) -> dict[str, Any]:
+    async with report_snapshot(session):
+        return await _build_stats(session)
+
+
+async def _build_stats(session: AsyncSession) -> dict[str, Any]:
     """聚合后台大盘所需的全部指标。"""
     total_shadow = await _count(session, select(func.count()).select_from(ShadowDecision))
     total_violations = await _count(session, select(func.count()).select_from(ViolationRecord))
