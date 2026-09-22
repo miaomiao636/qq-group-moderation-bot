@@ -1,8 +1,8 @@
 """校园墙图后窗口豁免（CAMPUS-SCOPE-20260922 收窄）。
 
 同成员、同 provider/群/机器人账号，在明确确认的万能校园墙图片后 120 秒内，
-保留既有文字/图片记录豁免。来源必须携带新 campus_wall_source 与同条品牌文字
-证据；历史「小程序码通过」或仅旧「校园墙白名单」标记不再授予来源资格。
+保留既有文字/图片记录豁免。来源必须是同条品牌文字证据或已完成本地政策豁免的
+认可分享模板；历史「小程序码通过」或仅旧「校园墙白名单」标记不再授予来源资格。
 普通小程序恢复正常审核，不能跨附件拼接身份或掩盖未决附件。已确认校园墙的
 诈骗窗口豁免仍要求同条来源 has_miniprogram_code 严格为 true。色情/暴力/刷屏、
 结构性撤回、同秒定序、在途保护、完整证据 veto 与无状态幂等边界保持不变。
@@ -135,6 +135,12 @@ def _confirmed_sources(detail: dict[str, Any]) -> list[tuple[str, str, bool]]:
     """
     if detail.get("processing") or detail.get("evidence_vetoes"):
         return []
+    if "campus_source_policy" in detail:
+        from app.moderation.campus_policy import sources_from_campus_policy
+
+        # Raw ad/fraud can qualify only after a completed local exemption;
+        # revalidate its complete evidence instead of removing the legacy gate.
+        return sources_from_campus_policy(detail)
     results = detail.get("ai_results")
     if not isinstance(results, list) or any(not isinstance(r, dict) for r in results):
         return []

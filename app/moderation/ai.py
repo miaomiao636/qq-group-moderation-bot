@@ -21,11 +21,20 @@ from sqlalchemy.orm import Mapped, mapped_column
 from app.config import Settings
 from app.core.contracts import StandardMessage
 from app.db import Base
-from app.moderation.campus_source import CAMPUS_WALL_SOURCE, confirmed_campus_source
+from app.moderation.campus_source import (
+    CAMPUS_WALL_SOURCE,
+    CampusShareCard,
+    confirmed_campus_qr,
+    confirmed_campus_source,
+    share_card_matches,
+    uncertain_campus_template,
+)
 from app.moderation.decision import (
     ALLOWLIST_ALLOW_RULE_ID,
     ALLOWLIST_NON_EXEMPT_CATEGORIES,
     CERTIFICATE_AD_ALLOW_RULE_ID,
+    FORWARD_RECORD_RECALL_RULE_ID,
+    GROUP_CARD_RECALL_RULE_ID,
     MINIPROGRAM_QR_ALLOW_RULE_ID,
     POLICY_ALLOW_RULE_IDS,
     Category,
@@ -46,7 +55,7 @@ AIContentKind = Literal[
 AIResultSource = Literal["text", "vision", "degraded", "cache"]
 AIReviewRole = Literal["auxiliary", "primary", "secondary"]
 
-PROMPT_VERSION = "t204-v17"
+PROMPT_VERSION = "t204-v18"
 AI_POLICY_VERSION = "conditional-review-v1"
 MAX_AI_TEXT_CHARS = 4_000
 MAX_AI_MEDIA_BYTES = 5 * 1024 * 1024
@@ -138,6 +147,7 @@ class AIModerationResult(BaseModel):
     # 只有视觉通道有意义；文字通道恒为 False。
     has_miniprogram_code: bool = False
     campus_wall_source: Literal["万能校园墙"] | None = None
+    campus_share_card: CampusShareCard | None = None
     latency_ms: int = Field(default=0, ge=0)
     cost_cents: int = Field(default=0, ge=0)
     degraded_reason: str = Field(default="", max_length=200)
@@ -291,6 +301,19 @@ def provider_payload_to_result(
         CAMPUS_WALL_SOURCE if campus_raw == CAMPUS_WALL_SOURCE and source == "vision" else None
     )
     try:
+        template_raw = payload.get("campus_share_card")
+        template = (
+            CampusShareCard.model_validate(template_raw) if template_raw is not None else None
+        )
+        if source != "vision":
+            template = None
+        if template is not None:
+            if template.status == "matched" and (
+                not share_card_matches(template.model_dump()) or not has_miniprogram_code
+            ):
+                template = template.model_copy(update={"status": "uncertain"})
+            if template.status == "uncertain":
+                needs_review = True
         return AIModerationResult(
             category=category,
             confidence=confidence,
@@ -302,6 +325,7 @@ def provider_payload_to_result(
             needs_review=needs_review,
             has_miniprogram_code=has_miniprogram_code,
             campus_wall_source=campus_source,
+            campus_share_card=template,
             latency_ms=latency_ms,
             cost_cents=int(payload.get("cost_cents") or 0),
             raw_response_sha256=raw_hash,
@@ -876,9 +900,12 @@ def _cross_modal_veto(opposite: list[AIModerationResult], low_threshold: float) 
 # D-039 的例外集合：**只有色情与暴力/违禁品**不因小程序码放行。
 # 负责人 2026-09-18 晚修订：**诈骗不再例外**——图含小程序码时，诈骗内容同样放行
 # （此前沿用 B-2 把 fraud 也列为例外，导致"支付宝亲密号"这类图被撤回）。
-_MINIPROGRAM_QR_BLOCKED_CATEGORIES = frozenset({"porn", "violence"})
+# Content exceptions plus the existing independent flood protection.
+_MINIPROGRAM_QR_BLOCKED_CATEGORIES = frozenset({"porn", "violence", "flood"})
 # 本地硬证据：图片外观不得覆盖这些本地判定（防"配一张带码图就绕过黑名单/联系方式/卡片规则"）。
-_LOCAL_HARD_EVIDENCE_RULES = frozenset({"R001", "R003", "R006"})
+_LOCAL_HARD_EVIDENCE_RULES = frozenset(
+    {"R001", "R003", "R006", FORWARD_RECORD_RECALL_RULE_ID, GROUP_CARD_RECALL_RULE_ID}
+)
 
 
 def _secondary_pair_is_valid(
@@ -985,9 +1012,9 @@ def _miniprogram_qr_allow(
     secondary_review_low: float = 0.60,
     secondary_review_high: float = 0.90,
 ) -> RuleHit | None:
-    """CAMPUS-SCOPE-20260922: only explicitly confirmed campus QR sources qualify.
+    """Only confirmed campus brands or approved share templates with source QR qualify.
 
-    保留两个例外：
+    保留严重/刷屏类别与结构性规则等本地硬证据保护：
     1. **色情 / 暴力违禁品**（负责人 2026-09-18 晚修订：仅此两类）：本地或任一 AI
        结果给出 porn/violence 时不放行；**诈骗不再例外**；
     2. **本地硬证据**：命中 R001 黑名单词 / R003 联系方式 / R006 分享卡片 / DR_ 动态
@@ -997,7 +1024,7 @@ def _miniprogram_qr_allow(
     必须只有**一套**阈值，否则把二审通过线配成 0.95 时，QR 入口仍按隐式默认 0.90
     收尾"未决复核"，等于支持的配置被旁路。
     """
-    if not any(result.source == "vision" and result.has_miniprogram_code for result in ai_results):
+    if not any(confirmed_campus_qr(result.model_dump()) for result in ai_results):
         return None
     attachments = [r for r in ai_results if r.source in ("vision", "degraded")]
     # A campus image cannot grant immunity to another provider's mini-app/ad in
@@ -1026,6 +1053,8 @@ def _miniprogram_qr_allow(
         return None
     if local.category in _MINIPROGRAM_QR_BLOCKED_CATEGORIES:
         return None
+    if any(hit.category in _MINIPROGRAM_QR_BLOCKED_CATEGORIES for hit in local.rule_hits):
+        return None
     if any(
         result.category in _MINIPROGRAM_QR_BLOCKED_CATEGORIES
         for result in ai_results
@@ -1042,7 +1071,7 @@ def _miniprogram_qr_allow(
         rule_name="miniprogram_qr",
         category="ad",
         confidence_delta=0.0,
-        evidence_masked="已视觉确认万能校园墙来源及小程序码，按收窄后的来源规则放行（2026-09-22）",
+        evidence_masked="已确认校园墙品牌或认可分享模板及来源码，按校园墙政策豁免",
     )
 
 
@@ -1090,7 +1119,30 @@ def merge_ai_evidence(
                 "confidence": 0.0,
                 "recommended_actions": [],
                 "rule_hits": local.rule_hits + hits + [qr_allow],
-                "reason": "已确认校园墙来源的小程序图片，按来源白名单放行（2026-09-22）",
+                "reason": "已确认校园墙品牌或认可分享模板，按校园墙政策豁免",
+            }
+        )
+    # An uncertain approved-template observation is not a confirmed source. Keep
+    # this ambiguity for a human even if ad confidence is high; hard/severe local
+    # evidence and existing explicit policy protections retain their precedence.
+    if (
+        any(uncertain_campus_template(r.model_dump()) for r in ai_results if r.source == "vision")
+        and local.category not in ("porn", "violence", "flood")
+        and not any(h.category in ("porn", "violence", "flood") for h in local.rule_hits)
+        and not any(r.category in ("porn", "violence", "flood") for r in ai_results)
+        and not any(
+            h.rule_id in _LOCAL_HARD_EVIDENCE_RULES
+            or h.rule_id.startswith("DR_")
+            or h.rule_id in POLICY_ALLOW_RULE_IDS
+            for h in local.rule_hits
+        )
+    ):
+        return local.model_copy(
+            update={
+                "verdict": "record_only",
+                "recommended_actions": [],
+                "rule_hits": local.rule_hits + hits,
+                "reason": "疑似校园墙分享模板，但来源证据不完整，转人工（未授予豁免）",
             }
         )
     if local.verdict == "violation_high":

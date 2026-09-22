@@ -439,6 +439,7 @@ async def _run_pipeline(
 
             ai_service = build_default_ai_review_service()
         service = ai_service
+        local_before_ai = decision
         decision, ai_results = await service.review_message(
             session,
             msg,
@@ -495,6 +496,16 @@ async def _run_pipeline(
             # 用的是判据函数里**文档化的默认值**（如实标注，绝不与"已配置的真实阈值"混同）。
             "review_policy_source": _policy_source(ai_service),
         }
+        # The same local policy authorizes this image and any later window.
+        # Do not clear raw model categories or infer permission from record_only.
+        from app.moderation.campus_policy import make_campus_source_policy
+
+        if msg.kind == "image" and not evidence_vetoes:
+            source_policy = make_campus_source_policy(
+                local_before_ai, decision, ai_results, _service_policy(ai_service)
+            )
+            if source_policy is not None:
+                detail["campus_source_policy"] = source_policy
         if msg.segments:
             # T-306：中立段摘要（含未知段元数据），供人工复核追溯
             detail["segments"] = [
