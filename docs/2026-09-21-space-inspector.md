@@ -10,9 +10,9 @@
 
 1. 打开工具，刷新群列表。群成员来源是项目已配置的机器人账号；QQ 空间观察账号由专用浏览器正常登录，两者分别显示。
 2. 点击“打开空间登录”，在独立 Microsoft Edge 中登录 QQ 空间，然后点击“确认已登录”。首次登录和之后的会话过期需要本人处理；不复制现有浏览器或 QQ 的凭据。
-3. 正常访问恢复后，选择需要检查的群，点击“开始检查所选群”。当前按负责人 2026-09-22 要求试用每批最多 300 人，批内相邻检查之间等待 30 秒，批末停止，由本人手动继续下一批；并非腾讯允许频率，仍可能被拦截。每个任务最多选择 10 个群；同一账号跨群只访问一次，导出保留每个群的关联。
+3. 正常访问恢复后，选择需要检查的群，点击“开始检查所选群”。本次优化默认开启自动续批：每批 300 人、相邻实时检查等待 30 秒、批间休息 60 秒，按保存的待检查队列继续。窗口可调间隔、批量及休息，关闭自动续批则一批结束后停止；这些均为试验设置，不是腾讯允许频率，仍可能被拦截。每个任务最多选择 10 个群；同一账号跨群只访问一次，导出保留每个群的关联。
 4. 可以暂停、关闭后载入任务继续。点击“载入已有任务”，在窗口内按创建时间、群名和进度选择任务，再点“载入所选”；默认选择最新任务，不必寻找隐藏的 AppData 目录。“其他位置”保留手动选择入口。载入不会自动开始巡检；点“继续检查”才续扫。任务逐项保存；同一任务必须使用原成员来源账号和空间观察账号才能续扫。仅查看或导出已有任务不需要重新登录空间。需要查看文件时点“打开任务目录”；未载入任务时打开任务根目录。AppData 默认隐藏，也可按 Win+R 输入 `%LOCALAPPDATA%\QQSpaceInspector\tasks` 直接进入。
-5. 点击“导出结果”，再点“打开导出目录”。`restricted.csv` 仅包含明确空间违规限制提示；`report.csv` 包含全部快照成员；`report.json` 保存观察依据、统计和群快照信息；`说明.txt` 解释范围与未完成数量。CSV 可用 Excel 打开。
+5. 点击“导出结果”，再点“打开导出目录”。`restricted.csv` 仅包含明确空间违规限制提示；`report.csv` 包含全部快照成员；`report.json` 保存观察依据、统计和群快照信息；`说明.txt` 解释范围与未完成数量。CSV 可用 Excel 打开。历史复用行额外标注观察来源、原观察时间、复用时间和来源任务，不表示本次重新访问。
 
 不要在扫描期间手动切换专用浏览器的页面或账号。已核验的“主人设置了权限”“对方未开通空间”和“功能升级维护，暂不支持非好友访问”页面记为待确认并继续；遇到登录失效、访问失败或其他未知页面会保存进度并暂停，提示具体 QQ 号及原因，用户处理后才能继续。未完成任务也可导出，导出不会把未完成成员当作正常。
 
@@ -386,3 +386,54 @@ uv run python 'C:/Users/81596/AppData/Local/Temp/qqbot-space-inspector-20260922-
 ```
 
 全量 2449 项：2432 passed、17 skipped、0 failed/error；主审 31 文件/262 项全通过；巡检内部回归 213 项中 212 passed、1 skipped。三门禁通过：格式 368 文件、类型 115 源文件。跳过属于本次 Windows/uv 环境，不能直接与其他解释器或隔离 worktree 数字互换；本次 JUnit 及门禁原始输出保存在上述 TEMP 目录。新增内部回归已入库，旧主审探针未改。最终文档 HEAD 的远程 CI 另查同 SHA 的 run/job，不用旧版通过结果替代，交付回执附实际链接。
+
+
+## 自动续批与性能优化（SPACE-OPTIMIZE-20260922）
+
+接手基线 `b0b9c6c01d89b440fd7613350f5fd510ee565472`，已执行 `git pull --ff-only`、`git log -1`、`git status --short --branch` 对齐，确认原工作区干净。负责人批准现有巡检优化和直接接口验证，并明确暂停桌面巡检后再开展接口取证。辅助代理只读研究/审阅，root 单一写入；主审探针未改。
+
+代码提交 `b6815b3cc814b0197d7e85113ee2258dd44fbd34`；内部回归提交 `df0a82b849b4a8ad598a2592f38ac99c1dc04c50`。改动仅为独立桌面巡检，不影响生产审核逻辑、群授权、动作开关、急停、数据库迁移或服务进程。
+
+### 最终行为与使用
+
+- 自动模式按已保存的固定待检队列串行运行，批间休息后继续。暂停、退出可中断间隔和休息，逐项保存；当前页面正在导航时须等有界导航结束。手动模式保留一批停止。
+- 窗口默认 30 秒间隔、每批 300 人、批间 60 秒。可选间隔为 5/10/20/30/60 秒，批量为 10/50/100/300 人，休息为 60/120/300/600 秒。短间隔尚未获真实整群验证，不承诺吞吐倍率或免拦截，不采用并发、账号/IP 轮换、随机拟人或绕过验证。
+- 轻量加载只过滤已观察到的静态资源命名空间中的图片/字体及指定头像路径；保留页面、样式、脚本及其他请求。采用 CDP 过滤而非 Playwright route，避免关闭 HTTP 缓存；浏览器不支持时退回普通加载。停止后复原；清理失败不会掩盖原登录/WAF 错误，保留可重试句柄。
+- 不再因图片等资源超时直接隐藏已经加载的明确页面；同一页面有界等待完整状态，不自动反复请求。导航未提交时，旧的同 QQ 页面不能成为新观察。目标 URL、查看账号、精确系统模板和完整加载要求不变。
+- 确认目标与查看账号、完整加载的未知页面仍先暂停。操作者可点“留待复查并继续”，本轮暂缓该成员并继续其余成员；该成员仍未完成，保留原记录。连续暂缓多个成员不会回到第一个形成循环；普通“继续检查”或重开任务会重新检查待复查成员。WAF、登录或身份异常不能这样跳过。
+- 勾选“复用 24 小时内历史观察”时，同查看账号、同 QQ、同证据契约的近期完整观察可在其他任务中复用。保留原观察时间与来源任务/访问编号，不将复用时间当新观察时间，不延长有效期；新受阻记录使旧成功缓存失效。关闭复用即逐个实时访问；同一任务已有完成记录仍沿用原恢复规则。
+- 本机 `observations.sqlite3` 只是可失效的索引，原任务是证据来源；损坏、类型异常、超限时给出提示并退回实时访问，不删除任务。首次运行会索引当前任务已有有效观察，不批量遍历所有历史任务。历史来源在界面和 CSV/JSON 中分别标识。
+- 新版兼容旧任务和未封存快照的离线查看/导出；未封存任务仍不能扫描。数据表版本未变，依据中新增严格校验的 `reuse` 子对象。因此含复用依据的新任务不能交由旧程序读取，需继续使用新版，或在复用前保留任务副本供旧版使用；本轮未改写用户任务库。
+
+安装入口与运行环境保持原样，本机独立环境已导入本仓库更新代码。旧窗口不会热加载；关闭后从桌面“QQ空间限制巡检”重开，载入原任务、确认登录，再继续。不需要重建任务或寻找隐藏的 AppData。
+
+### 直接接口研究：证据与结论
+
+研究执行基线为上述 `b0b9c6c`，浏览器取证使用 CUA 已登录标签页；没有复制 Cookie、登录令牌或原始 HTML 到仓库/日志。先使用 `optTab.goto(...)` / `reload()` 与页面快照核对已知目标，再通过 `optCDP.send('Page.getResourceTree')`、`optCDP.send('Page.getResourceContent', {frameId, url})` 读取当前主页响应。参数中的私人 QQ 号不在本记录公开；这不是后台新扫描引擎执行记录。
+
+本轮观察的限制提示页、普通权限页、非好友维护页，各自在当前主文档 HTML 中含不同的明确提示，并能核对查看账号。这说明这些案例无需抓取相册、日志等内容即可读取提示；尚不足以证明登录失效、未知页面、正常主页等全部分支都可由独立 HTTP 解析可靠替代，因此本轮保留浏览器 DOM 判据，未发布纯 HTTP 批量引擎。
+
+候选 CGI 来源为 [QZoneExport clients.ts](https://github.com/ShunCai/QZoneExport/blob/7e0218fab29316ca28b99a7c63deb0627002d271/core/qzone-api/clients.ts#L298-L305) 的 `cgi_userinfo_get_all`。公开项目用途为读取基本资料/访问权限，不能把权限失败或 `-4009` 直接等同违规；该项目的串行访问说明也不能证明接口免风控。
+
+通过 `optCDP.send('Runtime.evaluate', ...)` 在浏览器内部进行一次同源候选请求：目标为已观察到限制提示的样本，带 `uin`、`vuin`、`fupdate` 和浏览器内部计算的 `g_tk`；页面未提供可用的 `window.g_qzonetoken`，该次未携带它。结果为 HTTP 404、非 JSON，未取得可用限制原因。此前语法失败和本地 token 前置检查没有发出请求；没有轮询/自动重试，也没有据此把所有 CGI 宣称不可用。参数完整的候选请求及阳性/权限/正常/受阻对照仍未完成，**直接 CGI 路线本轮未通过接入条件**。
+
+资源过滤实现参考 [Playwright route 文档](https://playwright.dev/python/docs/api/class-browsercontext#browser-context-route) 的缓存说明与 [CDP Network.setBlockedURLs](https://chromedevtools.github.io/devtools-protocol/tot/Network/#method-setBlockedURLs)。过滤收窄至已观察的静态主机路径，避免将 API 查询中的图片后缀当资源地址。离线 Edge 测试证明缓存和 API 夹具请求保留，但不能替代真实所有页面覆盖。
+
+### 冻结验证
+
+执行 SHA `df0a82b849b4a8ad598a2592f38ac99c1dc04c50`，源码/测试冻结后运行：全量 2488 项，2470 passed、18 skipped、0 failed/error；原主审 31 文件/262 项全部通过；巡检 252 项中 250 passed、2 skipped。三门禁通过：格式 372 文件，类型 117 源文件。额外跳过包含主环境缺少可选 Playwright 的浏览器测试；同一冻结 SHA 已使用现有独立桌面运行环境执行该 Edge/localhost 测试，1 项通过。合成 Tk 控件操作与退出检查通过。原有其他 skipped 仍按该次环境/JUnit 记录，不当作通过或换用其他环境数字。
+
+```powershell
+uv run ruff check app tests alembic scripts
+uv run ruff format --check app tests alembic scripts
+uv run mypy app
+uv run pytest --junitxml='C:/Users/81596/AppData/Local/Temp/qqbot-space-inspector-20260922-optimize/full.xml'
+& 'C:/Users/81596/AppData/Local/QQSpaceInspector/runtime/Scripts/python.exe' -m unittest tests.test_space_inspector_lightweight -v
+uv run python 'C:/Users/81596/AppData/Local/Temp/qqbot-space-inspector-20260922-optimize/verify_gui.py'
+```
+
+本机编排命令 `uv run python 'C:/Users/81596/AppData/Local/Temp/qqbot-space-inspector-20260922-optimize/verify_all.py'` 保存上述命令、SHA、退出码于 `checks.json`，JUnit 统计于 `summary.json`，各项原始日志同目录。浏览器回归已入库 `tests/test_space_inspector_lightweight.py`，只启动独立 headless Edge 访问本地合成 HTTP 服务；普通测试环境若无可选巡检依赖则明确 skipped，不能算作真实浏览器通过。GUI 私有验证仅用合成 worker，检查最小/默认窗口尺寸下控件边界、设置传递、忙碌禁用和退出，无真实 QQ 或任务读写。
+
+最终文档 HEAD 的 CI 必须通过 `gh run list --branch windows-deploy-2026-09-10 --limit 5 --json databaseId,headSha,status,conclusion,url`、`gh run view <run-id> --json headSha,status,conclusion,jobs` 核对同 SHA，各 job 另列真实回执。不借用旧 CI 或未运行的测试结果。
+
+实机边界：优化前的续扫反馈仍是历史证据；自动续批、短间隔吞吐、跨任务复用和整群持续完成尚需新版桌面验收。后续如被拦截，保留已完成结果并停止，不把暂停数量当腾讯固定阈值。
