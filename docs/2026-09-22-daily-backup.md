@@ -33,10 +33,10 @@
 
 管理员 PowerShell 手工验收触发 Start-ScheduledTask -TaskName QQBotDailyBackup，核对 Get-ScheduledTaskInfo 的 LastTaskResult、state/last_attempt.json 与 E 盘 last_success.json。普通进程可能无法枚举或读取 SYSTEM 任务；此时使用上述 status 命令查看备份收据，或在管理员窗口查询任务。不能用注册成功替代实际运行。本轮按负责人要求保留通知渠道但不配置或发送 QQ/邮件通知。
 
-恢复必须使用全新、私有且与生产/备份/state 不重叠的目录：
+完整恢复验收必须使用 D/E 盘的全新、私有且与生产/备份/state 不重叠的目录，禁止使用 C 盘或系统 TEMP。先核对目标盘空间；以下是未来操作示例，不代表已在该目录执行：
 
 ~~~powershell
-.venv\Scripts\python.exe -m app.reports.scheduled_backup restore --config C:\ProgramData\QQBotBackupPlain\config.json --snapshot <成功收据中的ID> --to C:\QQBotRestore-新目录
+.venv\Scripts\python.exe -m app.reports.scheduled_backup restore --config C:\ProgramData\QQBotBackupPlain\config.json --snapshot <成功收据中的ID> --to E:\QQBotRestore-新目录
 ~~~
 
 每日备份自动流式读回全部对象，只把数据库落地到私有临时目录，检查 integrity_check、foreign_key_check、精确 Alembic revision 和 A2 决定。显式 restore 才还原完整文件；仅 RESTORE_VERIFIED.json 表示完整成功。对象读取/还原失败写 RESTORE_FAILED.json；更早的前置检查失败可能只留下空目录，均不能投入运行。
@@ -66,3 +66,13 @@
 - 旧试验位于 E:/qqbot-backups/daily-v1；仅这份旧加密试验仍需 C:/ProgramData/QQBotBackup/recovery.key。旧快照、密钥和隔离恢复材料保留，不要求为新备份保存密钥。异机恢复与整机故障演练未验收。
 
 本轮不重启 Web/Runtime、不迁移库、不改急停、动作、群授权、成员白名单或通知接收目标。实施前主服务加载审核源码 1c17ba0，实时急停 false；此前 true 是历史部署快照，本轮保持实值。Windows 整机演练、N03 删除处置及校园墙自然配对完整验收分别仍待办。
+
+## C 盘恢复副本清理与后续位置（2026-09-22）
+
+负责人确认删除已说明的三份 C 盘完整恢复副本，并要求以后完整恢复验收放到 D/E 盘。本次仅处理 `C:/ProgramData/QQBotRestoreCheck-20260922`、`C:/ProgramData/QQBotPlainRestoreCheck-20260922`、`C:/ProgramData/QQBotScheduledRestoreCheck-20260922`；以上历史命令仍是原始验收事实，但目录内容现已清理，不再是可直接使用的恢复目录。此授权不扩大为 N03 原件、其他 TEMP 工作区、旧加密备份或密钥的删除授权。
+
+执行 SHA `f2b5e62e9cfb0ae6674cb6ef53238a26551831c1`；私有证据根 `C:/Users/81596/AppData/Local/QQBotDeploy/daily-backup-20260922`。先执行 `.venv/Scripts/python.exe <私有证据>/verify_c_cleanup_candidates.py`，逐文件核对三份副本及对应 E 盘对象的摘要/大小，清单与备份一致且无未知文件；结果 `c-cleanup-candidates-verified.json`。随后执行 `pwsh -NoProfile -File <私有证据>/cleanup_verified_restore_copies.ps1`，复核精确目标、重解析点、文件清单及新写入，先复制并校验清单和恢复收据到 `preserved-restore-receipts/`，再使用 PowerShell 原生 `Remove-Item -LiteralPath ... -Recurse` 删除指定副本。
+
+清理收据 `c-restore-cleanup-result.json`：目标均已不存在；C 盘可用空间从 66,556,604,416 增至 75,214,163,968 字节，观测净增加 8,657,559,552 字节（约 8.06 GiB，包含同时段其他磁盘活动，非纯文件逻辑大小）。对应 E 盘快照清单/成功收据和两套 C 盘小型配置/旧密钥摘要未变；Web/Runtime 仍为原 PID、Running。没有生产数据、服务、定时任务或动作开关变更。
+
+后续完整验收选 D/E 盘并预估容量，保留小体积清单/收据，完成后按明确清理授权处置可重建副本；不得静默积累多份完整恢复数据。本次只修改运维规范与示例，没有更改 restore CLI 的可选路径，也没有迁移小型状态目录或每日流式校验的临时数据库。
