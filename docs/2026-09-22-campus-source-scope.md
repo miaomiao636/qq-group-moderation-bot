@@ -1,12 +1,12 @@
 # CAMPUS-SCOPE-20260922：小程序码豁免限于明确校园墙来源
 
-**最新状态：代码已推送并验证，尚未生产加载。** Windows 提权启动返回“操作已被用户取消”，部署助手未启动；生产服务仍运行此前版本，没有停服、修改配置或数据库。不得把上传等同于生效。
+**最新状态：已按负责人“现在部署上线”授权完成生产加载与验证。** 加载提交 `8f4617edf6f73d8b98683994d575b022b9f2a0e4`、提示词 `t204-v17`。首次提权取消属于历史尝试，证据保留；本次正常提权后部署成功，具体执行见下文。
 
 冻结源码 `212488fb46a9b405bba4f3908b73d20a6223f138`：本机在 `PYTHONUTF8=1`、`PYTHONIOENCODING=utf-8` 下运行 `<生产 .venv Python> -m pytest -o addopts= -q --tb=short`，2275 passed / 4 skipped；`-m pytest tests -k r132_review -o addopts= -q --tb=short`，262 passed；`-m pytest tests/test_campus_source_policy.py -o addopts= -q`，21 passed。Ruff check / format --check（357 文件）和 mypy app（112 文件）均通过，命令均为 `-m ruff check app tests alembic scripts`、`-m ruff format --check app tests alembic scripts`、`-m mypy app`。首次包装器只设 UTF-8 输出而子进程按 GBK 读取，导致 4 个迁移测试错误及解码警告；统一 Python UTF-8 模式后，未修改源码/断言的全量与主审重跑通过且无警告，失败日志保留。
 
 源码 [CI 35683388560](https://github.com/miaomiao636/qq-group-moderation-bot/actions/runs/35683388560) 三个 job 全绿；实际合并检出 SHA `ef16100526e54d87d5ea48d36a2810391b1dd2a3`。Ubuntu `106604991700`、Windows `106604991861` 的 `uv run pytest` 均 2276 passed / 3 skipped，干净运行时依赖 `106604991838` success。核验命令：`gh run view 35683388560 --json headSha,status,conclusion,url,jobs` 和 `gh run view 35683388560 --log`。日志、校验收据和待执行部署脚本留本机 `AppData/Local/QQBotDeploy/campus-20260922-01`。
 
-生产工作区仍为 `6ef867a`，加载源码仍为此前 `53683d5`。继续部署需负责人完成 Windows 系统权限确认；重新核对实际 HEAD/配置/CI，更新部署脚本的固定目标及脚本哈希，再备份、停服、切换并验证。没有向远程模型重发负责人截图，不能声称这些真实截图的模型准确率已验证；本次已验证确定性策略和合成回归。
+首次取消时生产工作区为 `6ef867a`、加载源码为 `53683d5`；现已由下文成功部署记录取代。没有向远程模型重发负责人截图，不能声称这些真实截图的模型准确率已验证；本次已验证确定性策略和合成回归。
 
 负责人发现其他品牌的小程序广告也被 D-039 放行，明确选择 A：仅确认的校园墙来源保留豁免，其他小程序恢复正常审核，同时收窄图后窗口来源。本次替代 D-039 的“有码即通过”以及 D-036 联动中的通用小程序来源资格；不改变已确认校园墙的类别例外、两分钟窗口、阈值、群授权、成员白名单、动作开关、通知或图片哈希 shadow 模式。没有数据库迁移，不修改历史判定或重新处罚历史消息。
 
@@ -29,3 +29,16 @@
 ## 发布与恢复计划
 
 实现与测试先在隔离 checkout 完成，再直接推送既有 `windows-deploy-2026-09-10` 分支并核验 CI。正式加载需保存旧源码版本/配置副本和一致性数据库备份，等待空闲观察点，正常停止 Runtime/Web，同步经过验证的源码及提示词版本，启动后核验健康、连接、新消息和实际提示词标签。停止期间消息不保证补齐。回退仅恢复同 revision 的旧源码/提示词版本，不覆盖运行后新增的业务库；无授权不实际执行回退。**本段是计划，执行证据未追加前不代表已部署。**
+
+
+## 生产部署已完成（2026-09-22）
+
+负责人明确要求“现在部署上线”。部署前工作区干净；固定加载提交 **`8f4617edf6f73d8b98683994d575b022b9f2a0e4`**，与已冻结验证的实现提交 `212488f` 仅有文档差异。该加载版本 [CI 35684323434](https://github.com/miaomiao636/qq-group-moderation-bot/actions/runs/35684323434) 三项均 success；实际合并检出 SHA `f9149dc8d93b42f663a567237c0dd9a36b34f783`，两个平台执行 `uv run pytest` 均为 2276 passed / 3 skipped。核验命令为 `gh run view 35684323434 --json headSha,status,conclusion,url,jobs` 及 `gh run view 35684323434 --log`。
+
+执行 `<生产 .venv Python> -B <私有部署目录>/deploy.py preflight`、提权 `pwsh -NoProfile -File <私有部署目录>/deploy-services.ps1`、`<生产 .venv Python> -B <私有部署目录>/deploy.py verify`。观察队列空闲后正常停止 Runtime/Web，生成一致性数据库备份并验证完整性，快进源码、仅将提示词标签由 `t204-v16` 改为 `t204-v17`，随后恢复服务。数据库 revision 保持 `e1c7d4b8a902`，无迁移、数据库覆盖或历史重放。
+
+Web/Runtime 已运行，健康 HTTP 200、OneBot ready/connected；自然新消息已处理，新增视觉记录实际包含 `t204-v17` 和 `campus_wall_source` 字段。群授权、路由、白名单、阈值、动作与通知等配置摘要均与更新前一致。首次启动后连接尚未就绪、尚无新图片时验证按预期未通过；等待实际恢复与新视觉证据后才封存成功收据，没有放宽验证条件或发送测试消息。
+
+脱敏 SHA、命令、备份哈希、服务时间线与自然流量观察见 [部署证据](evidence/campus-scope-20260922/validation-deployment.json)。私有配置与数据库备份位于本机 `AppData/Local/QQBotDeploy/campus-20260922-02`，此前取消与本机测试日志留在 `campus-20260922-01`；不提交原件、凭据或真实消息内容。提交此验收记录仅改变文档，运行服务仍加载上列发布提交。
+
+本次未把负责人截图重新提交远程模型，不宣称真实截图准确率已验收。新规则适用于后续消息，历史判定保留；视觉来源不等于微信 AppID 身份认证。整机恢复演练、N03 原件处置及通知目标仍保持此前待办边界。
