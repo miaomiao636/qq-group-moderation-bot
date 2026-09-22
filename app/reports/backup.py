@@ -18,7 +18,9 @@ from sqlalchemy.engine import make_url
 from app.core.fs_guard import is_link_like
 
 
-def backup_sqlite(database_url: str, *, timeout_seconds: float = 30) -> Path:
+def backup_sqlite(
+    database_url: str, *, timeout_seconds: float = 30, destination_dir: Path | None = None
+) -> Path:
     url = make_url(database_url)
     if (
         url.get_backend_name() != "sqlite"
@@ -30,7 +32,7 @@ def backup_sqlite(database_url: str, *, timeout_seconds: float = 30) -> Path:
     source_path = Path(url.database).resolve(strict=True)
     if not source_path.is_file():
         raise ValueError("database source is not a file")
-    backup_dir = source_path.parent / "backups"
+    backup_dir = destination_dir if destination_dir is not None else source_path.parent / "backups"
     if backup_dir.exists() and is_link_like(backup_dir):
         raise ValueError("backup directory cannot be a link or reparse point")
     backup_dir.mkdir(mode=0o700, exist_ok=True)
