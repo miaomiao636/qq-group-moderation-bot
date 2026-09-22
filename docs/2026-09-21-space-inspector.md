@@ -14,7 +14,7 @@
 4. 可以暂停、关闭后载入任务继续。点击“载入已有任务”，在窗口内按创建时间、群名和进度选择任务，再点“载入所选”；默认选择最新任务，不必寻找隐藏的 AppData 目录。“其他位置”保留手动选择入口。载入不会自动开始巡检；点“继续检查”才续扫。任务逐项保存；同一任务必须使用原成员来源账号和空间观察账号才能续扫。仅查看或导出已有任务不需要重新登录空间。需要查看文件时点“打开任务目录”；未载入任务时打开任务根目录。AppData 默认隐藏，也可按 Win+R 输入 `%LOCALAPPDATA%\QQSpaceInspector\tasks` 直接进入。
 5. 点击“导出结果”，再点“打开导出目录”。`restricted.csv` 仅包含明确空间违规限制提示；`report.csv` 包含全部快照成员；`report.json` 保存观察依据、统计和群快照信息；`说明.txt` 解释范围与未完成数量。CSV 可用 Excel 打开。
 
-不要在扫描期间手动切换专用浏览器的页面或账号。已核验的“主人设置了权限”“对方未开通空间”页面记为待确认并继续；遇到登录失效、访问失败或其他未知页面会保存进度并暂停，提示具体 QQ 号及原因，用户处理后才能继续。未完成任务也可导出，导出不会把未完成成员当作正常。
+不要在扫描期间手动切换专用浏览器的页面或账号。已核验的“主人设置了权限”“对方未开通空间”和“功能升级维护，暂不支持非好友访问”页面记为待确认并继续；遇到登录失效、访问失败或其他未知页面会保存进度并暂停，提示具体 QQ 号及原因，用户处理后才能继续。未完成任务也可导出，导出不会把未完成成员当作正常。
 
 遇到腾讯安全防护拦截时，工具显示平台拦截原因，并撤销本次浏览器确认状态、禁用继续扫描，仍允许导出。先停止重试；待本人确认正常访问已经恢复后才重新确认浏览器。程序不设置声称有效的自动冷却时间，不轮换账号/IP，不跳过拦截继续访问下一成员。
 
@@ -329,3 +329,60 @@ uv run python 'C:/Users/81596/AppData/Local/Temp/qqbot-space-inspector-20260922-
 ```
 
 全量 2215 项：2198 passed、17 skipped、0 failed/error；主审 31 文件/262 项全通过；巡检内部回归 193 项中 192 passed、1 skipped（原有 Windows symlink 权限差异）。三门禁通过，格式 348 文件、类型 111 源文件。证据在上述 TEMP 目录 full.log/xml、summary.json、gates.json 和门禁输出。最终文档 SHA 推送后仍按同 SHA 查询 GitHub 三个 job，不将本机通过称为远程已通过；远程结果见最终交付回执链接。本批完成推送后释放仓库写入，不代推其他任务提交。
+
+
+## 非好友访问维护页面
+
+本轮接手基线 `9da4c1935fd8dce6b07b3219d93637558b338f0c`，拉取后工作区干净，另一仓库任务处于 idle；仅修改独立巡检，不重启生产服务，不动急停、群授权或动作开关。
+
+负责人截图为登录后的非好友访问维护页，工具截图仍显示需要登录。只读任务核对表明是不同访问时刻：先记录 `unrecognized_page`，另一次记录 `login_required / login_redirect`，随后再次回到 `unrecognized_page`，不能把后一张已登录截图当作前一次没有跳转的证明。读取命令（执行 SHA 为接手基线，不证明旧 GUI 加载版本）：
+
+```powershell
+uv run python 'C:/Users/81596/AppData/Local/QQSpaceInspector/evidence/inspect_saved_task.py' 'C:/Users/81596/AppData/Local/QQSpaceInspector/tasks/20260921T124031Z-621478da' --output 'C:/Users/81596/AppData/Local/QQSpaceInspector/evidence/nonfriend-stop-read-20260922.json'
+```
+
+该截面总成员 993，已检查 538，明确限制 45、待确认 493、未完成 455（含受阻 1）。累计完成数不等于单批请求数，不能据此推断平台阈值。
+
+验证浏览器第一次访问也跳转登录页；负责人正常登录后，通过 `nonfriendTab.getAXState()`、`goto('https://user.qzone.qq.com/<目标>')`、`playwright.evaluate(...)` 核对完整页面：`.page > .page_main > .error_content`、一个 `.report_img`，段落精确为“温馨提示:”“很抱歉,QQ空间相关功能升级维护,暂不支持非好友访问,敬请理解！”“返回我的空间”。目标地址、完整加载、查看账号均可核对。登录后跳转附带的查询参数未放宽，验证和巡检使用精确目标 URL；不复制登录凭据。
+
+代码提交 `d734963662fd176a5009717fc9e7892e682ea3cd`：新增 `UNCONFIRMED / space_nonfriend_access_unavailable`、`qzone_nonfriend_page` 依据来源，存储保留完整提示原文。该页面不是违规提示也不证明账号正常；进入完整报告而不进入限制账号 CSV。目标、查看账号、完整加载和精确模板仍必需；未知维护/限频文字不能泛化为此页面，登录失效及 WAF 仍停止。300 人批次、30 秒间隔、已有记录和锁均不变，无数据迁移。
+
+内部回归提交 `71b3adc0cd3f90ec288b90d2665ce5160a73da8c`。先将已核对原文的测试放在接手基线，源码恢复为干净基线后执行：
+
+```powershell
+uv run pytest tests/test_space_inspector_nonfriend.py -q -o addopts= --tb=short
+```
+
+复现 3 failed、17 passed，分别为页面未知、存储拒绝和续扫停顿；修复后同命令 20 passed。新增回归原样入库，包含身份/完整性、真实登录/WAF 优先、未知页面阻断、保存重开/导出、不得记为违规、旧暂停历史保留和检查下一个成员；主审探针未改。
+
+真实 DOM 最小工具输出在本机忠实转录为 `QQSpaceInspector/evidence/nonfriend-template-dom-20260922.json`，不是原始 HTTP。冻结 SHA `71b3adc0cd3f90ec288b90d2665ce5160a73da8c` 运行生产分类器得到 `UNCONFIRMED / space_nonfriend_access_unavailable`：
+
+```powershell
+uv run python 'C:/Users/81596/AppData/Local/Temp/qqbot-space-inspector-20260922-nonfriend/verify_dom_transcription.py'
+```
+
+独立桌面环境已确认导入新契约。需关闭旧窗口、从桌面重新打开并载入原任务后继续；真实桌面越过本次暂停位置及新增导出仍待核对，不能以真实页面转录或合成测试替代。
+
+
+### 本补丁实机续扫核对
+
+负责人关闭旧窗口重开后反馈“已越过，继续检查了”。执行 SHA `71b3adc0cd3f90ec288b90d2665ce5160a73da8c` 只读核对：
+
+```powershell
+uv run python 'C:/Users/81596/AppData/Local/QQSpaceInspector/evidence/inspect_saved_task.py' 'C:/Users/81596/AppData/Local/QQSpaceInspector/tasks/20260921T124031Z-621478da' --output 'C:/Users/81596/AppData/Local/QQSpaceInspector/evidence/nonfriend-resumed-read-20260922.json'
+```
+
+`2026-09-22T10:52:33Z` 截面：已检查 540/993，明确限制 45、待确认 495、未完成 453、当前受阻 0。原暂停成员新增 `UNCONFIRMED / space_nonfriend_access_unavailable`，保留完整维护提示原文；此前 3 条暂停历史仍在，并已检查其后成员。这证明本次桌面续扫通过该页面，不代表完成整群、无未来页面变化或新版 GUI 导出已验收。
+
+
+冻结验证执行 SHA `71b3adc0cd3f90ec288b90d2665ce5160a73da8c`，期间仅更新文档，源码/测试不变：
+
+```powershell
+uv run ruff check app tests alembic scripts
+uv run ruff format --check app tests alembic scripts
+uv run mypy app
+uv run pytest --junitxml='C:/Users/81596/AppData/Local/Temp/qqbot-space-inspector-20260922-nonfriend/full.xml'
+uv run python 'C:/Users/81596/AppData/Local/Temp/qqbot-space-inspector-20260922-nonfriend/summarize.py'
+```
+
+全量 2449 项：2432 passed、17 skipped、0 failed/error；主审 31 文件/262 项全通过；巡检内部回归 213 项中 212 passed、1 skipped。三门禁通过：格式 368 文件、类型 115 源文件。跳过属于本次 Windows/uv 环境，不能直接与其他解释器或隔离 worktree 数字互换；本次 JUnit 及门禁原始输出保存在上述 TEMP 目录。新增内部回归已入库，旧主审探针未改。最终文档 HEAD 的远程 CI 另查同 SHA 的 run/job，不用旧版通过结果替代，交付回执附实际链接。
