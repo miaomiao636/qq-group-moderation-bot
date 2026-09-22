@@ -1,0 +1,75 @@
+{
+  "reproductions": [
+    {
+      "area": "auth",
+      "baseline_sha": "3792c81594fc9a9dfa49925a68ca69538a2e4a57",
+      "execution_state": "Progressive working tree: each affected source area was unchanged from the baseline for its red run; new tests and unrelated fixes were present. Not a clean-SHA full-suite run.",
+      "command": [
+        "<production .venv Python>",
+        "-m",
+        "pytest",
+        "tests/test_auth_unicode_input.py",
+        "-o",
+        "addopts=",
+        "-q",
+        "--tb=short"
+      ],
+      "summary": "10 failed in 11.50s",
+      "log_sha256": "9b3746d53447eed620aed994a1a71291efa8fee6330a440cf8ddf08ee70d37d0"
+    },
+    {
+      "area": "runtime",
+      "baseline_sha": "3792c81594fc9a9dfa49925a68ca69538a2e4a57",
+      "execution_state": "Progressive working tree: each affected source area was unchanged from the baseline for its red run; new tests and unrelated fixes were present. Not a clean-SHA full-suite run.",
+      "command": [
+        "<production .venv Python>",
+        "-m",
+        "pytest",
+        "tests/test_runtime_resource_ownership.py",
+        "-o",
+        "addopts=",
+        "-q",
+        "--tb=short"
+      ],
+      "summary": "8 failed, 4 passed in 1.06s",
+      "log_sha256": "5fafedbe85550cd2247f5ebc15aa2db2bb1050b3656431f90636123d0154b3d5"
+    },
+    {
+      "area": "data",
+      "baseline_sha": "3792c81594fc9a9dfa49925a68ca69538a2e4a57",
+      "execution_state": "Progressive working tree: each affected source area was unchanged from the baseline for its red run; new tests and unrelated fixes were present. Not a clean-SHA full-suite run.",
+      "command": [
+        "<production .venv Python>",
+        "-m",
+        "pytest",
+        "tests/test_report_read_consistency.py",
+        "tests/test_backup_preservation_boundaries.py",
+        "-o",
+        "addopts=",
+        "-q",
+        "--tb=short"
+      ],
+      "summary": "9 failed, 4 passed in 1.37s",
+      "log_sha256": "18b10b7d453d9bbbcb40f7e221f5455bead99d3b8342987f7e402be00a5ffee0"
+    },
+    {
+      "area": "media",
+      "baseline_sha": "3792c81594fc9a9dfa49925a68ca69538a2e4a57",
+      "execution_state": "Progressive working tree: each affected source area was unchanged from the baseline for its red run; new tests and unrelated fixes were present. Not a clean-SHA full-suite run.",
+      "command": [
+        "<production .venv Python>",
+        "-m",
+        "pytest",
+        "tests/test_media_evidence_retention.py",
+        "-o",
+        "addopts=",
+        "-q",
+        "--tb=short"
+      ],
+      "summary": "13 failed, 3 passed in 1.08s",
+      "log_sha256": "53a56ec05c91c1d01da3511dc57a112c82b964b8276c5f9fa749f025bb98d08a"
+    }
+  ],
+  "internal_tests_not_external_review_package": true,
+  "earlier_simplified_media_probe_correction": "An early fake bypassed AIReviewService high-confidence short-circuit. The actual service retained violation_high with zero provider calls; only evidence/category loss was reproduced. No confirmed production campus bypass."
+}
