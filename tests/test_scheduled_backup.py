@@ -335,7 +335,9 @@ def test_initialize_persists_windows_owner_and_private_config(tmp_path):
 
     repo = tmp_path / "init-repo"
     (repo / ".git").mkdir(parents=True)
-    path = initialize(repo, tmp_path / "init-backup", tmp_path / "init-state", None)
+    path = initialize(
+        repo, tmp_path / "init-backup", tmp_path / "init-state", None, mode="encrypted"
+    )
     result = read_config(path)
     assert len(result.key_file.read_bytes()) == 32
     if sys.platform == "win32":
@@ -348,6 +350,7 @@ def test_initialize_persists_windows_owner_and_private_config(tmp_path):
     "name", ["../outside", "data/media/CON.jpg", "data/media/bad. ", "unlisted/secret"]
 )
 def test_restore_rejects_authenticated_but_unsafe_manifest(config, tmp_path, name):
+    import hashlib
     import json
 
     result = run_backup(config, source_sha="a" * 40)
@@ -362,6 +365,12 @@ def test_restore_rejects_authenticated_but_unsafe_manifest(config, tmp_path, nam
     altered = tmp_path / "altered"
     seal_file(plain, altered, key, ("manifest:" + sid).encode())
     altered.replace(sealed)
+    # Preserve the outer receipt binding so this probes the independent path guard.
+    receipt_path = config.destination / "attempts" / (sid + ".json")
+    receipt = json.loads(receipt_path.read_text())
+    receipt["manifest_sha256"] = hashlib.sha256(sealed.read_bytes()).hexdigest()
+    receipt["manifest_size"] = sealed.stat().st_size
+    receipt_path.write_text(json.dumps(receipt))
     target = tmp_path / "unsafe-restore"
     with pytest.raises(BackupError, match="RESTORE_FAILED"):
         restore_snapshot(config, sid, target)
@@ -379,3 +388,151 @@ def test_cleanup_query_errors_are_not_treated_as_idle(monkeypatch):
     monkeypatch.setattr(cli.subprocess, "run", lambda *a, **kw: SimpleNamespace(returncode=1))
     with pytest.raises(BackupError, match="CLEANUP_STATE_UNKNOWN"):
         cli.cleanup_running()
+
+
+def test_plain_backup_needs_no_key_and_omits_service_credentials(config, tmp_path):
+    plain = replace(config, mode="plain", key_file=config.state_dir / "unused.key")
+    (plain.repo / ".env").write_text(
+        "ADMIN_PASSWORD=synthetic-admin-secret\n"
+        "ONEBOT_ACCESS_TOKEN=synthetic-onebot-secret\n"
+        "UNKNOWN_FUTURE_KEY=synthetic-unknown-secret\n"
+        "AI_BASE_URL=https://example.test/?key=synthetic-url-secret\n"
+        "NOTIFICATION_HEARTBEAT_URL=https://example.test/private-capability\n"
+        "WEB_PORT=8001\nMEDIA_QUOTA_BYTES=21474836480\n",
+        encoding="utf-8",
+    )
+    (plain.repo / "config/unrecognized-credentials.json").write_text("synthetic-config-secret")
+    result = run_backup(plain, source_sha="a" * 40)
+    assert result["protection"] == "plain"
+    assert result["credentials_omitted"] is True
+    assert not plain.key_file.exists()
+    target = tmp_path / "plain-restore"
+    restore_snapshot(plain, result["snapshot_id"], target)
+    assert not (target / ".env").exists()
+    template = (target / ".env.recovery-template").read_text()
+    assert "WEB_PORT" in template and "8001" in template
+    assert "MEDIA_QUOTA_BYTES" in template
+    assert not (target / "config/unrecognized-credentials.json").exists()
+    assert (target / "data/media/document.bin").read_bytes() == b"completed-generic-attachment"
+    all_bytes = b"".join(p.read_bytes() for p in plain.destination.rglob("*") if p.is_file())
+    for value in [
+        b"synthetic-admin-secret",
+        b"synthetic-onebot-secret",
+        b"synthetic-unknown-secret",
+        b"synthetic-url-secret",
+        b"private-capability",
+        b"synthetic-config-secret",
+    ]:
+        assert value not in all_bytes
+    assert b"completed-generic-attachment" in all_bytes
+
+
+def test_default_initialize_is_keyless_plain_backup(tmp_path):
+    from app.reports.scheduled_backup import initialize, read_config
+
+    repo = tmp_path / "plain-init-repo"
+    (repo / ".git").mkdir(parents=True)
+    config = read_config(
+        initialize(repo, tmp_path / "plain-init-data", tmp_path / "plain-init-state", None)
+    )
+    assert config.mode == "plain"
+    assert not config.key_file.exists()
+
+
+def test_plain_store_rejects_old_encrypted_identity(config):
+    run_backup(config, source_sha="a" * 40)
+    previous = (config.destination / "last_success.json").read_bytes()
+    with pytest.raises(BackupError, match="BACKUP_KEY_MISMATCH"):
+        run_backup(replace(config, mode="plain"), source_sha="a" * 40)
+    assert (config.destination / "last_success.json").read_bytes() == previous
+
+
+def test_plain_corruption_prevents_restore_success(config, tmp_path):
+    plain = replace(config, mode="plain")
+    result = run_backup(plain, source_sha="a" * 40)
+    obj = next((plain.destination / "objects").glob("*.blob"))
+    obj.write_bytes(obj.read_bytes() + b"corrupt")
+    target = tmp_path / "corrupt-plain-restore"
+    with pytest.raises(BackupError, match="RESTORE_FAILED"):
+        restore_snapshot(plain, result["snapshot_id"], target)
+    assert not (target / "RESTORE_VERIFIED.json").exists()
+
+
+@pytest.mark.parametrize(
+    ("filename", "error"),
+    [
+        (".env", "ARCHIVE_CONTAINS_CREDENTIAL_FILE"),
+        ("Config/credentials.json", "ARCHIVE_UNREVIEWED_CONFIG"),
+    ],
+)
+def test_tracked_credentials_never_enter_plain_archive(config, filename, error):
+    import subprocess
+
+    plain = replace(config, mode="plain")
+
+    def git(*args):
+        return subprocess.run(
+            [
+                "git",
+                "-c",
+                "user.name=Backup Test",
+                "-c",
+                "user.email=backup@example.invalid",
+                *args,
+            ],
+            cwd=plain.repo,
+            capture_output=True,
+            text=True,
+            check=True,
+        ).stdout.strip()
+
+    git("init", "-q")
+    credential = plain.repo / filename
+    credential.parent.mkdir(parents=True, exist_ok=True)
+    credential.write_text("synthetic-credential")
+    git("add", "--", filename)
+    git("commit", "-qm", "synthetic accidentally tracked credential fixture")
+    sha = git("rev-parse", "HEAD")
+    with pytest.raises(BackupError, match=error):
+        run_backup(plain, source_sha=sha)
+    assert not (plain.destination / "last_success.json").exists()
+    assert not list((plain.destination / "objects").iterdir())
+
+
+def test_plain_valid_json_manifest_loss_detected(config, tmp_path):
+    import json
+
+    plain = replace(config, mode="plain")
+    result = run_backup(plain, source_sha="a" * 40)
+    manifest = plain.destination / "snapshots" / (result["snapshot_id"] + ".json")
+    data = json.loads(manifest.read_text())
+    data["files"] = [entry for entry in data["files"] if entry["path"] != "data/media/photo.jpg"]
+    manifest.write_text(json.dumps(data))
+    target = tmp_path / "lost-entry-restore"
+    with pytest.raises(BackupError, match="MANIFEST_RECEIPT_MISMATCH"):
+        restore_snapshot(plain, result["snapshot_id"], target)
+    assert not (target / "RESTORE_VERIFIED.json").exists()
+
+
+def test_plain_manifest_write_damage_does_not_publish_success(config, monkeypatch):
+    import json
+
+    import app.reports.backup_store as store
+
+    plain = replace(config, mode="plain")
+    original = store._write_object
+
+    def damage_manifest(source, target, key, context, **kwargs):
+        result = original(source, target, key, context, **kwargs)
+        if context.startswith(b"manifest:"):
+            data = json.loads(target.read_text())
+            data["files"] = [
+                entry for entry in data["files"] if entry["path"] != "data/media/photo.jpg"
+            ]
+            target.write_text(json.dumps(data))
+        return result
+
+    monkeypatch.setattr(store, "_write_object", damage_manifest)
+    with pytest.raises(BackupError, match="MANIFEST_WRITE_MISMATCH"):
+        run_backup(plain, source_sha="a" * 40)
+    assert not (plain.destination / "last_success.json").exists()

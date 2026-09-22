@@ -1,4 +1,4 @@
-"""Immutable encrypted snapshots, independent of live moderation services.
+"""Immutable snapshots (keyless public config, or legacy encrypted recovery).
 
 SQLite uses an online snapshot; files have a bounded capture interval, not a
 cross-filesystem transaction. No completed backup or source evidence is deleted.
@@ -18,7 +18,8 @@ import sys
 import tempfile
 import time
 import uuid
-from collections.abc import Iterator
+import zipfile
+from collections.abc import Callable, Iterator
 from contextlib import closing, contextmanager
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -26,12 +27,32 @@ from pathlib import Path, PurePosixPath
 from typing import Any
 
 from app.reports.backup import backup_sqlite
-from app.reports.backup_crypto import seal_file, unseal_file
+from app.reports.backup_crypto import copy_plain, seal_file, unseal_file
 from app.reports.backup_paths import checked, private_directory, regular, verify_private
 
 
 class BackupError(RuntimeError):
     """Only fixed non-sensitive error codes cross the CLI boundary."""
+
+
+def _write_object(
+    source: Path, target: Path, key: bytes, context: bytes, *, check: Callable[[], None]
+) -> tuple[str, int]:
+    return (
+        seal_file(source, target, key, context, check=check)
+        if key
+        else copy_plain(source, target, check=check)
+    )
+
+
+def _read_object(
+    source: Path, target: Path | None, key: bytes, context: bytes, *, check: Callable[[], None]
+) -> tuple[str, int]:
+    return (
+        unseal_file(source, target, key, context, check=check)
+        if key
+        else copy_plain(source, target, check=check)
+    )
 
 
 @dataclass(frozen=True)
@@ -45,6 +66,7 @@ class BackupConfig:
     min_free_bytes: int = 5 * 1024**3
     timeout_seconds: float = 1800
     owner_sid: str | None = None
+    mode: str = "encrypted"  # Legacy configs retain readability; new init defaults to plain.
 
 
 def _now() -> str:
@@ -73,6 +95,8 @@ def _identity(config: BackupConfig, key: bytes, *, create: bool = False) -> None
         "format": 1,
         "key_check": hmac.new(key, b"QQBotBackup key identity v1", hashlib.sha256).hexdigest(),
     }
+    if config.mode == "plain":
+        expected = {"format": 2, "protection": "plain", "service_credentials": "omitted"}
     if path.exists():
         if json.loads(regular(path).read_text(encoding="utf-8")) != expected:
             raise BackupError("BACKUP_KEY_MISMATCH")
@@ -94,6 +118,10 @@ def _prepare(config: BackupConfig) -> bytes:
         raise BackupError("INVALID_LIMITS")
     private_directory(config.state_dir, config.owner_sid)
     private_directory(config.destination, config.owner_sid)
+    if config.mode == "plain":
+        return b""
+    if config.mode != "encrypted":
+        raise BackupError("UNKNOWN_BACKUP_MODE")
     if regular(config.key_file).parent != config.state_dir.absolute():
         raise BackupError("KEY_OUTSIDE_PRIVATE_STATE")
     verify_private(config.key_file, config.owner_sid)
@@ -136,9 +164,17 @@ def _walk(root: Path) -> Iterator[Path]:
             yield regular(path)
 
 
-def _files(repo: Path) -> list[tuple[str, Path]]:
-    result = [(".env", regular(repo / ".env"))]
-    for name in ("config", "data/media", "data/sample_pool"):
+def _files(repo: Path, *, public_config: bool = False) -> list[tuple[str, Path]]:
+    result = [] if public_config else [(".env", regular(repo / ".env"))]
+    if public_config:
+        rule = regular(repo / "config/ai_prompt_rules.txt")
+        result.append(("config/ai_prompt_rules.txt", rule))
+    folders = (
+        ("data/media", "data/sample_pool")
+        if public_config
+        else ("config", "data/media", "data/sample_pool")
+    )
+    for name in folders:
         root = checked(repo / name)
         for path in _walk(root):
             rel = path.relative_to(repo).as_posix()
@@ -235,12 +271,14 @@ def _restore(
 ) -> dict[str, Any]:
     if not re.fullmatch(r"[0-9]{8}T[0-9]{6}Z-[a-f0-9]{32}", snapshot_id):
         raise BackupError("INVALID_SNAPSHOT_ID")
-    manifest_path = regular(config.destination / "snapshots" / (snapshot_id + ".enc"))
+    manifest_path = regular(
+        config.destination / "snapshots" / (snapshot_id + (".enc" if key else ".json"))
+    )
     if manifest_path.stat().st_size > 128 * 1024**2:
         raise BackupError("MANIFEST_TOO_LARGE")
     _free(target, manifest_path.stat().st_size, config.min_free_bytes)
     manifest_temp = target / ".backup-manifest.json"
-    unseal_file(
+    _read_object(
         manifest_path,
         manifest_temp,
         key,
@@ -248,7 +286,7 @@ def _restore(
         check=lambda: _deadline(deadline),
     )
     manifest = json.loads(manifest_temp.read_text(encoding="utf-8"))
-    if manifest.get("format") != 1 or manifest.get("snapshot_id") != snapshot_id:
+    if manifest.get("format") != (1 if key else 2) or manifest.get("snapshot_id") != snapshot_id:
         raise BackupError("INVALID_MANIFEST")
     sizes = [
         e["size"] for e in manifest["files"] if materialize or e["path"] == "data/moderation.db"
@@ -283,10 +321,16 @@ def _restore(
                 for part in relative.parts
             )
             or not (
-                name in {".env", "data/moderation.db", "recovery-source.zip"}
+                name
+                in {
+                    ".env" if key else ".env.recovery-template",
+                    "data/moderation.db",
+                    "recovery-source.zip",
+                }
                 or name.startswith(("config/", "data/media/", "data/sample_pool/"))
             )
             or name.casefold() in {".backup-manifest.json", "restore_verified.json"}
+            or (not key and name.startswith("config/") and name != "config/ai_prompt_rules.txt")
             or not re.fullmatch(r"[a-f0-9]{64}", object_id)
         ):
             raise BackupError("INVALID_MANIFEST_PATH")
@@ -296,8 +340,8 @@ def _restore(
         if write_file:
             output.parent.mkdir(parents=True, exist_ok=True)
             _free(target, entry["size"], config.min_free_bytes)
-        actual = unseal_file(
-            regular(config.destination / "objects" / (object_id + ".enc")),
+        actual = _read_object(
+            regular(config.destination / "objects" / (object_id + (".enc" if key else ".blob"))),
             output if write_file else None,
             key,
             ("object:" + object_id).encode(),
@@ -342,6 +386,13 @@ def restore_snapshot(config: BackupConfig, snapshot_id: str, restore_to: Path) -
         )
         if receipt.get("status") != "success" or receipt.get("snapshot_id") != snapshot_id:
             raise BackupError("SNAPSHOT_NOT_VERIFIED")
+        if not key or "manifest_sha256" in receipt:
+            manifest_path = regular(
+                config.destination / "snapshots" / (snapshot_id + (".enc" if key else ".json"))
+            )
+            actual = _hash(manifest_path, time.monotonic() + config.timeout_seconds)
+            if actual != (receipt.get("manifest_sha256"), receipt.get("manifest_size")):
+                raise BackupError("MANIFEST_RECEIPT_MISMATCH")
         try:
             return _restore(
                 config, snapshot_id, target, key, time.monotonic() + config.timeout_seconds
@@ -385,7 +436,17 @@ def run_backup(config: BackupConfig, *, source_sha: str) -> dict[str, Any]:
                     destination_dir=staging,
                 )
                 database = _database(snapshot, config.expected_revision, deadline)
-                source_files = _files(config.repo.absolute())
+                source_files = _files(config.repo.absolute(), public_config=not key)
+                if not key:
+                    from app.reports.backup_public_config import write_recovery_template
+
+                    env_source = regular(config.repo / ".env")
+                    env_before = _fingerprint(env_source)
+                    template = staging / "public-env"
+                    write_recovery_template(env_source, template)
+                    if env_before != _fingerprint(env_source):
+                        raise BackupError("SOURCE_CHANGED")
+                    source_files.append((".env.recovery-template", template))
                 coverage = _media_coverage(snapshot, source_files)
                 source_files.insert(0, ("data/moderation.db", snapshot))
                 source_archived = (config.repo / ".git").exists()
@@ -407,6 +468,20 @@ def run_backup(config: BackupConfig, *, source_sha: str) -> dict[str, Any]:
                             check=True,
                             timeout=60,
                         )
+                    if not key:
+                        with zipfile.ZipFile(archive) as bundle:
+                            for name in bundle.namelist():
+                                leaf = PurePosixPath(name).name.casefold()
+                                if leaf == ".env" or (
+                                    leaf.startswith(".env.") and leaf != ".env.example"
+                                ):
+                                    raise BackupError("ARCHIVE_CONTAINS_CREDENTIAL_FILE")
+                                if (
+                                    name.casefold().startswith("config/")
+                                    and not name.endswith("/")
+                                    and name.casefold() != "config/ai_prompt_rules.txt"
+                                ):
+                                    raise BackupError("ARCHIVE_UNREVIEWED_CONFIG")
                     source_files.append(("recovery-source.zip", archive))
                 entries = []
                 reused = 0
@@ -414,14 +489,19 @@ def run_backup(config: BackupConfig, *, source_sha: str) -> dict[str, Any]:
                     _deadline(deadline)
                     before = _fingerprint(path)
                     digest, size = _hash(path, deadline)
-                    object_id = hmac.new(
-                        key, b"object-id:" + bytes.fromhex(digest), hashlib.sha256
-                    ).hexdigest()
+                    object_id = (
+                        digest
+                        if not key
+                        else hmac.new(
+                            key, b"object-id:" + bytes.fromhex(digest), hashlib.sha256
+                        ).hexdigest()
+                    )
                     final = checked(
-                        config.destination / "objects" / (object_id + ".enc"), exists=False
+                        config.destination / "objects" / (object_id + (".enc" if key else ".blob")),
+                        exists=False,
                     )
                     if final.exists():
-                        actual = unseal_file(
+                        actual = _read_object(
                             regular(final),
                             None,
                             key,
@@ -432,7 +512,7 @@ def run_backup(config: BackupConfig, *, source_sha: str) -> dict[str, Any]:
                     else:
                         _capacity(config, used, size + 32)
                         partial = final.with_name(final.name + "." + uuid.uuid4().hex + ".partial")
-                        actual = seal_file(
+                        actual = _write_object(
                             path,
                             partial,
                             key,
@@ -441,7 +521,7 @@ def run_backup(config: BackupConfig, *, source_sha: str) -> dict[str, Any]:
                         )
                         if (
                             actual != (digest, size)
-                            or unseal_file(
+                            or _read_object(
                                 partial,
                                 None,
                                 key,
@@ -465,7 +545,9 @@ def run_backup(config: BackupConfig, *, source_sha: str) -> dict[str, Any]:
                         }
                     )
                 manifest = {
-                    "format": 1,
+                    "format": 1 if key else 2,
+                    "protection": config.mode,
+                    "credentials_omitted": not bool(key),
                     "snapshot_id": snapshot_id,
                     "source_sha": source_sha,
                     "source_archived": source_archived,
@@ -477,8 +559,8 @@ def run_backup(config: BackupConfig, *, source_sha: str) -> dict[str, Any]:
                     "media_coverage": coverage,
                     "scope": [
                         "online SQLite",
-                        ".env",
-                        "config",
+                        ".env" if key else ".env.recovery-template (public allowlist)",
+                        "config" if key else "config/ai_prompt_rules.txt",
                         "data/media",
                         "data/sample_pool",
                         "source archive",
@@ -495,25 +577,39 @@ def run_backup(config: BackupConfig, *, source_sha: str) -> dict[str, Any]:
                 manifest_plain = staging / "manifest.json"
                 _json(manifest_plain, manifest)
                 _capacity(config, used, manifest_plain.stat().st_size + 32)
-                sealed = config.destination / "snapshots" / (snapshot_id + ".enc")
+                sealed = (
+                    config.destination / "snapshots" / (snapshot_id + (".enc" if key else ".json"))
+                )
                 partial_manifest = sealed.with_suffix(".partial")
-                seal_file(
+                manifest_digest = _hash(manifest_plain, deadline)
+                written_manifest = _write_object(
                     manifest_plain,
                     partial_manifest,
                     key,
                     ("manifest:" + snapshot_id).encode(),
                     check=lambda: _deadline(deadline),
                 )
+                if written_manifest != manifest_digest:
+                    raise BackupError("MANIFEST_WRITE_MISMATCH")
                 partial_manifest.rename(sealed)
+                manifest_bytes = _hash(sealed, deadline)
+                if not key and manifest_bytes != manifest_digest:
+                    raise BackupError("MANIFEST_WRITE_MISMATCH")
                 restore_to = staging / "verify"
                 restore_to.mkdir(mode=0o700)
                 _restore(config, snapshot_id, restore_to, key, deadline, materialize=False)
+                if _hash(sealed, deadline) != manifest_bytes:
+                    raise BackupError("MANIFEST_CHANGED")
                 receipt.update(
                     status="success",
                     completed_at=_now(),
                     file_count=len(entries),
                     reused_objects=reused,
                     verified=True,
+                    protection=config.mode,
+                    credentials_omitted=not bool(key),
+                    manifest_sha256=manifest_bytes[0],
+                    manifest_size=manifest_bytes[1],
                     missing_media_count=len(coverage["missing_at_capture"]),
                     invalid_media_references=coverage["invalid_references"],
                     invalid_payloads=coverage["invalid_payloads"],

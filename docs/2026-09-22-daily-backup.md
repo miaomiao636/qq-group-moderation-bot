@@ -1,53 +1,56 @@
-# DAILY-BACKUP-20260922：每日完整运行数据备份
+# DAILY-BACKUP-20260922：每日运行数据备份（不加密、排除服务凭据）
 
-负责人已批准继续收尾，并选择“完整运行数据备份”。本轮仅增加独立备份程序、Windows 调度与操作说明；不重启 Web/Runtime，不迁移生产库，不更改群授权、急停、动作或通知渠道，不删除原件和旧备份。
+负责人已批准定时备份，并在完整运行数据方案基础上明确选择“不加密，排除密码和 Token；换机时重新填写”。以下是当前方案，替代本轮先前的加密计划。旧加密试验快照和密钥原位保留，不删除。
 
 ## 范围与边界
 
-每份快照包含在线一致的 SQLite 数据库、.env、config/、data/media/、data/sample_pool/，以及执行 SHA 对应的源码 ZIP（含依赖锁和安装脚本）。数据库包含审核决定、群设置、案件、动作幂等、inbox 等完整表。JSON 审核决定导出可从 A2 数据库重建，不替代数据库权威。
+每份新快照包含在线一致的 SQLite 数据库、data/media/、data/sample_pool/、config/ai_prompt_rules.txt、公开配置恢复模板 .env.recovery-template，以及执行 SHA 对应的源码 ZIP（含依赖锁和安装脚本）。数据库保留审核决定、群设置、案件、动作幂等、inbox 等完整业务表；A2 数据库仍是审核决定权威。
 
-不打包旧备份、服务日志、历史演练输出、下载临时文件和临时视频帧，也不打包外部 QQ/NapCat 安装、设备或登录会话。换机必须按原安装说明重新配置外部桥接并人工登录；本功能不是整机镜像。旧历史材料原位保留，未删除。
+原始 .env 整份排除；模板只收录显式白名单中的非凭据配置，密码、API Key、OneBot Token、邮件授权码和心跳能力 URL 不进入模板。未知配置默认排除；含用户名、密码、查询或片段的服务 URL 也排除。源码 ZIP 拒绝已跟踪的真实 .env 和未审核 config 文件。换机必须从 .env.example 补填服务凭据并核对开关，模板不能直接当作完整运行配置。
 
-数据库快照先完成，再枚举媒体。快照里的媒体引用与采集文件对账：缺失原件、无法解释的引用分别计数，详情仅在加密 manifest。成功备份表示采集范围内的数据已加密并读回验证，不表示历史缺失原件已恢复。数据库和媒体不是跨文件系统的同一时刻原子快照；manifest 保存采集起止时间。
+不打包旧备份、服务日志、历史演练输出、下载临时文件（.part/.partial/.lock）、临时视频帧 _frames 或外部 QQ/NapCat 登录会话。已提交的通用附件 .bin 正常纳入。业务消息和原始图片按证据保留，不承诺清除用户内容中的所有敏感字符串。外部桥接需重新配置并人工登录；这不是整机镜像。
+
+数据库快照先完成，再枚举媒体。manifest 记录采集时间与媒体引用对账，历史缺失原件、无效引用单独计数。成功表示采集范围已读回验证，不表示历史缺失已恢复，也不是数据库与媒体跨文件系统的原子快照。
 
 ## 保存与调度
 
-计划使用 E:/qqbot-backups/daily-v1，独立于现有 data/backups 的自动清理。Windows 任务 QQBotDailyBackup 每日当地时间 04:30，以 SYSTEM 后台运行、错过时间补跑、重复实例忽略，硬执行上限 40 分钟。Python 流式读写有 30 分钟期限检查；部分数据库/系统调用还各有独立限时。任务运行前若 QQBotAutoCleanup 正在运行或无法查询其状态，则失败留证；不会为了备份终止清理或机器人服务。
+新目录 E:/qqbot-backups/daily-plain-v1，状态配置 C:/ProgramData/QQBotBackupPlain/config.json；新模式不生成或读取恢复密钥。Windows 任务 QQBotDailyBackup 计划每日当地时间 04:30，以 SYSTEM 运行，错过时间补跑、重复实例忽略，硬上限 40 分钟；程序流式操作期限 30 分钟。若 QQBotAutoCleanup 正在运行或无法确认其状态，本次失败留证，不终止清理或机器人服务。
 
-默认备份存储上限 100 GiB、各输出盘保留空闲 5 GiB，可在私有 config.json 中调整 max_bytes、min_free_bytes。不是预分配磁盘。达到上限或空间不足后，本次停止，最近成功备份保持；本轮不自动清除旧快照。日后保留期清理须遵守 N03 的准确清单和删除授权，不能把备份能力写成保留期已收口。
+默认备份总上限 100 GiB、输出盘保留空闲 5 GiB，可调整私有配置 max_bytes、min_free_bytes；不是预分配空间。达到限制后停止本次，保留最后成功备份；不自动删除旧快照。保留期清理仍须 N03 准确清单和负责人授权。
 
-每个对象使用 AES-256-GCM 加密，相同内容在同一密钥下复用既有对象；已有对象也要认证校验。对象名为带密钥的摘要，manifest 同样加密。参考 [cryptography 的 GCM 文档](https://cryptography.io/en/stable/hazmat/primitives/symmetric-encryption/)。失败不会替换 last_success.json；仅凭 snapshots 下存在文件不能判定成功，还必须有同 ID 的成功 attempts 收据。
-
-目录与密钥仅允许安装负责人、SYSTEM、Administrators。安装时固定负责人 SID，避免 SYSTEM 后台创建内容后负责人无法恢复。恢复密钥与 E 盘密文分开放在 C:/ProgramData/QQBotBackup/recovery.key，严禁发到聊天、Git 或日志。
-
-**负责人还需将 recovery.key 单独复制到安全的离线介质或受控保管处**。同机 C 盘密钥并非异机保管；若密钥和系统盘同时损坏，E 盘密文无法恢复。不得把本轮能力称为整机灾难恢复验收通过。
+对象以内容 SHA256 去重，文件为明文 .blob，清单为 JSON；通过 restore 命令还原原始目录和文件名，不能只复制清单当作完整备份。对象、manifest 与成功收据进行摘要和大小核验，能发现损坏，不能声称抵御同时改写清单和收据的攻击者。目录仍限定负责人、SYSTEM、Administrators。仅有 snapshots 文件不代表成功，必须有对应成功 attempts 收据。
 
 ## 初始化、状态与恢复
 
-仅在全新私有目录初始化一次。以下命令在已安装且已验证的源码仓库根运行；实际执行记录与源码 SHA 必须另行留证。
+仅在全新目录初始化一次；从已安装且验证的仓库根运行。实际执行必须记录 SHA 和命令。
 
 ~~~powershell
-.venv\Scripts\python.exe -m app.reports.scheduled_backup init --repo . --destination E:\qqbot-backups\daily-v1 --state C:\ProgramData\QQBotBackup
-# 管理员 PowerShell：只创建新的 QQBotDailyBackup；已有同名任务将拒绝覆盖
-.\scripts\register_backup_task.ps1 -ProjectRoot (Get-Location).Path -ConfigPath C:\ProgramData\QQBotBackup\config.json
-.venv\Scripts\python.exe -m app.reports.scheduled_backup status --config C:\ProgramData\QQBotBackup\config.json
+.venv\Scripts\python.exe -m app.reports.scheduled_backup init --repo . --destination E:\qqbot-backups\daily-plain-v1 --state C:\ProgramData\QQBotBackupPlain --mode plain
+# 管理员 PowerShell；仅创建新任务，已有同名任务拒绝覆盖
+.\scripts\register_backup_task.ps1 -ProjectRoot (Get-Location).Path -ConfigPath C:\ProgramData\QQBotBackupPlain\config.json
+.venv\Scripts\python.exe -m app.reports.scheduled_backup status --config C:\ProgramData\QQBotBackupPlain\config.json
 ~~~
 
-手工触发同一计划任务可用 Start-ScheduledTask -TaskName QQBotDailyBackup；需核对 Get-ScheduledTaskInfo 的 LastTaskResult、state/last_attempt.json 与 E 盘 last_success.json，不能用“注册成功”替代实际运行证据。本轮不启用 QQ/邮件通知；失败应通过任务与状态收据检查。
+手工验收触发 Start-ScheduledTask -TaskName QQBotDailyBackup，核对 Get-ScheduledTaskInfo 的 LastTaskResult、state/last_attempt.json 与 E 盘 last_success.json。不能用注册成功替代实际运行。本轮按负责人要求保留通知渠道但不配置或发送 QQ/邮件通知。
 
-恢复只允许全新、私有、与生产/备份/state 不重叠的目录：
+恢复必须使用全新、私有且与生产/备份/state 不重叠的目录：
 
 ~~~powershell
-.venv\Scripts\python.exe -m app.reports.scheduled_backup restore --config C:\ProgramData\QQBotBackup\config.json --snapshot <成功收据中的ID> --to D:\QQBotRestore-新目录
+.venv\Scripts\python.exe -m app.reports.scheduled_backup restore --config C:\ProgramData\QQBotBackupPlain\config.json --snapshot <成功收据中的ID> --to C:\QQBotRestore-新目录
 ~~~
 
-每次日常备份自动流式解密并核对全部对象，只把数据库落地到私有临时目录，检查 integrity_check、foreign_key_check、精确 Alembic revision 和 A2 决定。显式 restore 才会落地完整文件，先检查目标空间，成功写 RESTORE_VERIFIED.json；失败材料会标 RESTORE_FAILED.json，不能投入运行。
+每日备份自动流式读回全部对象，只把数据库落地到私有临时目录，检查 integrity_check、foreign_key_check、精确 Alembic revision 和 A2 决定。显式 restore 才还原完整文件；仅 RESTORE_VERIFIED.json 表示完整成功。对象读取/还原失败写 RESTORE_FAILED.json；更早的前置检查失败可能只留下空目录，均不能投入运行。
 
-恢复不运行 ZIP、Web、Runtime 或迁移，不覆盖生产库，保留 UNKNOWN 动作和 PROCESSING inbox 原值。实际切换恢复库必须另行安排维护窗口，核对新增案件/消息、未知动作人工复核、幂等和 QQ 登录，不能直接覆盖后重启或重放。换机时需恢复密钥、重新设置私有目录与负责人 SID，并更新 config.json 中路径。后续数据库迁移时同步审核 expected_revision，否则备份按设计拒绝不匹配版本。
+恢复不运行 ZIP、服务或迁移，不覆盖生产库，保留 UNKNOWN 动作和 PROCESSING inbox 原值。正式切换恢复库需要维护窗口、未知动作人工核对和消息幂等检查。换机需设置路径、负责人 SID、服务凭据和 QQ 登录；新备份不需要恢复密钥。后续迁移必须同步审核 expected_revision，否则备份按设计拒绝不匹配版本。
 
-## 本轮状态与验收证据
+## 验证记录与当前状态
 
-实现及合成回归进行中；尚未注册生产计划任务，未声称已生成真实完整加密备份。本段将以冻结源码 SHA、命令、实际结果和部署收据更新。真实整机故障/断电恢复、异机密钥保管、N03 删除处置、校园墙自然配对完整验收仍分别待办。
+新 plain 模式的测试、CI、真实 SYSTEM 调度及完整隔离恢复正在验收；尚不声称定时备份已启用。冻结源码和实际收据验收后更新本节。
 
-实施前只读观察：Web/Runtime 仍为原进程，已加载审核源码 1c17ba0；急停当前为 false，与此前部署时 true 的历史快照不同。本轮保持实值，没有执行解除或启用急停。状态应以每次实时核验为准。
+先前加密试验（历史，不作为新 plain 模式验收）：
+- 执行源码 aaa4159514bc087f1f98ca956a2d07e0aef87f7b；uv run --locked pytest --junitxml=<私有证据>/full.xml：2510 passed、6 skipped；ruff check、format --check app tests alembic 和 mypy app 通过。私有记录 full-command.json、gates.json。
+- [源码 CI 35733313210](https://github.com/miaomiao636/qq-group-moderation-bot/actions/runs/35733313210)：PR head aaa4159，实际合并 checkout 6636cf0ee5e33591a9e6afeefc9056b17439a034；uv run pytest，Ubuntu 2510 passed/6 skipped、Windows 2512 passed/4 skipped，runtime-deps 通过。
+- 同源码私有 candidate_backup.py 调用 run_backup（只读采集生产9709e1d），快照 20260922T132659Z-4021a650635d42678f1a81e1e7b1ea1d，11236 文件，缺失引用 0；使用 restore --config C:/ProgramData/QQBotBackup/config.json --snapshot <上述ID> --to C:/ProgramData/QQBotRestoreCheck-20260922 完整还原验证成功。
+- 旧试验位于 E:/qqbot-backups/daily-v1；仅这份旧加密试验仍需 C:/ProgramData/QQBotBackup/recovery.key。旧快照、密钥和隔离恢复材料保留，不要求为新备份保存密钥。异机恢复与整机故障演练未验收。
 
+本轮不重启 Web/Runtime、不迁移库、不改急停、动作、群授权、成员白名单或通知接收目标。实施前主服务加载审核源码 1c17ba0，实时急停 false；此前 true 是历史部署快照，本轮保持实值。Windows 整机演练、N03 删除处置及校园墙自然配对完整验收分别仍待办。

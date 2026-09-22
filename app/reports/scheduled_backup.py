@@ -34,7 +34,11 @@ def read_config(path: Path) -> BackupConfig:
     return config
 
 
-def initialize(repo: Path, destination: Path, state: Path, owner_sid: str | None) -> Path:
+def initialize(
+    repo: Path, destination: Path, state: Path, owner_sid: str | None, *, mode: str = "plain"
+) -> Path:
+    if mode not in {"plain", "encrypted"}:
+        raise BackupError("UNKNOWN_BACKUP_MODE")
     if sys.platform == "win32" and owner_sid is None:
         result = subprocess.run(
             [
@@ -64,18 +68,20 @@ def initialize(repo: Path, destination: Path, state: Path, owner_sid: str | None
     private_directory(state, owner_sid)
     private_directory(destination, owner_sid)
     key_file = state / "recovery.key"
-    with key_file.open("xb") as stream:
-        stream.write(os.urandom(32))
-        stream.flush()
-        os.fsync(stream.fileno())
-    if os.name != "nt":
-        key_file.chmod(0o600)
+    if mode == "encrypted":
+        with key_file.open("xb") as stream:
+            stream.write(os.urandom(32))
+            stream.flush()
+            os.fsync(stream.fileno())
+        if os.name != "nt":
+            key_file.chmod(0o600)
     config = BackupConfig(
         repo.absolute(),
         destination.absolute(),
         state.absolute(),
         key_file.absolute(),
         owner_sid=owner_sid,
+        mode=mode,
     )
     payload = {
         key: str(value) if isinstance(value, Path) else value
@@ -119,6 +125,10 @@ def validate_source(config: BackupConfig) -> str:
             prompt = config.repo / prompt
         if not regular(prompt).is_relative_to(config.repo / "config"):
             raise BackupError("PROMPT_OUTSIDE_BACKUP_SCOPE")
+        if config.mode == "plain" and regular(prompt) != regular(
+            config.repo / "config/ai_prompt_rules.txt"
+        ):
+            raise BackupError("PROMPT_OUTSIDE_PUBLIC_CONFIG_SCOPE")
     return _git(config.repo, "rev-parse", "HEAD")
 
 
@@ -154,6 +164,7 @@ def main(argv: list[str] | None = None) -> int:
     for name in ("repo", "destination", "state"):
         init.add_argument("--" + name, type=Path, required=True)
     init.add_argument("--owner-sid")
+    init.add_argument("--mode", choices=("plain", "encrypted"), default="plain")
     for name in ("run", "status", "restore"):
         command = sub.add_parser(name)
         command.add_argument("--config", type=Path, required=True)
@@ -165,7 +176,7 @@ def main(argv: list[str] | None = None) -> int:
     result: dict[str, Any]
     try:
         if args.command == "init":
-            initialize(args.repo, args.destination, args.state, args.owner_sid)
+            initialize(args.repo, args.destination, args.state, args.owner_sid, mode=args.mode)
             result = {"status": "initialized"}
         else:
             config = read_config(args.config)

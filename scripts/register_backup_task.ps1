@@ -19,7 +19,7 @@ $action = New-ScheduledTaskAction -Execute $python -Argument ('-m app.reports.sc
 $trigger = New-ScheduledTaskTrigger -Daily -At $At
 $principal = New-ScheduledTaskPrincipal -UserId 'SYSTEM' -LogonType ServiceAccount -RunLevel Highest
 $settings = New-ScheduledTaskSettingsSet -MultipleInstances IgnoreNew -StartWhenAvailable -ExecutionTimeLimit (New-TimeSpan -Minutes 40) -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries
-Register-ScheduledTask -TaskName 'QQBotDailyBackup' -Action $action -Trigger $trigger -Principal $principal -Settings $settings -Description 'Encrypted daily QQBot snapshot and isolated verification; no deletion' | Out-Null
+Register-ScheduledTask -TaskName 'QQBotDailyBackup' -Action $action -Trigger $trigger -Principal $principal -Settings $settings -Description 'Daily QQBot snapshot without service credentials; isolated verification; no deletion' | Out-Null
 $task = Get-ScheduledTask -TaskName 'QQBotDailyBackup'
 if ($task.Principal.UserId -notin @('SYSTEM','S-1-5-18') -or $task.Settings.MultipleInstances -ne 'IgnoreNew' -or -not $task.Settings.StartWhenAvailable -or $task.Actions.Execute -ne $python -or $task.Actions.WorkingDirectory -ne $project) {
     throw 'REGISTERED_TASK_MISMATCH'

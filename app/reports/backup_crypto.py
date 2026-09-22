@@ -18,6 +18,27 @@ MAGIC = b"QQB1"
 CHUNK = 1024 * 1024
 
 
+def copy_plain(
+    source: Path, target: Path | None, *, check: Callable[[], None] = lambda: None
+) -> tuple[str, int]:
+    """Unencrypted immutable copy (or streaming hash); no key is involved."""
+    digest, size = hashlib.sha256(), 0
+    with (
+        source.open("rb") as src,
+        target.open("xb") if target is not None else nullcontext() as dst,
+    ):
+        while data := src.read(CHUNK):
+            check()
+            digest.update(data)
+            size += len(data)
+            if dst is not None:
+                dst.write(data)
+        if dst is not None:
+            dst.flush()
+            os.fsync(dst.fileno())
+    return digest.hexdigest(), size
+
+
 def seal_file(
     source: Path,
     target: Path,
