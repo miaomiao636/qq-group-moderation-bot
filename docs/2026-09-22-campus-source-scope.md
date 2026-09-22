@@ -1,6 +1,6 @@
 # CAMPUS-SCOPE-20260922：小程序码豁免限于明确校园墙来源
 
-## CAMPUS-TEMPLATE-20260922：负责人批准的分享卡修正（候选待验收）
+## CAMPUS-TEMPLATE-20260922：分享卡修正已提交、未生产加载
 
 线上 `t204-v17` 必须读到品牌全文，未覆盖负责人认可的无品牌分享卡，因而图片及图后窗口均失去资格。数据库只读核查已确认实际误撤及急停后跳过动作，原始记录不修改。负责人随后提供原图并明确批准按「紫橙三点气泡图标＋完整两行页脚＋同卡左右布局」识别，不能仅看任意码、颜色或通用文案。
 
@@ -10,10 +10,34 @@
 
 复核同时发现并补测：模板豁免不得压过群卡/合并转发结构规则或藏在其他命中的刷屏/严重类别；缺少实际复核配置时不生成新窗口资格，不能中断主流程。既有主审探针和断言未改动。本轮只根代理写入，辅助代理只读复核。
 
-验收必须分别报告确定性回归与真实供应商识别。原图及敏感响应只留本机私有验证目录，不提交真实联系方式或凭据；公开证据只记摘要、脱敏结构与精确执行 SHA/命令。真实远程复验可能消耗 API 额度，待负责人单独确认；本段不宣称原图识别已经通过，也不表示已经生产加载。模板是认可外观，不能认证 AppID 或排除精心伪造。线上急停保持原样，解除急停需要负责人独立操作。
+负责人已单独批准最多 12 次现有模型识别复验，实际调用已完成且没有超额。原图及敏感响应只留本机私有验证目录，不提交真实联系方式或凭据；[脱敏验证证据](evidence/campus-template-20260922/validation.json) 保存执行 SHA、命令、输入/原始响应摘要与逐条结果。模板是认可外观，不能认证 AppID 或排除精心伪造。线上急停保持原样，解除急停需要负责人独立操作。
 
+### 本轮验证与交付边界
 
-**最新状态：已按负责人“现在部署上线”授权完成生产加载与验证。** 加载提交 `8f4617edf6f73d8b98683994d575b022b9f2a0e4`、提示词 `t204-v17`。首次提权取消属于历史尝试，证据保留；本次正常提权后部署成功，具体执行见下文。
+以下均执行于冻结源码 **`ff4d1a2aa79f3ff2f6e88a1ef5acafe262fc731e`**；工作目录为隔离 worktree，Python 使用生产虚拟环境的解释器，环境为 `PYTHONUTF8=1`、`PYTHONIOENCODING=utf-8`。
+
+| 检查 | 实际命令（省略解释器路径） | 结果 |
+| --- | --- | --- |
+| 全量 | `-m pytest -o addopts= -q --tb=short` | 2333 passed / 4 skipped |
+| 主审探针 | `-m pytest tests -k r132_review -o addopts= -q --tb=short` | 262 passed / 2075 deselected |
+| 新模板回归 | `-m pytest tests/test_campus_share_template.py -o addopts= -q` | 58 passed |
+| Lint | `-m ruff check app tests alembic scripts` | 通过 |
+| 格式 | `-m ruff format --check app tests alembic scripts` | 359 文件通过 |
+| 类型 | `-m mypy app` | 113 文件通过 |
+
+真实模型执行：`-B <私有目录>/remote_check.py p1 p2 p3 n1 n2`，随后 `-B <私有目录>/remote_check.py p4 p5 p1 p2 p3 n1 n2`。私有目录为 `%LOCALAPPDATA%/QQBotDeploy/campus-template-20260922-01`。五份校园分享卡原图累计八次识别均为 matched、图片 allow 且有窗口来源资格；两份反例累计四次均无校园资格：牛头码两次转人工，外卖免单图两次按既有政策判违规。不能写成所有反例均撤回，也不能从这批小样本推断总体准确率。正文原始 ad 类别保留，没有为通过而改写模型原始结论。
+
+另以同一 SHA 执行 `-m pytest -c pyproject.toml -p tests.conftest <私有目录>/test_real_image_replay.py -o addopts= -q --tb=short`，12 passed：原图字节＋保存的真实响应＋实际本地图片引擎＋隔离数据库回放；正例后续 30 秒及 120 秒消息只记录、无动作建议，121 秒恢复常规审核；反例不授予窗口。回放禁止 socket 连接、固定 SHADOW，群/成员/后续文案是合成数据，图片哈希及 QR 名单为空。首次私有夹具把空列表误传给文字阈值参数导致失败，改正夹具构造后通过，失败日志保留；没有修改生产实现或放松断言。
+
+**“跑过”与“入库”分开**：58 项确定性模板回归已作为新测试文件入库；真实原图、供应商原始响应及私有回放脚本未作为仓库测试提交，公开入库的是脱敏验证收据。既有主审探针在本轮没有修改。独立只读复核从保存的原始供应商响应重走解析、合并及来源判定，逐项一致，未再外呼。该核验命令为 `-B <私有目录>/independent-audit.py`。
+
+源码已直接推送既有工作分支。[源码 CI 35702856001](https://github.com/miaomiao636/qq-group-moderation-bot/actions/runs/35702856001) 三个 job 全部 success；实际合并检出 SHA 为 `07eea15c61d69ca899b284831f2f1968e75094d6`，已核实包含源码 `ff4d1a2`。Ubuntu `106664719762`、Windows `106664719755` 的 `uv run pytest` 均为 2334 passed / 3 skipped；两平台 `uv run ruff check app tests alembic`、`uv run ruff format --check app tests alembic`（334 文件）、`uv run mypy app`（113 文件）均通过。干净依赖 job `106664719528` 通过仅运行时安装、应用导入和 pytest 不可导入的反向断言。核验命令 `gh run view 35702856001 --json headSha,status,conclusion,jobs,url,startedAt,updatedAt` 及 `gh run view 35702856001 --job <job_id> --log`；[CI 收据](evidence/campus-template-20260922/ci-source.json) 区分源 SHA 与实际执行 SHA。文档证据随后单独提交，不把该次 CI 冒记为后续文档提交的执行结果。
+
+本轮没有生产部署、服务重启、配置修改或解除急停。只读生产核验 `-B <私有目录>/production-readonly.py`：生产 checkout 仍为 `b3ee1b0df4fdafa7a7561624ebc1a7748b26249d`，近期视觉记录仍为 `t204-v17`，数据库急停为 true，健康 HTTP 200、OneBot ready/connected；最近一次有部署收据的加载源码仍为 `8f4617e`。后续加载需更新代码与提示词标签、正常重启并核验新视觉记录；保持急停，不补罚历史消息。
+
+## 上一轮 t204-v17 上线记录（历史，非本轮模板修正）
+
+**上一轮已按负责人“现在部署上线”授权完成生产加载与验证。** 加载提交 `8f4617edf6f73d8b98683994d575b022b9f2a0e4`、提示词 `t204-v17`。首次提权取消属于历史尝试，证据保留；该次正常提权后部署成功，具体执行见下文。
 
 冻结源码 `212488fb46a9b405bba4f3908b73d20a6223f138`：本机在 `PYTHONUTF8=1`、`PYTHONIOENCODING=utf-8` 下运行 `<生产 .venv Python> -m pytest -o addopts= -q --tb=short`，2275 passed / 4 skipped；`-m pytest tests -k r132_review -o addopts= -q --tb=short`，262 passed；`-m pytest tests/test_campus_source_policy.py -o addopts= -q`，21 passed。Ruff check / format --check（357 文件）和 mypy app（112 文件）均通过，命令均为 `-m ruff check app tests alembic scripts`、`-m ruff format --check app tests alembic scripts`、`-m mypy app`。首次包装器只设 UTF-8 输出而子进程按 GBK 读取，导致 4 个迁移测试错误及解码警告；统一 Python UTF-8 模式后，未修改源码/断言的全量与主审重跑通过且无警告，失败日志保留。
 
