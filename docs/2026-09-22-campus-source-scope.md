@@ -1,5 +1,13 @@
 # CAMPUS-SCOPE-20260922：小程序码豁免限于明确校园墙来源
 
+**最新状态：代码已推送并验证，尚未生产加载。** Windows 提权启动返回“操作已被用户取消”，部署助手未启动；生产服务仍运行此前版本，没有停服、修改配置或数据库。不得把上传等同于生效。
+
+冻结源码 `212488fb46a9b405bba4f3908b73d20a6223f138`：本机在 `PYTHONUTF8=1`、`PYTHONIOENCODING=utf-8` 下运行 `<生产 .venv Python> -m pytest -o addopts= -q --tb=short`，2275 passed / 4 skipped；`-m pytest tests -k r132_review -o addopts= -q --tb=short`，262 passed；`-m pytest tests/test_campus_source_policy.py -o addopts= -q`，21 passed。Ruff check / format --check（357 文件）和 mypy app（112 文件）均通过，命令均为 `-m ruff check app tests alembic scripts`、`-m ruff format --check app tests alembic scripts`、`-m mypy app`。首次包装器只设 UTF-8 输出而子进程按 GBK 读取，导致 4 个迁移测试错误及解码警告；统一 Python UTF-8 模式后，未修改源码/断言的全量与主审重跑通过且无警告，失败日志保留。
+
+源码 [CI 35683388560](https://github.com/miaomiao636/qq-group-moderation-bot/actions/runs/35683388560) 三个 job 全绿；实际合并检出 SHA `ef16100526e54d87d5ea48d36a2810391b1dd2a3`。Ubuntu `106604991700`、Windows `106604991861` 的 `uv run pytest` 均 2276 passed / 3 skipped，干净运行时依赖 `106604991838` success。核验命令：`gh run view 35683388560 --json headSha,status,conclusion,url,jobs` 和 `gh run view 35683388560 --log`。日志、校验收据和待执行部署脚本留本机 `AppData/Local/QQBotDeploy/campus-20260922-01`。
+
+生产工作区仍为 `6ef867a`，加载源码仍为此前 `53683d5`。继续部署需负责人完成 Windows 系统权限确认；重新核对实际 HEAD/配置/CI，更新部署脚本的固定目标及脚本哈希，再备份、停服、切换并验证。没有向远程模型重发负责人截图，不能声称这些真实截图的模型准确率已验证；本次已验证确定性策略和合成回归。
+
 负责人发现其他品牌的小程序广告也被 D-039 放行，明确选择 A：仅确认的校园墙来源保留豁免，其他小程序恢复正常审核，同时收窄图后窗口来源。本次替代 D-039 的“有码即通过”以及 D-036 联动中的通用小程序来源资格；不改变已确认校园墙的类别例外、两分钟窗口、阈值、群授权、成员白名单、动作开关、通知或图片哈希 shadow 模式。没有数据库迁移，不修改历史判定或重新处罚历史消息。
 
 ## 实现及可验证边界
