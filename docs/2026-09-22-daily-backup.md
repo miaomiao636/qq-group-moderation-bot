@@ -45,7 +45,15 @@
 
 ## 验证记录与当前状态
 
-新 plain 模式的测试、CI、真实 SYSTEM 调度及完整隔离恢复正在验收；尚不声称定时备份已启用。冻结源码和实际收据验收后更新本节。
+新 plain 源码：7b040b8710f10831f478a519b7e022751d8c2b76。执行 uv run --locked pytest --junitxml=<私有证据>/plain-full.xml：2518 passed、6 skipped、0 failed/error；其中主审原探针 31 文件/262 passed，备份回归 35 passed/1 skipped。执行 uv run --locked ruff check app tests alembic、ruff format --check app tests alembic（353 文件）、mypy app（122 文件）均通过。原始命令和结果在私有 plain-full-command.json、plain-full.xml、plain-test-summary.json、plain-gates.json；JUnit SHA256：099c7a42509d16253a059ae6a9890b44ea32cf8b92fd37b6faa72f9e4d7cc124。
+
+同源码执行私有 plain_candidate_backup.py（调用 run_backup，只读采集生产 9709e1d），生成明文快照 20260922T135259Z-fd39631b6cbe4342a7afe7658e46fad8：11247 文件、缺失媒体引用 0，读回成功。同源码执行 uv run --locked python -m app.reports.scheduled_backup restore --config C:/ProgramData/QQBotBackupPlain/config.json --snapshot <上述ID> --to C:/ProgramData/QQBotPlainRestoreCheck-20260922，完整隔离还原通过；私有 verify_plain_restore.py 核对 DB 摘要、完整性与外键、公开配置白名单、原 .env 缺席、新恢复密钥不存在，未启动恢复服务。这是直接调用验收，不替代 SYSTEM 调度验收。
+
+[源码 CI 35736054871](https://github.com/miaomiao636/qq-group-moderation-bot/actions/runs/35736054871) 三 job 全部成功：PR head 7b040b8710f10831f478a519b7e022751d8c2b76，实际合并 checkout d4a6a0d9e0c7e93b5f58225fd70f6e88fc59776b；uv run pytest，Ubuntu 2518 passed/6 skipped，Windows 2520 passed/4 skipped，两平台门禁及 runtime-deps clean 通过。原始日志与元数据见私有 ci-plain-source/，汇总 SHA256：849dbd49624b122d4750be4e9aaba1f309ae11f0b24e6ab30d6fb695764d339f。
+
+生产工作区已干净快进至 7b040b8；只追加锁定的 cryptography/cffi/pycparser 依赖，原有包版本未改变。真实 SYSTEM 调度尚未启用：Start-Process powershell.exe -Verb RunAs 启动注册助手未成功（InvalidOperationException），没有注册收据；Get-ScheduledTask -TaskName QQBot* 仅见原有 QQBotAutoCleanup。已请求负责人选择重试 UAC 或暂缓，不能把已生成的手动快照当作定时任务验收。
+
+同源码执行私有 capture_state.py 与服务查询，比较 plain-before/after-state.json、plain-before/after-services.json：.env 摘要、急停 false、群设置/动作所有者/成员白名单摘要、数据库 revision/A2 标记未变，Web/Runtime 均为原 PID 且 Running，healthz HTTP 200。比较结果 plain-production-comparison.json。注册成功后仍须 Start-ScheduledTask 实跑，核对 LastTaskResult、last_attempt 与新成功快照；该步骤尚未完成。
 
 先前加密试验（历史，不作为新 plain 模式验收）：
 - 执行源码 aaa4159514bc087f1f98ca956a2d07e0aef87f7b；uv run --locked pytest --junitxml=<私有证据>/full.xml：2510 passed、6 skipped；ruff check、format --check app tests alembic 和 mypy app 通过。私有记录 full-command.json、gates.json。
