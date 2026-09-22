@@ -1,4 +1,3 @@
-# CAMPUS-SCOPE-20260922: synthetic source fixtures adapted; see docs/2026-09-22-campus-source-scope.md.
 # ruff: noqa: E402, I001, F401, F811, B905
 # Reviewer round-4 probe pack (97d68d1), promoted verbatim into the repo test suite.
 # This header changes no assertion and no logic.
@@ -32,8 +31,7 @@ class Model:
             confidence=1.0 if first else self.confidence,
             needs_review=False,
             has_miniprogram_code=first and self.qr,
-            campus_wall_source="万能校园墙",
-            evidence="校园墙白名单|文案:万能校园墙 合成活动",
+            evidence="synthetic evidence only",
         )
 
 

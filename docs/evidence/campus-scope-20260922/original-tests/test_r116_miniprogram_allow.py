@@ -1,4 +1,3 @@
-# CAMPUS-SCOPE-20260922: synthetic source fixtures adapted; see docs/2026-09-22-campus-source-scope.md.
 """D-039 回归：图片含微信小程序二维码 → 一律通过（负责人 2026-09-18）。
 
 口径：
@@ -58,8 +57,7 @@ def _vision(
     return AIModerationResult(
         category=category,  # type: ignore[arg-type]
         confidence=confidence,
-        campus_wall_source="万能校园墙",
-        evidence="校园墙白名单|文案:万能校园墙 合成活动",
+        evidence="synthetic-evidence",
         model_id=model_id,
         provider="synthetic",
         source=source,  # type: ignore[arg-type]

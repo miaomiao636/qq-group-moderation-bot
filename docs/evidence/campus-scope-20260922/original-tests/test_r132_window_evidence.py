@@ -1,4 +1,3 @@
-# CAMPUS-SCOPE-20260922: synthetic source fixtures adapted; see docs/2026-09-22-campus-source-scope.md.
 # ruff: noqa: E402, I001, F401
 # Reviewer probe pack (PR #45 / r132), promoted verbatim into the repo test suite.
 # Isolation asserts intentionally run BEFORE application imports (E402 is by design).
@@ -71,8 +70,7 @@ async def source_image(group, user, when):
                                 "category": None,
                                 "needs_review": False,
                                 "degraded_reason": "",
-                                "campus_wall_source": "万能校园墙",
-                                "evidence": "校园墙白名单|文案:万能校园墙 合成校园活动",
+                                "evidence": "校园墙白名单|文案:合成校园活动",
                             }
                         ],
                     }

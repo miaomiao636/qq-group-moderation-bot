@@ -1,4 +1,3 @@
-# CAMPUS-SCOPE-20260922: synthetic source fixtures adapted; see docs/2026-09-22-campus-source-scope.md.
 """图后窗口豁免测试（负责人 2026-09-17 口径 C → 2026-09-18 晚扩展；R06/R09 加固保留）。
 
 口径 C：图后 2 分钟内该成员的内容豁免（不再要求相似度/紧邻/一图一条）；
@@ -26,8 +25,6 @@ from app.moderation.wall_pair import (
     maybe_wall_text_pairing,
 )
 from app.runtime.models import ShadowDecision
-
-from tests.campus_fixtures import campus_evidence
 
 WALL_TEXT = "招兼职：看抖音漫剧，多劳多得，有梦想你就来，有意者联系1878969877王经理"
 
@@ -90,10 +87,7 @@ def _wall_detail(
             "ai_results": [
                 {
                     "source": "vision",
-                    "campus_wall_source": "万能校园墙",
-                    "evidence": campus_evidence(
-                        vision_evidence or f"校园墙白名单|文案:{wall_text}"
-                    ),
+                    "evidence": vision_evidence or f"校园墙白名单|文案:{wall_text}",
                     "category": vision_cat,
                     "needs_review": vision_nr,
                     "degraded_reason": "",

@@ -1,4 +1,3 @@
-# CAMPUS-SCOPE-20260922: synthetic source fixtures adapted; see docs/2026-09-22-campus-source-scope.md.
 # ruff: noqa: E402, I001, F401, F811, ASYNC109
 # Reviewer round-4 probe pack (97d68d1), promoted verbatim into the repo test suite.
 # This header changes no assertion and no logic.
@@ -25,9 +24,6 @@ from app.moderation.ai import AIProviderError, AIReviewService
 from app.moderation import wall_pair
 from app.runtime import pipeline
 from app.runtime.models import ShadowDecision
-
-
-from tests.campus_fixtures import campus_evidence
 
 
 @pytest.fixture(autouse=True)
@@ -78,8 +74,7 @@ def vision(mark="校园墙白名单", qr=False, group="image-a"):
         confidence=1,
         needs_review=False,
         has_miniprogram_code=qr,
-        campus_wall_source="万能校园墙",
-        evidence=campus_evidence(f"{mark}|文案:合成活动"),
+        evidence=f"{mark}|文案:合成活动",
         model_id="synthetic-source",
         review_group=group,
     )
@@ -215,8 +210,7 @@ class FixedVision:
             confidence=1,
             needs_review=False,
             has_miniprogram_code=qr,
-            campus_wall_source="万能校园墙",
-            evidence=campus_evidence("小程序码通过|文案:合成活动" if qr else "合成普通图"),
+            evidence="小程序码通过|文案:合成活动" if qr else "合成普通图",
         )
 
 

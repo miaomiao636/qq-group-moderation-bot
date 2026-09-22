@@ -1,39 +1,12 @@
-"""图后窗口豁免（负责人 2026-09-14 口径 → 2026-09-17 口径 C → 2026-09-18 晚扩展）。
+"""校园墙图后窗口豁免（CAMPUS-SCOPE-20260922 收窄）。
 
-场景：成员先发一张**视觉确认放行**的图，随后（2 分钟内）发送的内容——负责人
-2026-09-17 决定（口径 C）**不再要求文字与图内文案相似**（也不再要求「紧邻」与
-「一图一条」）；**2026-09-18 晚再扩展：窗口内该成员的「文字与图片」都不撤回**，
-不豁免的只有**色情 / 暴力违禁品**（`porn`/`violence`）与**刷屏**（`flood`，属行为
-规则，豁免它等于关掉刷屏防护；如需一并豁免须负责人明确）。诈骗（`fraud`）按负责人
-两次口径（"严重类别改为色情暴力"）不再列入不豁免集合——**仍只降为记录/转人工，不是
-静默放行**；若不希望窗口内豁免诈骗，改 `PAIR_BLOCKED_CATEGORIES` 一处即可。
-结构性规则不受影响：合并转发（`R_FORWARD_RECORD`）与群名片（`R_GROUP_CARD`）不在
-`PAIR_EXEMPT_KINDS` 内，仍"一律撤回"。
-
-规则参数（口径 C + 2026-09-18 晚扩展）：
-- 窗口：来源图与当前消息的**消息发送时间**差 <= 120 秒，且图先发（R06：按 sent_at
-  而非落库时间——并发 worker 下处理完成时间会颠倒真实顺序；同秒无法定序，
-  **已完成**图不授予豁免；**未完成**图仍按"审核中"保护，见下）；
-- 来源：同 provider/群/成员的**视觉确认放行图**（R09 结构化校验保留：
-  全部 vision 结果 category 为空、未降级、不需人工、evidence 以「校园墙白名单」
-  或「小程序码通过」开头且含非空图内文案；带 processing/evidence_vetoes 的行不作来源）。
-  **2026-09-18（D-039）起「小程序码通过」的图同样是有效来源**：D-039 规定带微信
-  小程序码的图"一律通过"，其视觉证据以「小程序码通过」开头——若只认「校园墙白名单」
-  前缀，同一成员先发带码图、再发文案时文案仍会被撤回（实测 2026-09-18 16:55–16:58
-  有 3 条因此被撤）。两种前缀都必须是**开头**（R09 前缀语义不变）；
-- 来源图的判定必须为 allow/record_only；
-- 范围（2026-09-18 晚）：**文字与图片**两类 violation_high 触发；不豁免
-  `porn`/`violence`（色情/暴力违禁品）与 `flood`（刷屏）；
-- 豁免语义：不撤回、不立案——verdict 降为 record_only 并清空动作建议；
-- 无状态：不写绑定、不消耗来源图、窗口内多条文字可共享同一张图；同事件重试
-  自然幂等（重新计算得到同一豁免）；
-- 图审核未完成时（含同秒 delta=0）不处罚也不豁免：保守降为 record_only 转人工
-  （R-108 保护保留；P1 修复：主审 f08157d 复验）。
-
-历史兼容：旧版写入的 wall_paired / wall_paired_message_id 绑定字段不再读写；
-历史已绑定过的校园墙图同样是有效来源。
-
-图内文案与 sent_at 由 t204-v11 起的影子判定 detail 提供；缺失时保守不豁免。
+同成员、同 provider/群/机器人账号，在明确确认的万能校园墙图片后 120 秒内，
+保留既有文字/图片记录豁免。来源必须携带新 campus_wall_source 与同条品牌文字
+证据；历史「小程序码通过」或仅旧「校园墙白名单」标记不再授予来源资格。
+普通小程序恢复正常审核，不能跨附件拼接身份或掩盖未决附件。已确认校园墙的
+诈骗窗口豁免仍要求同条来源 has_miniprogram_code 严格为 true。色情/暴力/刷屏、
+结构性撤回、同秒定序、在途保护、完整证据 veto 与无状态幂等边界保持不变。
+extract_wall_text 保留历史解析兼容；解析成功本身不是来源确认。
 """
 
 from __future__ import annotations
@@ -46,6 +19,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.contracts import StandardMessage
+from app.moderation.campus_source import confirmed_campus_source
 from app.moderation.decision import (
     FORWARD_RECORD_RECALL_RULE_ID,
     GROUP_CARD_RECALL_RULE_ID,
@@ -56,9 +30,7 @@ from app.runtime.models import ShadowDecision
 WALL_PAIR_WINDOW_SECONDS = 120
 WALL_MARK = "校园墙白名单"
 WALL_TEXT_MARK = "文案:"
-# D-039（负责人 2026-09-18）：带微信小程序码的图"一律通过"，其视觉证据以
-# 「小程序码通过」开头；这种图在业务上同样是"已放行的图"，必须与校园墙图一样
-# 构成"图后文字豁免"（口径 C）的来源。两个前缀都要求出现在**开头**（R09 语义）。
+# Historical parsing only; _confirmed_sources additionally requires the new campus identity.
 MINIPROGRAM_MARK = "小程序码通过"
 SOURCE_MARKS = (WALL_MARK, MINIPROGRAM_MARK)
 
@@ -187,6 +159,8 @@ def _confirmed_sources(detail: dict[str, Any]) -> list[tuple[str, str, bool]]:
         return []
     sources: list[tuple[str, str, bool]] = []
     for result in attachments:
+        if not confirmed_campus_source(result):
+            continue  # Legacy/generic QR evidence is not a confirmed campus source.
         evidence = result.get("evidence")
         if not isinstance(evidence, str):
             continue
@@ -333,7 +307,7 @@ async def maybe_wall_text_pairing(
         # ②前缀与结构化布尔必须同时成立（只信前缀会被合成样本绕过）；
         # ③即使诈骗不豁免，**待审图保护仍然独立生效**（不能被来源判定旁路）。
         if "fraud" in effective_categories(decision) and not any(
-            mark == MINIPROGRAM_MARK and qr_flag for _text, mark, qr_flag in eligible_sources
+            mark == WALL_MARK and qr_flag for _text, mark, qr_flag in eligible_sources
         ):
             if processing_in_window:
                 return _undecided_predecessor_decision(decision)

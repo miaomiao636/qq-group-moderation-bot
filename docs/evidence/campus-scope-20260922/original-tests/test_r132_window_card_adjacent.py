@@ -1,4 +1,3 @@
-# CAMPUS-SCOPE-20260922: synthetic source fixtures adapted; see docs/2026-09-22-campus-source-scope.md.
 # ruff: noqa: E402, I001, F401
 # Reviewer round-2 probe pack (a354d17), promoted verbatim into the repo test suite.
 # Isolation asserts intentionally run BEFORE application imports (E402 is by design).
@@ -24,9 +23,6 @@ from app.db import SessionLocal
 from app.moderation.allowlist import add_member
 from app.runtime import pipeline
 from app.runtime.inbox import enqueue_event
-
-
-from tests.campus_fixtures import campus_evidence
 
 
 @pytest.fixture(autouse=True)
@@ -172,8 +168,7 @@ async def make_source(group, user, when, evidence, monkeypatch, tmp_path, qr=Fal
                     category=None,
                     confidence=1,
                     needs_review=False,
-                    campus_wall_source="万能校园墙",
-                    evidence=campus_evidence(evidence),
+                    evidence=evidence,
                     has_miniprogram_code=qr,
                     model_id="synthetic-source",
                 )

@@ -1,4 +1,3 @@
-# CAMPUS-SCOPE-20260922: synthetic source fixtures adapted; see docs/2026-09-22-campus-source-scope.md.
 """R-108: wall window exemption uses the real pipeline schema; 口径 C（2026-09-17）.
 
 口径 C：图后 2 分钟内同成员任意广告文字豁免（无相似度/紧邻/一图一条）。
@@ -20,8 +19,6 @@ from app.moderation.decision import ModerationDecision
 from app.moderation.wall_pair import _wall_source_from_detail, maybe_wall_text_pairing
 from app.runtime import pipeline
 from app.runtime.models import ShadowDecision
-
-from tests.campus_fixtures import campus_evidence
 
 PROMO = "测试用校园兼职推广文案，详情联系测试管理员，不含真实联系方式"
 
@@ -60,8 +57,7 @@ def _vision(**updates: object) -> AIModerationResult:
         needs_review=False,
         source="vision",
         model_id="synthetic-vision",
-        campus_wall_source="万能校园墙",
-        evidence=campus_evidence("校园墙白名单|文案:" + PROMO),
+        evidence="校园墙白名单|文案:" + PROMO,
     )
     return result.model_copy(update=updates)
 

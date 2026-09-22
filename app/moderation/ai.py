@@ -21,6 +21,7 @@ from sqlalchemy.orm import Mapped, mapped_column
 from app.config import Settings
 from app.core.contracts import StandardMessage
 from app.db import Base
+from app.moderation.campus_source import CAMPUS_WALL_SOURCE, confirmed_campus_source
 from app.moderation.decision import (
     ALLOWLIST_ALLOW_RULE_ID,
     ALLOWLIST_NON_EXEMPT_CATEGORIES,
@@ -45,7 +46,7 @@ AIContentKind = Literal[
 AIResultSource = Literal["text", "vision", "degraded", "cache"]
 AIReviewRole = Literal["auxiliary", "primary", "secondary"]
 
-PROMPT_VERSION = "t204-v16"
+PROMPT_VERSION = "t204-v17"
 AI_POLICY_VERSION = "conditional-review-v1"
 MAX_AI_TEXT_CHARS = 4_000
 MAX_AI_MEDIA_BYTES = 5 * 1024 * 1024
@@ -133,9 +134,10 @@ class AIModerationResult(BaseModel):
     source: AIResultSource = "text"
     needs_review: bool = True
     # 负责人 2026-09-18：视觉模型的结构化判定——图中是否含**微信小程序二维码**。
-    # 命中即"一律通过"（严重类别与本地硬证据例外见 merge_ai_evidence）。
+    # 仅记录有码事实；CAMPUS-SCOPE-20260922 起不再单凭该字段授予豁免。
     # 只有视觉通道有意义；文字通道恒为 False。
     has_miniprogram_code: bool = False
+    campus_wall_source: Literal["万能校园墙"] | None = None
     latency_ms: int = Field(default=0, ge=0)
     cost_cents: int = Field(default=0, ge=0)
     degraded_reason: str = Field(default="", max_length=200)
@@ -282,6 +284,12 @@ def provider_payload_to_result(
     if not isinstance(miniprogram_raw, bool):
         raise AIProviderError("provider_invalid_has_miniprogram_code")
     has_miniprogram_code = bool(miniprogram_raw) and source == "vision"
+    campus_raw = payload.get("campus_wall_source")
+    if campus_raw is not None and campus_raw != CAMPUS_WALL_SOURCE:
+        raise AIProviderError("provider_invalid_campus_wall_source")
+    campus_source = (
+        CAMPUS_WALL_SOURCE if campus_raw == CAMPUS_WALL_SOURCE and source == "vision" else None
+    )
     try:
         return AIModerationResult(
             category=category,
@@ -293,6 +301,7 @@ def provider_payload_to_result(
             source=source,
             needs_review=needs_review,
             has_miniprogram_code=has_miniprogram_code,
+            campus_wall_source=campus_source,
             latency_ms=latency_ms,
             cost_cents=int(payload.get("cost_cents") or 0),
             raw_response_sha256=raw_hash,
@@ -976,7 +985,7 @@ def _miniprogram_qr_allow(
     secondary_review_low: float = 0.60,
     secondary_review_high: float = 0.90,
 ) -> RuleHit | None:
-    """D-039：图片含微信小程序二维码 → 放行标记；不该放行时返回 ``None``。
+    """CAMPUS-SCOPE-20260922: only explicitly confirmed campus QR sources qualify.
 
     保留两个例外：
     1. **色情 / 暴力违禁品**（负责人 2026-09-18 晚修订：仅此两类）：本地或任一 AI
@@ -989,6 +998,11 @@ def _miniprogram_qr_allow(
     收尾"未决复核"，等于支持的配置被旁路。
     """
     if not any(result.source == "vision" and result.has_miniprogram_code for result in ai_results):
+        return None
+    attachments = [r for r in ai_results if r.source in ("vision", "degraded")]
+    # A campus image cannot grant immunity to another provider's mini-app/ad in
+    # the same message. Every attachment must meet the new source contract.
+    if not attachments or not all(confirmed_campus_source(r.model_dump()) for r in attachments):
         return None
     # 主审 F02（R-108）：**任一附件尚未定论**（需人工 / 降级超时 / 结论缺失）时，
     # 不得用"另一张图上的码"替它完成审核——落回既有 record_only 转人工路径。
@@ -1028,7 +1042,7 @@ def _miniprogram_qr_allow(
         rule_name="miniprogram_qr",
         category="ad",
         confidence_delta=0.0,
-        evidence_masked="图片含小程序二维码，按负责人口径放行（严重类别与本地硬证据除外，2026-09-18）",
+        evidence_masked="已视觉确认万能校园墙来源及小程序码，按收窄后的来源规则放行（2026-09-22）",
     )
 
 
@@ -1058,7 +1072,7 @@ def merge_ai_evidence(
         )
         for result in usable
     ]
-    # D-039（负责人 2026-09-18）：图片含微信小程序二维码 → 一律通过。
+    # CAMPUS-SCOPE-20260922: generic mini-app QR codes no longer grant immunity.
     # 放在"本地已违规"分支之前，因为它要能压过仅由广告软信号构成的本地高置信；
     # 例外（严重类别、本地硬证据）在 helper 内判断。
     qr_allow = _miniprogram_qr_allow(
@@ -1076,7 +1090,7 @@ def merge_ai_evidence(
                 "confidence": 0.0,
                 "recommended_actions": [],
                 "rule_hits": local.rule_hits + hits + [qr_allow],
-                "reason": "图片含小程序二维码，按负责人口径放行（D-039）",
+                "reason": "已确认校园墙来源的小程序图片，按来源白名单放行（2026-09-22）",
             }
         )
     if local.verdict == "violation_high":

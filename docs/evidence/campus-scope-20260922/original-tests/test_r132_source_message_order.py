@@ -1,4 +1,3 @@
-# CAMPUS-SCOPE-20260922: synthetic source fixtures adapted; see docs/2026-09-22-campus-source-scope.md.
 # ruff: noqa: I001
 # Reviewer round-3 probe pack (7ec5553), promoted verbatim into the repo test suite.
 # This header changes no assertion and no logic.
@@ -23,9 +22,6 @@ from tests.test_r132_structure_probe import json_segment
 from app.db import SessionLocal
 from app.runtime import pipeline
 from app.runtime.models import ShadowDecision
-
-
-from tests.campus_fixtures import campus_evidence
 
 
 @pytest.fixture(autouse=True)
@@ -86,10 +82,7 @@ async def full_pair(monkeypatch, tmp_path, results):
         files,
     )
     source_row = await reload_persisted(await execute(source, SyntheticModels(results)))
-    expected_source = (
-        "allow" if all(r.campus_wall_source == "万能校园墙" for r in results) else "record_only"
-    )
-    assert source_row.verdict == expected_source, observed(source_row)
+    assert source_row.verdict == "allow", observed(source_row)
     current = event(group, user, now, [{"type": "text", "data": {"text": "合成普通文字"}}])
     current_row = await reload_persisted(
         await execute(
@@ -118,8 +111,7 @@ def result(evidence, qr, group):
         category=None,
         confidence=1.0,
         needs_review=False,
-        campus_wall_source="万能校园墙",
-        evidence=campus_evidence(evidence),
+        evidence=evidence,
         has_miniprogram_code=qr,
         review_group=group,
         model_id="synthetic-source",
@@ -140,9 +132,7 @@ async def test_prefix_and_flag_cannot_come_from_different_results(
     monkeypatch, tmp_path, prefix_first
 ):
     prefix_only = result("小程序码通过|文案:合成活动甲", False, "image-a")
-    flag_only = result("校园墙白名单|文案:合成活动乙", True, "image-b").model_copy(
-        update={"campus_wall_source": None}
-    )
+    flag_only = result("校园墙白名单|文案:合成活动乙", True, "image-b")
     row = await full_pair(
         monkeypatch,
         tmp_path,

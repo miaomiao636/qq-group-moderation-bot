@@ -1,4 +1,3 @@
-# CAMPUS-SCOPE-20260922: synthetic source fixtures adapted; see docs/2026-09-22-campus-source-scope.md.
 # ruff: noqa: E402, I001, F401
 # Reviewer probe pack (PR #45 / r132), promoted verbatim into the repo test suite.
 # Isolation asserts intentionally run BEFORE application imports (E402 is by design).
@@ -39,8 +38,7 @@ class FakeVision:
             category=None if not second or self.second != "porn" else "porn",
             needs_review=second and self.second == "unresolved",
             has_miniprogram_code=self.qr and not second,
-            campus_wall_source="万能校园墙",
-            evidence="校园墙白名单|文案:万能校园墙 合成活动",
+            evidence="synthetic only",
         )
 
 

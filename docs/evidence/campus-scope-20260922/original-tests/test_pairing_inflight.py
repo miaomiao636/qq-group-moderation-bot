@@ -1,4 +1,3 @@
-# CAMPUS-SCOPE-20260922: synthetic source fixtures adapted; see docs/2026-09-22-campus-source-scope.md.
 """R-108 in-flight image ordering, real OneBot parser/inbox, no external calls."""
 
 from __future__ import annotations
@@ -19,8 +18,6 @@ from app.runtime import pipeline
 from app.runtime.inbox import InboxEvent, enqueue_event
 from app.runtime.models import ShadowDecision
 from app.runtime.onebot_wiring import dedup_key_for
-
-from tests.campus_fixtures import campus_evidence
 
 PROMO = "合成校园兼职测试文案，详情联系测试管理员，不含真实联系方式"
 
@@ -76,8 +73,7 @@ class _FakeAI:
                     needs_review=False,
                     source="vision",
                     model_id="synthetic-vision",
-                    campus_wall_source="万能校园墙",
-                    evidence=campus_evidence("校园墙白名单|文案:" + PROMO),
+                    evidence="校园墙白名单|文案:" + PROMO,
                 )
             ]
         return high, []
@@ -191,8 +187,7 @@ async def test_queued_intervening_text_does_not_break_wall_window(monkeypatch) -
         needs_review=False,
         source="vision",
         model_id="synthetic-vision",
-        campus_wall_source="万能校园墙",
-        evidence=campus_evidence("校园墙白名单|文案:" + PROMO),
+        evidence="校园墙白名单|文案:" + PROMO,
     )
     async with SessionLocal() as session:
         session.add(

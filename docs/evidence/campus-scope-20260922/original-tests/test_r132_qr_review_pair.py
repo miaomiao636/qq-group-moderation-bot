@@ -1,4 +1,3 @@
-# CAMPUS-SCOPE-20260922: synthetic source fixtures adapted; see docs/2026-09-22-campus-source-scope.md.
 # ruff: noqa: E402, I001, F401
 # Reviewer round-2 probe pack (a354d17), promoted verbatim into the repo test suite.
 # Isolation asserts intentionally run BEFORE application imports (E402 is by design).
@@ -58,8 +57,7 @@ class FakePrimary:
             confidence=1.0 if first or self.scenario == "normal" else 0.7,
             needs_review=False,
             has_miniprogram_code=first and self.qr,
-            campus_wall_source="万能校园墙",
-            evidence="校园墙白名单|文案:万能校园墙 合成活动",
+            evidence="synthetic primary",
         )
 
 
@@ -77,8 +75,7 @@ class FakeSecondary:
             confidence=1.0 if self.scenario == "disagree" else 0.5,
             needs_review=False,
             has_miniprogram_code=False,
-            campus_wall_source="万能校园墙",
-            evidence="校园墙白名单|文案:万能校园墙 合成活动",
+            evidence="synthetic secondary",
         )
 
 

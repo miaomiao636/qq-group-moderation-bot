@@ -1,4 +1,3 @@
-# CAMPUS-SCOPE-20260922: synthetic source fixtures adapted; see docs/2026-09-22-campus-source-scope.md.
 """R-108 worker-lifetime ordering context and event identity contracts."""
 
 from __future__ import annotations
@@ -16,8 +15,6 @@ from app.moderation.decision import ModerationDecision
 from app.runtime import pipeline
 from app.runtime.models import ShadowDecision
 from app.runtime.pairing_context import load_pending_pairing_messages
-
-from tests.campus_fixtures import campus_evidence
 
 
 def _message(group: str, *, kind: str = "image", mid: str | None = None) -> StandardMessage:
@@ -140,8 +137,7 @@ async def test_wall_source_from_other_bot_account_does_not_exempt_new_event(monk
         source="vision",
         needs_review=False,
         model_id="synthetic-vision",
-        campus_wall_source="万能校园墙",
-        evidence=campus_evidence("校园墙白名单|文案:合成校园兼职测试文案"),
+        evidence="校园墙白名单|文案:合成校园兼职测试文案",
     )
     async with SessionLocal() as session:
         session.add(
