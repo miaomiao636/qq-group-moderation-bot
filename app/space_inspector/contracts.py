@@ -23,6 +23,18 @@ class PlatformAccessBlocked(InspectionError):
     """The platform blocked the visit; require manual browser-state confirmation."""
 
 
+class BrowserConfirmationRequired(InspectionError):
+    """The viewing identity must be confirmed again before more requests."""
+
+
+class MemberPageUnrecognized(InspectionError):
+    """An identified, fully loaded member page needs an explicit operator decision."""
+
+    def __init__(self, message: str, qq: str):
+        super().__init__(message)
+        self.qq = qq
+
+
 def numeric_id(value: object) -> str:
     if type(value) not in (str, int):
         raise InspectionError("群或成员编号格式无效。")

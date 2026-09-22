@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import os
+import sys
 import threading
+import time
 from collections.abc import Callable, Mapping
 from datetime import UTC, datetime
 from pathlib import Path
@@ -17,12 +19,15 @@ from .browser import Browser
 from .contracts import (
     BLOCKED,
     REASONS,
+    BrowserConfirmationRequired,
     Group,
     InspectionError,
+    MemberPageUnrecognized,
     Observation,
     PlatformAccessBlocked,
     numeric_id,
 )
+from .options import ScanOptions
 
 EXPERIMENT_BATCH_SIZE = 300
 EXPERIMENT_DELAY_SECONDS = 30.0
@@ -47,33 +52,87 @@ def run_scan(
     *,
     delay: float = 2.0,
     max_checks: int | None = None,
+    continuous: bool = False,
+    batch_pause: float = 60.0,
+    cache_lookup: Callable[[str], Observation | None] | None = None,
+    on_saved: Callable[[Observation], None] | None = None,
+    defer_qq: str = "",
+    deferred_qqs: frozenset[str] = frozenset(),
 ) -> None:
     """Persist one completed visit before progressing; interruption never marks it normal."""
     viewer_qq = numeric_id(viewer_qq)
     if max_checks is not None and (type(max_checks) is not int or max_checks <= 0):
         raise InspectionError("每批检查人数必须是正整数。")
     pending = store.pending()
-    batch = pending if max_checks is None else pending[:max_checks]
+    if type(continuous) is not bool or delay < 0 or batch_pause < 0:
+        raise InspectionError("巡检间隔或续批设置无效。")
+    pending = [qq for qq in pending if qq != defer_qq and qq not in deferred_qqs]
+    batch = pending if max_checks is None or continuous else pending[:max_checks]
+    live_count = 0
+    reused = 0
+    started = time.monotonic()
     for index, qq in enumerate(batch):
         if stop.is_set():
             return
-        observation = browser.inspect(qq, viewer_qq)
+        observation = cache_lookup(qq) if cache_lookup is not None else None
+        if observation is None:
+            if live_count:
+                boundary = continuous and max_checks is not None and live_count % max_checks == 0
+                seconds = max(delay, batch_pause) if boundary else delay
+                if continuous:
+                    on_progress(
+                        {
+                            **store.summary(),
+                            "phase": "批间休息" if boundary else "等待下一次访问",
+                            "wait_seconds": seconds,
+                            "run_live": live_count,
+                            "run_reused": reused,
+                        }
+                    )
+                if stop.wait(seconds):
+                    return
+            observation = browser.inspect(qq, viewer_qq)
+            live_count += 1
+        else:
+            reused += 1
         if observation.qq != qq:
             raise InspectionError("页面账号与当前成员不一致，巡检已暂停。")
         store.save(observation)
-        on_progress(dict(store.summary()))
+        if on_saved is not None:
+            on_saved(observation)
+        progress: dict[str, object] = dict(store.summary())
+        if continuous or cache_lookup is not None:
+            remaining = len(batch) - index - 1
+            progress.update(
+                {
+                    "phase": "检查中",
+                    "run_live": live_count,
+                    "run_reused": reused,
+                    "remaining": remaining,
+                    "eta_seconds": int((time.monotonic() - started) / (index + 1) * remaining),
+                }
+            )
+        on_progress(progress)
         if observation.status == BLOCKED:
             reason = REASONS.get(observation.reason, "页面状态无法确认")
             if observation.reason == "platform_access_blocked":
                 raise PlatformAccessBlocked(
                     f"{reason}。任务已暂停，已完成结果保留；当前成员仍未完成，不能据此判断成员异常。"
                 )
-            raise InspectionError(
+            message = (
                 f"巡检已暂停（QQ {observation.qq}）：{reason}。"
                 "请查看专用浏览器；处理后可继续，已完成结果会保留。"
             )
-        if index + 1 < len(batch) and stop.wait(delay):
-            return
+            if observation.reason in {"login_required", "viewer_missing_or_changed"}:
+                raise BrowserConfirmationRequired(message)
+            if (
+                observation.reason == "unrecognized_page"
+                and observation.evidence.get("viewer_qq") == viewer_qq
+                and observation.evidence.get("ready_state") == "complete"
+                and observation.evidence.get("page_url") == f"https://user.qzone.qq.com/{qq}"
+            ):
+                raise MemberPageUnrecognized(message, qq)
+            raise InspectionError(message)
 
 
 def data_root() -> Path:
@@ -110,6 +169,7 @@ class Service:
         self._store: Store | None = None
         self._task_lock: FileLock | None = None
         self.current_folder: Path | None = None
+        self._deferred: set[str] = set()
 
     def groups(self) -> list[Group]:
         return self._directory.groups()
@@ -133,6 +193,7 @@ class Service:
             self._task_lock.__exit__(None, None, None)
             self._task_lock = None
         self.current_folder = None
+        self._deferred = set()
 
     def _open_task(self, folder: Path, *, create: bool) -> None:
         self._release_task()
@@ -180,13 +241,21 @@ class Service:
         # Live identities are checked when the user explicitly continues scanning.
         self._open_task(folder, create=False)
 
-    def scan(self, stop: threading.Event, on_progress: Callable[[dict[str, object]], None]) -> None:
+    def scan(
+        self,
+        stop: threading.Event,
+        on_progress: Callable[[dict[str, object]], None],
+        options: ScanOptions | None = None,
+    ) -> None:
         if self._store is None:
             raise InspectionError("请先选择群创建任务，或载入已有任务。")
         self._directory.verify_identity()
         viewer = self.viewer()
         self._store.bind_source(self.source_id)
         self._store.bind_viewer(viewer)
+        if options is not None:
+            self._optimized_scan(stop, on_progress, viewer, options)
+            return
         run_scan(
             self._store,
             self._browser,
@@ -197,8 +266,84 @@ class Service:
             max_checks=EXPERIMENT_BATCH_SIZE,
         )
 
+    def _optimized_scan(
+        self,
+        stop: threading.Event,
+        on_progress: Callable[[dict[str, object]], None],
+        viewer: str,
+        options: ScanOptions,
+    ) -> None:
+        from .cache import ObservationCache
+
+        options.validate()
+        assert self._store is not None
+        store = self._store
+        if not options.defer_qq:
+            self._deferred.clear()
+        if options.defer_qq:
+            row = store.db.execute(
+                "SELECT * FROM observations WHERE qq=?", (options.defer_qq,)
+            ).fetchone()
+            if row is None or row["status"] != BLOCKED or row["reason"] != "unrecognized_page":
+                raise InspectionError("只能将当前未识别的成员页面留待人工复查。")
+            import json
+
+            evidence = json.loads(row["evidence_json"])
+            if evidence["viewer_qq"] != viewer or evidence["ready_state"] != "complete":
+                raise InspectionError("页面身份未确认，不能跳过继续。")
+            self._deferred.add(options.defer_qq)
+        cache = ObservationCache(self.root / "observations.sqlite3")
+        try:
+            cache.remember(store)
+            self._browser.configure_scan(stop, options.lightweight)
+
+            def progress(payload: dict[str, object]) -> None:
+                payload["reused"] = store.reused_count()
+                if cache.warning:
+                    payload["warning"] = cache.warning
+                elif self._browser.loading_warning:
+                    payload["warning"] = self._browser.loading_warning
+                on_progress(payload)
+
+            run_scan(
+                store,
+                self._browser,
+                viewer,
+                stop,
+                progress,
+                delay=options.delay_seconds,
+                max_checks=options.batch_size,
+                continuous=options.continuous,
+                batch_pause=options.batch_pause_seconds,
+                cache_lookup=lambda qq: cache.lookup(store, qq, options.reuse_hours),
+                on_saved=lambda observation: cache.remember(store, observation.qq),
+                deferred_qqs=frozenset(self._deferred),
+            )
+        finally:
+            active_error = sys.exception()
+            cleanup_failed = False
+            for cleanup in (cache.close, self._browser.finish_scan):
+                try:
+                    cleanup()
+                except Exception:
+                    cleanup_failed = True
+            if cleanup_failed and active_error is None:
+                raise InspectionError("本轮结果已保存，但浏览器清理未完成；请关闭并重开巡检。")
+
     def summary(self) -> dict[str, object]:
-        return dict(self._store.summary()) if self._store else {}
+        return (
+            {
+                **self._store.summary(),
+                "reused": self._store.reused_count(),
+                "deferred": (
+                    len(self._deferred.intersection(self._store.pending()))
+                    if self._store.metadata["prepared"]
+                    else 0
+                ),
+            }
+            if self._store
+            else {}
+        )
 
     def rows(self) -> list[dict[str, object]]:
         return self._store.rows(limit=200) if self._store else []

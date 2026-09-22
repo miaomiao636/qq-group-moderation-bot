@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import importlib
 import re
+import threading
+import time
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -22,6 +24,14 @@ from .contracts import (
     numeric_id,
 )
 from .contracts import NOTICE as NOTICE
+
+ASSET_PATTERNS = [
+    f"{scheme}://qzonestyle.gtimg.cn/{folder}/*.{extension}{suffix}"
+    for scheme in ("http", "https")
+    for folder in ("qzone_v6", "aoi")
+    for extension in ("png", "jpg", "jpeg", "gif", "webp", "woff", "woff2", "ttf")
+    for suffix in ("", "?*")
+] + [f"{scheme}://qlogo3.store.qq.com/qzone/*" for scheme in ("http", "https")]
 
 
 def _platform_block_url(value: object) -> bool:
@@ -241,17 +251,90 @@ class Browser:
                 "尚未确认登录。请在专用浏览器完成登录，打开自己的空间后重试。"
             ) from None
 
+    def configure_scan(self, stop: threading.Event, lightweight: bool) -> None:
+        self._stop = stop
+        if self._context is None:
+            raise InspectionError("请先打开专用浏览器。")
+        self.finish_scan()
+        self.loading_warning = ""
+        if lightweight:
+            try:
+                self._scan_session = self._context.new_cdp_session(self._page)
+                self._scan_session.send("Network.enable")
+                # Unlike Playwright route(), this does not disable the HTTP cache.
+                # Limit filtering to observed static/portrait namespaces, not arbitrary
+                # URLs whose API query parameters happen to end in an image extension.
+                self._scan_session.send("Network.setBlockedURLs", {"urls": ASSET_PATTERNS})
+            except Exception:
+                self.finish_scan()
+                self.loading_warning = "此浏览器不支持轻量加载，已使用普通加载。"
+
+    def finish_scan(self) -> None:
+        session = getattr(self, "_scan_session", None)
+        if session is not None:
+            cleared = False
+            try:
+                session.send("Network.setBlockedURLs", {"urls": []})
+                cleared = True
+            except Exception:
+                pass
+            try:
+                session.detach()
+            except Exception:
+                if not cleared:
+                    raise InspectionError("浏览器资源设置未能恢复，请关闭并重开巡检。") from None
+            self._scan_session = None
+
     def inspect(self, qq: str, viewer_qq: str) -> Observation:
         qq = numeric_id(qq)
         if self._page is None:
             raise InspectionError("专用浏览器未打开。")
+        committed = False
+
+        def navigated(frame: Any) -> None:
+            nonlocal committed
+            if frame == self._page.main_frame:
+                committed = True
+
+        self._page.on("framenavigated", navigated)
         try:
-            self._page.goto(f"https://user.qzone.qq.com/{qq}", wait_until="load")
-            return classify_page(self._page.evaluate(SNAPSHOT_SCRIPT), qq, viewer_qq)
-        except Exception:
-            result = classify_page({}, qq, viewer_qq)
+            navigation_failed = False
+            try:
+                self._page.goto(f"https://user.qzone.qq.com/{qq}", wait_until="domcontentloaded")
+            except Exception:
+                navigation_failed = True
+            return self._read_after_navigation(qq, viewer_qq, navigation_failed, lambda: committed)
+        finally:
+            self._page.remove_listener("framenavigated", navigated)
+
+    def _read_after_navigation(
+        self, qq: str, viewer_qq: str, navigation_failed: bool, committed: Any
+    ) -> Observation:
+        # A load timeout can leave a readable WAF, login or completed member page.
+        # Inspect that same document; never automatically navigate again after failure.
+        deadline = time.monotonic() + 8
+        signal = getattr(self, "_stop", threading.Event())
+        last: Observation | None = None
+        while True:
+            try:
+                last = classify_page(self._page.evaluate(SNAPSHOT_SCRIPT), qq, viewer_qq)
+            except Exception:
+                break
+            if navigation_failed and not committed():
+                if last.reason in {"platform_access_blocked", "login_required"}:
+                    return last
+                # A pre-existing same-account page is not a fresh observation.
+                last = None
+                break
+            if last.reason != "page_incomplete":
+                return last
+            if signal.is_set() or time.monotonic() >= deadline or signal.wait(0.25):
+                return last
+        result = last or classify_page({}, qq, viewer_qq)
+        if navigation_failed or last is None:
             result.evidence["notice_source"] = "navigation_failure"
             return Observation(qq, BLOCKED, "navigation_failed", result.checked_at, result.evidence)
+        return result
 
     def close(self) -> None:
         try:

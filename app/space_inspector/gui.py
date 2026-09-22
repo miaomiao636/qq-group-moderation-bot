@@ -11,8 +11,9 @@ from datetime import datetime
 from pathlib import Path
 from tkinter import filedialog, messagebox, ttk
 
-from .contracts import LABELS, REASONS, Group
-from .service import EXPERIMENT_BATCH_SIZE, EXPERIMENT_DELAY_SECONDS, data_root
+from .contracts import LABELS, REASONS, Group, InspectionError
+from .options import ScanOptions
+from .service import data_root
 from .worker import Command, Event, run_worker
 
 
@@ -40,6 +41,13 @@ class Window:
         self._summary = tk.StringVar(value="尚未创建巡检任务")
         self._folder_text = tk.StringVar()
         self._export_text = tk.StringVar()
+        self._automatic = tk.BooleanVar(value=True)
+        self._reuse = tk.BooleanVar(value=True)
+        self._lightweight = tk.BooleanVar(value=True)
+        self._delay = tk.StringVar(value="30")
+        self._batch_size = tk.StringVar(value="300")
+        self._batch_pause = tk.StringVar(value="60")
+        self._defer_qq = ""
         self._build()
         self._worker = threading.Thread(
             target=run_worker,
@@ -120,6 +128,10 @@ class Window:
         self._continue_button.pack(side="left", padx=6)
         self._pause_button = ttk.Button(actions, text="暂停", command=self._pause)
         self._pause_button.pack(side="left", padx=6)
+        self._defer_button = ttk.Button(
+            actions, text="留待复查并继续", command=lambda: self._submit("scan", self._defer_qq)
+        )
+        self._defer_button.pack(side="left", padx=6)
         self._export_button = ttk.Button(
             actions, text="导出结果", command=lambda: self._submit("export")
         )
@@ -144,15 +156,41 @@ class Window:
         ttk.Label(outer, textvariable=self._summary, wraplength=950).grid(
             row=7, column=0, sticky="ew", pady=4
         )
+        settings = ttk.Frame(outer)
+        settings.grid(row=8, column=0, sticky="ew", pady=4)
+        self._setting_widgets: list[ttk.Checkbutton | ttk.Combobox] = []
+        for column, (label, toggle_variable) in enumerate(
+            [
+                ("自动续批", self._automatic),
+                ("复用 24 小时内历史观察", self._reuse),
+                ("轻量加载", self._lightweight),
+            ]
+        ):
+            toggle = ttk.Checkbutton(settings, text=label, variable=toggle_variable)
+            toggle.grid(row=0, column=column * 2, columnspan=2, sticky="w", padx=(0, 10))
+            self._setting_widgets.append(toggle)
+        for column, (label, variable, values) in enumerate(
+            [
+                ("间隔/秒", self._delay, (30, 20, 10, 5, 60)),
+                ("每批人数", self._batch_size, (300, 100, 50, 10)),
+                ("批间休息/秒", self._batch_pause, (60, 120, 300, 600)),
+            ]
+        ):
+            ttk.Label(settings, text=label).grid(row=1, column=column * 2, sticky="w")
+            selection = ttk.Combobox(
+                settings,
+                textvariable=variable,
+                values=tuple(str(value) for value in values),
+                width=7,
+                state="readonly",
+            )
+            selection.grid(row=1, column=column * 2 + 1, sticky="w", padx=(4, 12))
+            self._setting_widgets.append(selection)
         ttk.Label(
-            outer,
-            text=(
-                f"低频试验：每批最多 {EXPERIMENT_BATCH_SIZE} 人，批内间隔 "
-                f"{EXPERIMENT_DELAY_SECONDS:g} 秒；批次结束后手动继续，仍可能被平台拦截。\n"
-                "每次最多选 10 个群；预览最多 200 条，导出包含全部快照成员。"
-            ),
-            wraplength=740,
-        ).grid(row=8, column=0, sticky="w")
+            settings,
+            text="间隔为试验设置，不保证免拦截；历史观察保留原时间。可随时暂停。",
+            wraplength=900,
+        ).grid(row=2, column=0, columnspan=6, sticky="w")
         self._result_tree = self._tree(
             outer, 9, ("qq", "status", "reason"), ("QQ 号", "观察结果", "说明")
         )
@@ -237,6 +275,15 @@ class Window:
         ):
             button.configure(state="normal" if available else "disabled")
         self._search_entry.configure(state="normal" if available else "disabled")
+        for widget in self._setting_widgets:
+            widget.configure(
+                state=("readonly" if isinstance(widget, ttk.Combobox) else "normal")
+                if available
+                else "disabled"
+            )
+        self._defer_button.configure(
+            state="normal" if available and self._logged_in and self._defer_qq else "disabled"
+        )
         self._start_button.configure(
             state="normal" if available and self._selected and self._logged_in else "disabled"
         )
@@ -260,6 +307,25 @@ class Window:
     def _submit(self, kind: str, payload: object = None) -> None:
         if self._busy or self._closing or self._shutdown_failed:
             return
+        if kind in {"resume", "viewer", "browser"}:
+            self._defer_qq = ""
+        if kind in {"create", "scan"}:
+            try:
+                options = ScanOptions(
+                    continuous=self._automatic.get(),
+                    delay_seconds=int(self._delay.get()),
+                    batch_size=int(self._batch_size.get()),
+                    batch_pause_seconds=int(self._batch_pause.get()),
+                    reuse_hours=24 if self._reuse.get() else 0,
+                    lightweight=self._lightweight.get(),
+                    defer_qq=str(payload) if kind == "scan" and payload else "",
+                )
+                options.validate()
+            except (ValueError, InspectionError):
+                self._status.set("请检查巡检设置：间隔、每批人数及休息时间必须在支持范围内。")
+                return
+            payload = {"groups": payload, "options": options} if kind == "create" else options
+            self._defer_qq = ""
         self._busy = True
         self._scanning = kind in {"create", "scan"}
         if self._scanning:
@@ -415,7 +481,8 @@ class Window:
             return
         labels = [
             ("total", "成员数"),
-            ("checked", "已检查"),
+            ("checked", "已有观察"),
+            ("reused", "其中历史复用"),
             ("restricted", "观察到限制"),
             ("unconfirmed", "待确认"),
             ("pending", "未完成（含访问受阻）"),
@@ -440,13 +507,16 @@ class Window:
             for row in rows[:200]:
                 if isinstance(row, dict):
                     status = str(row.get("status", ""))
+                    evidence = row.get("evidence", {})
+                    reused = isinstance(evidence, dict) and "reuse" in evidence
                     self._result_tree.insert(
                         "",
                         "end",
                         values=(
                             str(row.get("qq", "")),
-                            LABELS.get(status, "待确认"),
-                            REASONS.get(str(row.get("reason", "")), "尚未检查"),
+                            ("历史：" if reused else "") + LABELS.get(status, "待确认"),
+                            REASONS.get(str(row.get("reason", "")), "尚未检查")
+                            + (f"；原观察 {row.get('checked_at', '')}" if reused else ""),
                         ),
                     )
 
@@ -471,6 +541,13 @@ class Window:
                 continue
             if kind == "progress":
                 self._show_summary(payload)
+                phase = str(payload.get("phase", "检查中"))
+                detail = f"{phase}；本轮访问 {payload.get('run_live', 0)} 人，历史复用 {payload.get('run_reused', 0)} 人"
+                if "wait_seconds" in payload:
+                    detail += f"；等待 {payload['wait_seconds']} 秒，可随时暂停"
+                elif isinstance(payload.get("eta_seconds"), int):
+                    detail += f"；粗估剩余 {max(1, int(str(payload['eta_seconds'])) // 60)} 分钟（受页面和休息影响）"
+                self._status.set(str(payload.get("warning", detail)))
                 continue
             if kind == "created":
                 self._show_snapshot(payload)
@@ -509,9 +586,9 @@ class Window:
                 else:
                     summary = payload.get("summary")
                     pending = summary.get("pending") if isinstance(summary, dict) else None
+                    deferred = summary.get("deferred", 0) if isinstance(summary, dict) else 0
                     self._status.set(
-                        "本批已停止并保存；仍有未完成成员，需手动继续下一批。"
-                        "低频试验不保证避免平台拦截。"
+                        f"本轮已停止并保存；留待复查 {deferred} 人。点“继续检查”可检查剩余成员并复查。"
                         if pending != 0
                         else "快照成员已检查并保存；未观察到限制提示仍为待确认。"
                     )
@@ -524,6 +601,7 @@ class Window:
                 self._status.set("结果已导出，文件位置显示在“最近导出”一栏。")
             elif kind == "error":
                 self._show_snapshot(payload)
+                self._defer_qq = str(payload.get("defer_qq", ""))
                 if payload.get("operation") == "history":
                     self._show_history([], str(payload.get("message", "历史任务读取未完成。")))
                 if payload.get("operation") in {"viewer", "browser"}:
@@ -531,7 +609,7 @@ class Window:
                     self._viewer.set("空间访问账号：尚未确认登录")
                 if payload.get("requires_browser_confirmation") is True:
                     self._logged_in = False
-                    self._viewer.set("空间访问已被平台拦截；待正常访问恢复后再确认，暂不继续巡检")
+                    self._viewer.set("空间访问或登录状态需确认；处理专用浏览器后再点“确认已登录”")
                 self._status.set(str(payload.get("message", "操作未完成。")))
             if self._closing:
                 self._status.set("正在保存任务并关闭巡检浏览器，请稍候……")

@@ -8,7 +8,13 @@ from collections.abc import Callable
 from contextlib import suppress
 from pathlib import Path
 
-from .contracts import InspectionError, PlatformAccessBlocked
+from .contracts import (
+    BrowserConfirmationRequired,
+    InspectionError,
+    MemberPageUnrecognized,
+    PlatformAccessBlocked,
+)
+from .options import ScanOptions
 from .service import Service
 
 Command = tuple[str, object]
@@ -40,10 +46,14 @@ def run_worker(
             "rows": service.rows(),
         }
 
-    def failure(message: str, operation: str, *, platform_blocked: bool = False) -> None:
+    def failure(
+        message: str, operation: str, *, platform_blocked: bool = False, defer_qq: str = ""
+    ) -> None:
         payload: dict[str, object] = {"message": message, "operation": operation}
         if platform_blocked:
             payload["requires_browser_confirmation"] = True
+        if defer_qq:
+            payload["defer_qq"] = defer_qq
         if service is not None and operation in {"create", "resume", "scan"}:
             with suppress(Exception):
                 payload.update(snapshot())
@@ -73,12 +83,22 @@ def run_worker(
             elif kind == "viewer":
                 emit("viewer", {"viewer": service.viewer()})
             elif kind == "create":
+                options = None
+                if isinstance(payload, dict):
+                    options = payload.get("options")
+                    payload = payload.get("groups")
+                    if not isinstance(options, ScanOptions):
+                        raise InspectionError("巡检设置格式无效。")
+                    options.validate()
                 if not isinstance(payload, list) or not all(isinstance(x, str) for x in payload):
                     raise InspectionError("请选择需要检查的群。")
                 service.create(payload)
                 emit("created", snapshot())
                 if not stop.is_set():
-                    service.scan(stop, progress)
+                    if options is None:
+                        service.scan(stop, progress)
+                    else:
+                        service.scan(stop, progress, options)
                 emit("scanned", snapshot())
             elif kind == "resume":
                 if not isinstance(payload, Path):
@@ -87,7 +107,13 @@ def run_worker(
                 emit("loaded", snapshot())
             elif kind == "scan":
                 if not stop.is_set():
-                    service.scan(stop, progress)
+                    if payload is None:
+                        service.scan(stop, progress)
+                    elif isinstance(payload, ScanOptions):
+                        payload.validate()
+                        service.scan(stop, progress, payload)
+                    else:
+                        raise InspectionError("巡检设置格式无效。")
                 emit("scanned", snapshot())
             elif kind == "export":
                 emit("exported", {"path": service.export()})
@@ -95,6 +121,10 @@ def run_worker(
                 raise InspectionError("暂不支持这项操作。")
         except PlatformAccessBlocked as exc:
             failure(str(exc), kind, platform_blocked=True)
+        except BrowserConfirmationRequired as exc:
+            failure(str(exc), kind, platform_blocked=True)
+        except MemberPageUnrecognized as exc:
+            failure(str(exc), kind, defer_qq=exc.qq)
         except InspectionError as exc:
             failure(str(exc), kind)
         except Exception:

@@ -46,6 +46,7 @@ _EVIDENCE_KEYS = {
     "panel_count",
     "report_icon_count",
 }
+EVIDENCE_CONTRACT = "qzone-dom-v1"
 _SOURCES = {
     "qzone_top_level_error",
     "qzone_profile",
@@ -350,8 +351,31 @@ OR o.visit_id!=(SELECT MAX(id) FROM visits WHERE qq=o.qq) LIMIT 1""").fetchone()
         if not self.db.execute("SELECT 1 FROM membership WHERE qq=? LIMIT 1", (qq,)).fetchone():
             raise InspectionError("该成员不在本任务群快照中。")
         value = observation.evidence
-        if type(value) is not dict or set(value) != _EVIDENCE_KEYS:
+        if type(value) is not dict or set(value) not in (
+            _EVIDENCE_KEYS,
+            _EVIDENCE_KEYS | {"reuse"},
+        ):
             raise InspectionError("巡检依据字段无效。")
+        if "reuse" in value:
+            reuse = value["reuse"]
+            if (
+                observation.status not in (RESTRICTED, UNCONFIRMED)
+                or type(reuse) is not dict
+                or set(reuse) != {"source_task", "source_visit", "reused_at", "contract"}
+                or not isinstance(reuse["source_task"], str)
+                or re.fullmatch(r"[0-9]{8}T[0-9]{6}Z-[0-9a-f]{8}", reuse["source_task"]) is None
+                or type(reuse["source_visit"]) is not int
+                or reuse["source_visit"] <= 0
+                or reuse["contract"] != EVIDENCE_CONTRACT
+            ):
+                raise InspectionError("历史观察来源无效。")
+            reused_at = datetime.fromisoformat(_timestamp(reuse["reused_at"]))
+            if (
+                not timedelta(0)
+                <= reused_at - datetime.fromisoformat(observation.checked_at)
+                <= timedelta(hours=24)
+            ):
+                raise InspectionError("历史观察已过期或时间顺序无效。")
         if any(
             not isinstance(value[key], str)
             for key in ("page_url", "viewer_qq", "notice", "notice_source", "ready_state")
@@ -407,6 +431,17 @@ OR o.visit_id!=(SELECT MAX(id) FROM visits WHERE qq=o.qq) LIMIT 1""").fetchone()
         ):
             raise InspectionError("未观察到提示的页面依据不完整，不能记作已完成。")
         return json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+
+    def validate_observation(self, observation: Observation) -> None:
+        """Validate a cache candidate before using it; membership and viewer are task-bound."""
+        self._validated_observation(observation)
+
+    def reused_count(self) -> int:
+        return int(
+            self.db.execute(
+                "SELECT COUNT(*) FROM observations WHERE json_type(evidence_json, '$.reuse')='object'"
+            ).fetchone()[0]
+        )
 
     def save(self, observation: Observation) -> None:
         if not self.metadata["prepared"] or not self.metadata["viewer_qq"]:
@@ -471,7 +506,17 @@ FROM (SELECT DISTINCT qq FROM membership) m LEFT JOIN observations o ON o.qq=m.q
         target.mkdir(parents=True, exist_ok=False)
         self.db.execute("BEGIN")
         try:
-            header = ["群名", "群号", "QQ号", "结果", "时间", "依据"]
+            header = [
+                "群名",
+                "群号",
+                "QQ号",
+                "结果",
+                "时间",
+                "依据",
+                "观察来源",
+                "复用时间",
+                "来源任务",
+            ]
             groups = [
                 dict(row) for row in self.db.execute("SELECT * FROM groups ORDER BY group_id")
             ]
@@ -502,6 +547,14 @@ FROM (SELECT DISTINCT qq FROM membership) m LEFT JOIN observations o ON o.qq=m.q
                         str(row["checked_at"]),
                         REASONS.get(str(row["reason"]), str(row["reason"])),
                     ]
+                    evidence = row["evidence"]
+                    assert isinstance(evidence, dict)
+                    reuse = evidence.get("reuse", {})
+                    csv_row += [
+                        "历史观察" if reuse else "本任务访问" if row["checked_at"] else "尚未访问",
+                        str(reuse.get("reused_at", "")),
+                        str(reuse.get("source_task", "")),
+                    ]
                     all_writer.writerow(csv_row)
                     if row["status"] == RESTRICTED:
                         restricted_writer.writerow(csv_row)
@@ -520,6 +573,8 @@ FROM (SELECT DISTINCT qq FROM membership) m LEFT JOIN observations o ON o.qq=m.q
                 "未观察到提示不代表账号正常；空间限制不等于 QQ 账号永久失效。\n"
                 "群关联来自本次保存的成员快照，不保证服务器实时成员关系或完整性。\n"
                 "report.json 的 saved_at 为群快照本地保存时间，checked_at 为页面检查时间。\n"
+                f"历史观察复用：{self.reused_count()} 人；保留原检查时间，不代表本次重新访问。\n"
+                "历史观察的 evidence.reuse 记录复用时间及来源任务/访问记录；限制结果也须结合原观察时间复核。\n"
                 "接口群人数与快照人数可能不同；下列数值仅供核对。\n"
             )
             for group in groups:
