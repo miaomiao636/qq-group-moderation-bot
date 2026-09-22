@@ -19,6 +19,11 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.contracts import StandardMessage
+from app.moderation.campus_message import (
+    is_plain_text_image_message,
+    is_window_image_message,
+    plain_text_image_shape,
+)
 from app.moderation.campus_source import confirmed_campus_source
 from app.moderation.decision import (
     FORWARD_RECORD_RECALL_RULE_ID,
@@ -78,7 +83,7 @@ def is_pairing_candidate(msg: Any, decision: ModerationDecision) -> bool:
     # F04-R：结构性撤回规则优先于窗口豁免——含合并转发/群名片命中的消息不进入窗口候选。
     if any(hit.rule_id in STRUCTURAL_RULE_IDS for hit in decision.rule_hits):
         return False
-    if msg.kind not in PAIR_EXEMPT_KINDS:
+    if msg.kind not in PAIR_EXEMPT_KINDS and not is_plain_text_image_message(msg):
         return False
     # 图片消息的 text 常为空（只有 [图片] 占位或无文字），不得据此排除
     if msg.kind == "text":
@@ -262,9 +267,16 @@ async def maybe_wall_text_pairing(
     for row in rows:
         if row.message_id == msg.message_id or row.external_message_id == msg.external_message_id:
             continue  # 当前消息自己的（重试）记录不是来源。
-        if row.kind != "image":
-            continue
         detail = _detail_object(row.detail_json)
+        if row.kind != "image":
+            if row.kind != "mixed" or not plain_text_image_shape(
+                detail.get("segments"), detail.get("media_kinds")
+            ):
+                continue
+            # Old mixed rows never qualified. Only the new completed local gate
+            # may grant a source; a structurally known processing row protects only.
+            if not detail.get("processing") and not detail.get("campus_source_policy"):
+                continue
         row_sent = _parse_naive_iso(detail.get("sent_at"))
         if row_sent is None:
             # 无法定位窗口的历史行（旧格式/清理标记）不作为来源，也不阻断；
@@ -297,7 +309,7 @@ async def maybe_wall_text_pairing(
                 or pending.provider != msg.provider
                 or pending.external_group_id != msg.external_group_id
                 or pending.external_user_id != msg.external_user_id
-                or pending.kind != "image"
+                or not is_window_image_message(pending)
             ):
                 continue
             pending_sent = _parse_naive_iso(pending.sent_at)

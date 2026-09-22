@@ -9,7 +9,14 @@ from sqlalchemy import String, case, cast, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.adapters.onebot.parser import OneBotMessageSource
-from app.core.contracts import MessageParseError, Sender, StandardMessage
+from app.core.contracts import (
+    Attachment,
+    MessageParseError,
+    MessageSegment,
+    Sender,
+    ShareCardInfo,
+    StandardMessage,
+)
 from app.moderation.wall_pair import WALL_PAIR_WINDOW_SECONDS
 from app.runtime.inbox import InboxEvent
 
@@ -26,6 +33,17 @@ def _minimal_message(msg: StandardMessage, event_key: str) -> StandardMessage:
         sender=Sender(),
         sent_at=msg.sent_at,
         kind=msg.kind,
+        # Mixed messages need structure for the shared window predicate. Never
+        # retain text, filenames, URLs, or card details in this in-memory summary.
+        segments=[
+            MessageSegment(kind=s.kind, attachment_index=s.attachment_index) for s in msg.segments
+        ]
+        if msg.kind == "mixed"
+        else [],
+        attachments=[Attachment(content_type=a.content_type) for a in msg.attachments]
+        if msg.kind == "mixed"
+        else [],
+        share_card=ShareCardInfo() if msg.kind == "mixed" and msg.share_card is not None else None,
     )
 
 

@@ -498,9 +498,10 @@ async def _run_pipeline(
         }
         # The same local policy authorizes this image and any later window.
         # Do not clear raw model categories or infer permission from record_only.
+        from app.moderation.campus_message import is_window_image_message
         from app.moderation.campus_policy import make_campus_source_policy
 
-        if msg.kind == "image" and not evidence_vetoes:
+        if is_window_image_message(msg) and not evidence_vetoes:
             source_policy = make_campus_source_policy(
                 local_before_ai, decision, ai_results, _service_policy(ai_service)
             )
