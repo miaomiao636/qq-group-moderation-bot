@@ -13,6 +13,7 @@ from pathlib import Path
 from app.space_inspector.contracts import (
     BLOCKED,
     LABELS,
+    NONFRIEND_NOTICE,
     REASONS,
     RESTRICTED,
     RESTRICTION_NOTICES,
@@ -50,6 +51,7 @@ _SOURCES = {
     "qzone_profile",
     "qzone_permission_page",
     "qzone_unopened_page",
+    "qzone_nonfriend_page",
     "unrecognized_page",
     "login_redirect",
     "navigation_failure",
@@ -356,7 +358,7 @@ OR o.visit_id!=(SELECT MAX(id) FROM visits WHERE qq=o.qq) LIMIT 1""").fetchone()
         ):
             raise InspectionError("巡检依据类型无效。")
         if (
-            value["notice"] not in ("", *RESTRICTION_NOTICES)
+            value["notice"] not in ("", *RESTRICTION_NOTICES, NONFRIEND_NOTICE)
             or value["notice_source"] not in _SOURCES
             or value["ready_state"] not in ("complete", "interactive", "loading", "unknown")
         ):
@@ -386,16 +388,22 @@ OR o.visit_id!=(SELECT MAX(id) FROM visits WHERE qq=o.qq) LIMIT 1""").fetchone()
             or value["report_icon_count"] != 1
         ):
             raise InspectionError("限制提示依据不完整。")
+        nonfriend_page = value["notice_source"] == "qzone_nonfriend_page"
         if observation.status == UNCONFIRMED and (
             not page_url
             or not viewer
             or value["viewer_qq"] != viewer
-            or value["notice"] != ""
+            or value["notice"] != (NONFRIEND_NOTICE if nonfriend_page else "")
             or value["notice_source"]
-            not in {"qzone_profile", "qzone_permission_page", "qzone_unopened_page"}
+            not in {
+                "qzone_profile",
+                "qzone_permission_page",
+                "qzone_unopened_page",
+                "qzone_nonfriend_page",
+            }
             or value["ready_state"] != "complete"
             or value["panel_count"] != (0 if value["notice_source"] == "qzone_profile" else 1)
-            or value["report_icon_count"] != 0
+            or value["report_icon_count"] != (1 if nonfriend_page else 0)
         ):
             raise InspectionError("未观察到提示的页面依据不完整，不能记作已完成。")
         return json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":"))

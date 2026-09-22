@@ -11,6 +11,7 @@ from urllib.parse import urlsplit
 
 from .contracts import (
     BLOCKED,
+    NONFRIEND_NOTICE,
     REASONS,
     RESTRICTED,
     RESTRICTION_TEMPLATES,
@@ -105,6 +106,15 @@ def classify_page(raw: object, qq: str, viewer_qq: str) -> Observation:
         if type(icons) is int and 0 <= icons <= 10:
             evidence["report_icon_count"] = icons
         paragraphs = panel.get("paragraphs")
+        if (
+            raw.get("normal_profile") is False
+            and type(icons) is int
+            and icons == 1
+            and paragraphs == ["温馨提示:", NONFRIEND_NOTICE, "返回我的空间"]
+        ):
+            evidence["notice"] = NONFRIEND_NOTICE
+            evidence["notice_source"] = "qzone_nonfriend_page"
+            return result(UNCONFIRMED, "space_nonfriend_access_unavailable")
         if (
             raw.get("normal_profile") is False
             and type(icons) is int

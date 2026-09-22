@@ -12,6 +12,7 @@ RESTRICTION_TEMPLATES = (
     ("温馨提示：", "您访问的空间存在违规信息,已被多名用户举报,暂时无法查看。", "返回我的空间"),
 )
 RESTRICTION_NOTICES = tuple(template[1] for template in RESTRICTION_TEMPLATES)
+NONFRIEND_NOTICE = "很抱歉,QQ空间相关功能升级维护,暂不支持非好友访问,敬请理解！"
 
 
 class InspectionError(RuntimeError):
@@ -69,5 +70,6 @@ REASONS = {
     "unrecognized_page": "页面格式无法确认，请人工查看",
     "space_access_permission_required": "主人设置了访问权限，待确认；继续检查其他成员",
     "space_not_opened": "对方未开通空间，待确认；继续检查其他成员",
+    "space_nonfriend_access_unavailable": "空间暂不支持非好友访问，待确认；继续检查其他成员",
     "platform_access_blocked": "QQ 空间访问被腾讯安全防护拦截；请停止重试，待正常访问恢复后再确认",
 }
