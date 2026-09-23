@@ -4,10 +4,10 @@
 
 ## 使用与边界
 
-案件列表的“操作范围”可选本页勾选或当前筛选全部。筛选包括状态、群身份/群名、起止日期和归档状态；上方待人工清单使用独立分页，不属于当前案件筛选。勾选不跨页保存。
+案件列表的“操作范围”可选跨页勾选或当前筛选全部。筛选包括状态、群身份/群名、起止日期和归档状态；上方待人工清单使用独立分页，不属于当前案件筛选。CASE-SELECT 补正后的勾选在同一标签页、登录会话和筛选条件下跨页保留；更换筛选或登录后清空，后退/前进重新同步，成功结案后清空已处理选择。补正部署状态见文末，首版不具备跨页保存。
 
 - CSV 每次最多 5000 案，包含群名、群号、QQ 号、来源、群/成员身份、案件状态、创建/结案时间、违规记录数、有效违规类别及证据编号。每案一行，同一成员多个案件不擅自去重。官方 OpenID 单列为身份，不伪装为 QQ 号。只导出摘要，不复制原文、附件和凭据。
-- 批量保留结案每次最多 200 案，要求未归档且待审、填写原因，先列出具体案件供人工核对。混入不可处理案件时整批拒绝，不悄悄部分成功。已有保留期清理不会因结案预览获得新删除授权。
+- 批量保留结案每次最多 200 案，要求未归档且待审，先列出具体案件供人工核对。CASE-SELECT 补正后 UI 不要求填写原因，默认审计记录为“人工处理”。混入不可处理案件时整批拒绝，不悄悄部分成功。已有保留期清理不会因结案预览获得新删除授权。
 - 预览绑定登录会话、明确案件 ID 和证据指纹，有效 5 分钟；确认不重新按筛选挑选新案件。并发确认只执行一次；案件、身份、群名或证据变化要求重新预览。
 - 同一事务提交 KEEP/CLOSED、逐案审计及批次完成状态。审计或任何存储失败整批回滚，不出现半批结案。证据检查同时覆盖显式 ID 和 `ViolationRecord.case_id` 反向关联，防止遗漏预览后新增的违规。
 - CSV 使用 UTF-8 BOM、标准转义与公式防护；长数字身份按文本处理。返回 `Cache-Control: no-store`，不生成服务器常驻导出副本。导出后的本地文件由下载者保管。
@@ -19,7 +19,7 @@
 | 路径 | 输入与结果 |
 | --- | --- |
 | `/admin/cases/batch-export` | `scope=selected/filtered`、多值 `case_ids` 或当前筛选，返回 CSV |
-| `/admin/cases/batch-preview` | 同上并带 `reason`，返回冻结计划与完整案件预览 |
+| `/admin/cases/batch-preview` | 同上，`reason` 可省略或留空（默认为“人工处理”，兼容旧调用方的自定义原因），返回冻结计划与完整案件预览 |
 | `/admin/cases/batch-confirm` | 仅使用服务端 `plan_id`；成功跳回列表，重复同一完成计划不重复结案 |
 
 超限、空选择及非法日期返回 422；失效/越界计划、状态或证据冲突返回 409。旧 `/cases/batch-delete` 继续停用。复用现有 `AdminChangePlan` 表，无新增依赖或数据库迁移。
@@ -75,3 +75,34 @@ NapCat `delete_msg` 的 `failed + 整数 retcode=1200`，且 message/wording 有
 N03 尚未闭环：现有清理有 mtime/处理时间路径；来源期限未成为覆盖全部副本的持久权威索引。只读审查确认可以先投影已存 `sent_at` 并给未来 manifest 增加非权威观察字段，但不能由此自动删除。共享对象须核对所有引用，未知来源继续保留；混合内容数据库不能按单个文件期限整体删除。持久来源索引、各复制入口继承期限、合规替代备份、历史未知项处置及具体清单批准仍需单独完成。本轮没有改备份格式，也没有生产迁移或删除证据。
 
 整机/异机故障恢复仍待负责人安排维护窗口；主动通知渠道按负责人要求保留但不启用。独立空间巡检不属于本轮交付。
+
+
+## CASE-SELECT-20260923：跨页选择与人工处理补正（待上线）
+
+负责人反馈不能连续选择多页、结案不希望再填原因。实现提交 `4855a4a8f2f3d6a72004fff0419f324203adfb5b`、回归提交 `07ec9ba3195baadd1be9749e49c8a7f34303bd23`。根代理单独实施，原主审探针未改。
+
+- 前端 `app/web/case_selection.py` 在 sessionStorage 中仅保存案件 ID 与筛选，键使用服务端登录会话 SHA256 摘要，不保存登录令牌。提供全选本页、清空本页、清空全部勾选；浏览器禁用存储会显式提示只可保留当前页。后退/前进使用 pageshow 同步，避免浏览器缓存旧选择。
+- UI 去除原因输入，按钮为“批量标记已人工处理”；后台缺省/空白原因统一为“人工处理”，旧 API 自定义原因兼容。预览绑定、CSRF、权限、案件证据漂移、200/5000 上限、事务及幂等均保留。成功确认跳回列表后清空选择，移除一次性复位参数。
+- 状态仍沿用 KEEP → CLOSED；不表示系统踢人或撤销违规，不更改违规累计、群动作、保留期、数据库结构。
+- 私有回执在 `D:/QQBotAudits/case-batch-paging-20260923`。TDD 首先复现未填原因返回 422；补正后通过。入库回归覆盖未填原因的页面/预览/确认、跨非相邻页面的选择导出与精确结案，验证未选中的 99 个合成案件保持待审。
+- 隔离浏览器 HTTP 夹具启动被自动审批返回 `blocked by policy`，未启动服务，也未改用其他工具重试启动。改用 Node VM 无网络模拟验证真实前端脚本；这是本地脚本验证，不能称为真实浏览器点击验收，也未纳入 CI。
+- 本地完整验证已完成；最新 HEAD CI 按下述方式单独核验。生产尚未重启加载本补正；上一批 `22e60d1` 的上线授权及 CI 不替代本批。
+
+
+### 补正验证
+
+执行 SHA `07ec9ba3195baadd1be9749e49c8a7f34303bd23`，仓库根运行；测试 TEMP/TMP 固定在上述 D 盘私有目录的 `test-temp`，`PYTHONUTF8=1`。
+
+| 命令 | 实际结果 |
+| --- | --- |
+| `uv run --locked pytest --junitxml=D:/QQBotAudits/case-batch-paging-20260923/full-07ec9ba.xml` | 2655 项：2636 passed、19 skipped，0 failed/error；274.33 秒 |
+| 同次 JUnit 提取 `tests.test_r132_review_*` | 31 文件、262 项通过；原探针未改 |
+| `uv run --locked ruff check app tests alembic` | 通过 |
+| `uv run --locked ruff format --check app tests alembic` | 361 文件通过 |
+| `uv run --locked mypy app` | 125 源文件通过 |
+| `node D:/QQBotAudits/case-batch-paging-20260923/check_selection.js` | 真实前端脚本模拟跨页累计、跨页提交、清空本页、筛选/登录隔离、禁用存储提示、bfcache 恢复、成功后仅复位一次全部通过 |
+| `node --check D:/QQBotAudits/case-batch-paging-20260923/case-selection.generated.js` | 通过 |
+
+19 项跳过分别为本机生产 runtime 锁保护 13 项、符号链接权限 4 项、私有真实图片及可选巡检运行时各 1 项，详见 `validation-07ec9ba.json`。工作树阶段 `uv run --locked pytest tests/test_case_batch.py tests/test_r109_case_ui.py -q --tb=short --junitxml=D:/QQBotAudits/case-batch-paging-20260923/focused.xml` 为 67 passed；最终源 SHA 的完整验证才作为当前源码基准。
+
+文档提交不改应用/测试；推送后用 `git rev-parse HEAD`、`gh run list --commit <HEAD>` 与 `gh run view <run-id> --json headSha,status,conclusion,jobs,url` 核验最终 HEAD 三 job，并核对 PR 合成 checkout 的 tree。精确回执保存在同目录 `ci-final-head.json` 和 `ci-final-verification.json`；结果未生成或不是 success 时不可宣称通过。真实浏览器点击与生产加载仍不在本地测试/CI 的证明范围内。
