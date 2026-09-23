@@ -40,6 +40,10 @@ __all__ = [
 OneBotActionCaller = Callable[[str, Mapping[str, Any]], Awaitable[Mapping[str, Any]]]
 
 _MAX_MUTE_SECONDS = 30 * 24 * 3600
+_RECALL_CALLBACK_TIMEOUT = (
+    "Timeout: NTEvent serviceAndMethod:NodeIKernelMsgService/recallMsg "
+    "ListenerName:NodeIKernelMsgListener/onMsgInfoListUpdate EventRet:"
+)
 
 
 class OneBotActionError(RuntimeError):
@@ -50,9 +54,10 @@ class OneBotActionError(RuntimeError):
     - ``timeout`` / ``response_lost``：发送后结果不确定（UNKNOWN，禁重放）。
     """
 
-    def __init__(self, kind: str, message: str) -> None:
+    def __init__(self, kind: str, message: str, *, diagnostic_key: str | None = None) -> None:
         super().__init__(message)
         self.kind = kind
+        self.diagnostic_key = diagnostic_key
 
 
 def _numeric_id(value: str, field: str) -> int:
@@ -110,6 +115,23 @@ class OneBotActionClient:
             raise OneBotActionError(
                 "response_lost",
                 "OneBot status=async（请求已排队，结果不确定）",
+            )
+        if (
+            action_name == "recall"
+            and endpoint == "delete_msg"
+            and status == "failed"
+            and retcode == 1200
+            and any(
+                isinstance(value, str) and value.startswith(_RECALL_CALLBACK_TIMEOUT)
+                for value in (resp.get("wording"), resp.get("message"))
+            )
+        ):
+            # NapCat has sent the kernel call but missed its final message update.
+            # EventRet.result=0 is not a confirmed recall. Never persist its raw tail.
+            raise OneBotActionError(
+                "timeout",
+                "NapCat撤回回执超时，结果未知",
+                diagnostic_key="onebot_recall_callback_timeout",
             )
         if status == "failed" and retcode not in (0, 1):
             return ActionResult(

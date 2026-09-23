@@ -555,14 +555,27 @@ async def _execute_intent(
         else:
             raise ValueError(f"不支持的动作: {intent.action}")
     except Exception as exc:  # noqa: BLE001 - 外部动作状态不确定，必须冻结等待人工
+        # Only a locally assigned diagnostic key may cross this audit boundary;
+        # arbitrary exception text can contain upstream payloads or credentials.
+        callback_timeout = (
+            intent.provider == "onebot"
+            and intent.action == "recall"
+            and getattr(exc, "diagnostic_key", None) == "onebot_recall_callback_timeout"
+        )
+        reason = (
+            "撤回请求已发送，平台回执超时，结果未知；请人工核对，禁止自动重放"
+            if callback_timeout
+            else "外部动作结果未知，禁止自动重放"
+        )
         result = ActionResult(
             action=intent.action,
             ok=False,
-            err_message=f"动作结果未知: {type(exc).__name__}",
+            err_code=1200 if callback_timeout else None,
+            err_message=reason if callback_timeout else f"动作结果未知: {type(exc).__name__}",
             attempts=1,
         )
         intent.status = "UNKNOWN"
-        intent.reason = "外部动作结果未知，禁止自动重放"
+        intent.reason = reason
     else:
         intent.status = "SUCCEEDED" if result.ok else "FAILED"
         intent.reason = "" if result.ok else result.err_message[:255]

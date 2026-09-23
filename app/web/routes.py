@@ -29,7 +29,7 @@ from app.models import AdminAudit
 from app.reports.cleanup import purge_expired
 from app.reports.service import build_daily, build_weekly
 from app.reports.stats import build_stats
-from app.web import auth
+from app.web import auth, case_batch
 from app.web.pagination import Page, page_controls
 
 router = APIRouter(prefix="/admin", include_in_schema=False)
@@ -398,36 +398,20 @@ async def dashboard(
     page = max(1, page)
     page_size = 50
     show_archived = archived == "1"
-    try:
-        start_date = datetime.strptime(date_from, "%Y-%m-%d") if date_from else None
-        end_date = datetime.strptime(date_to, "%Y-%m-%d") if date_to else None
-        if start_date and end_date and start_date > end_date:
-            raise ValueError("reversed date range")
-        exclusive_end = end_date + timedelta(days=1) if end_date else None
-    except (ValueError, OverflowError) as exc:
-        raise HTTPException(422, "日期范围无效，请使用有效的起止日期") from exc
+    filters = {
+        "status": status,
+        "group": group,
+        "date_from": date_from,
+        "date_to": date_to,
+        "archived": archived,
+    }
     async with SessionLocal() as session:
         pending_pagination, pending = await _pending_review_page(
             session, pending_page, pending_page_size
         )
         alias_map = await _alias_map(session)
-        conditions: list[Any] = []
-        # R02/R03 整改：归档语义替代硬删除——默认只看未归档；archived=1 查看已归档
-        conditions.append(Case.archived.is_(show_archived))
-        if status:
-            conditions.append(Case.status == status)
-        if group.strip():
-            # 支持群号或群名（含别名模糊匹配）
-            needle = group.strip()
-            matched = {gid for gid, name in alias_map.items() if needle in name}
-            if needle.isdigit() or needle not in matched:
-                matched.add(needle)
-            conditions.append(Case.group_openid.in_(matched))
-        if start_date:
-            conditions.append(Case.created_at >= start_date)
-        if exclusive_end:
-            conditions.append(Case.created_at < exclusive_end)
-        where = [*conditions] if conditions else []
+        group_names = await case_batch.names(session)
+        where = case_batch.conditions(filters, group_names)
         base = select(Case)
         if where:
             base = base.where(*where)
@@ -437,7 +421,7 @@ async def dashboard(
         cases = (
             (
                 await session.execute(
-                    base.order_by(Case.created_at.desc())
+                    base.order_by(Case.created_at.desc(), Case.id.desc())
                     .limit(page_size)
                     .offset((page - 1) * page_size)
                 )
@@ -482,11 +466,13 @@ async def dashboard(
     rows = "".join(
         f"<tr><td><input type=checkbox name=case_ids value={c.id}></td>"
         f"<td><a href=/admin/cases/{c.id}>{_esc(c.case_no)}</a></td>"
-        f"<td>{_esc(_group_display(alias_map, c.group_openid))}<span class=muted> {_esc(c.group_openid)}</span></td>"
-        f"<td>{_esc(c.member_openid)}</td>"
+        f"<td>{_esc(provider)}</td>"
+        f"<td>{_esc(group_names.get((provider, gid), '') or gid)}<span class=muted> {_esc(gid)}</span></td>"
+        f"<td>{_esc(uid)}{'（OpenID）' if provider == 'qq_official' else ''}</td>"
         f"<td>{_esc(_status_zh(c.status))}</td><td>{_esc(f'{c.created_at:%m-%d %H:%M}')}</td>"
         f'<td><a href="/admin/cases/{c.id}">查看</a></td></tr>'
         for c in cases
+        for provider, gid, uid in [case_batch.identity(c)]
     )
     status_opts = "".join(
         f'<option value="{code}" {"selected" if status == code else ""}>{zh}</option>'
@@ -508,7 +494,25 @@ async def dashboard(
         f'<a class=btn href="/admin{"?archived=1" if show_archived else ""}">重置</a></form>'
     )
     batch_form = (
-        f"<table><tr><th></th><th>批次号</th><th>群</th><th>成员</th><th>状态</th><th>创建</th><th></th></tr>{rows}</table>"
+        '<form id="case-batch" method="post" action="/admin/cases/batch-preview">'
+        + _csrf_field(token)
+        + "".join(
+            f'<input type="hidden" name="{key}" value="{_esc(value)}">'
+            for key, value in filters.items()
+        )
+        + '<div class="card"><label>操作范围 <select name="scope"><option value="selected">勾选案件（本页）</option><option value="filtered">当前筛选全部（含其他页）</option></select></label> '
+        '<button type="button" class="btn" onclick="caseSelect(true)">全选本页</button>'
+        '<button type="button" class="btn" onclick="caseSelect(false)">清空勾选</button>'
+        '<span id="case-selected" role="status">已勾选 0 项</span>'
+        '<p><button class="btn" formaction="/admin/cases/batch-export">导出 CSV</button>'
+        '<label>结案原因 <input name="reason" maxlength="500" style="width:300px" placeholder="预览结案时必填"></label> '
+        '<button class="btn" formaction="/admin/cases/batch-preview">预览批量保留并结案</button></p>'
+        f'<p class="muted">导出每次最多 {case_batch.EXPORT_LIMIT} 案；结案每次最多 {case_batch.CLOSE_LIMIT} 案，仅限未归档待审案件。'
+        "结案保留违规记录与累计次数，不处罚成员；以后新违规仍可能重新立案。勾选不跨页保存。上方待人工清单不属于此筛选范围。</p></div>"
+        f"<table><tr><th>选择</th><th>批次号</th><th>来源</th><th>群</th><th>成员</th><th>状态</th><th>创建</th><th></th></tr>{rows}</table></form>"
+        '<script>function caseCount(){document.getElementById("case-selected").textContent="已勾选 "+document.querySelectorAll("#case-batch input[name=case_ids]:checked").length+" 项";}'
+        'function caseSelect(on){document.querySelectorAll("#case-batch input[name=case_ids]").forEach(function(e){e.checked=on});caseCount();}'
+        'document.getElementById("case-batch").addEventListener("change",caseCount);</script>'
         f"<p class=muted style=margin-top:8px>批量删除功能已按主审要求停用（R02/R03：硬删除破坏共用违规记录与编号/通知契约）；"
         f"共 {total} 条，第 {page}/{total_pages} 页</p>"
     )
@@ -560,6 +564,86 @@ async def dashboard(
         f"{filter_form}{batch_form}{pager}"
     )
     return _page("案件列表", body)
+
+
+@router.post("/cases/batch-export")
+@router.post("/cases/batch-preview")
+async def case_batch_prepare(
+    request: Request,
+    csrf: Annotated[str, Form()] = "",
+    scope: Annotated[str, Form()] = "selected",
+    case_ids: Annotated[list[int] | None, Form()] = None,
+    reason: Annotated[str, Form()] = "",
+    status: Annotated[str, Form()] = "",
+    group: Annotated[str, Form()] = "",
+    date_from: Annotated[str, Form()] = "",
+    date_to: Annotated[str, Form()] = "",
+    archived: Annotated[str, Form()] = "",
+) -> Response:
+    token = await _require_admin_post(request, csrf)
+    exporting = request.url.path.endswith("/batch-export")
+    filters = {
+        "status": status,
+        "group": group,
+        "date_from": date_from,
+        "date_to": date_to,
+        "archived": archived,
+    }
+    async with SessionLocal() as session:
+        # SQLite legacy transaction mode otherwise starts no read transaction
+        # for SELECTs. Export and preview must each observe one snapshot.
+        await session.execute(text("BEGIN" if exporting else "BEGIN IMMEDIATE"))
+        cases = await case_batch.select_cases(
+            session,
+            scope,
+            case_ids or [],
+            filters,
+            limit=case_batch.EXPORT_LIMIT if exporting else case_batch.CLOSE_LIMIT,
+        )
+        if exporting:
+            data = case_batch.export_csv(await case_batch.summaries(session, cases))
+            return Response(
+                data,
+                media_type="text/csv; charset=utf-8",
+                headers={
+                    "Content-Disposition": 'attachment; filename="cases-summary.csv"',
+                    "Cache-Control": "no-store",
+                },
+            )
+        plan, preview = await case_batch.create_plan(session, cases, _human_actor(token), reason)
+        await session.commit()
+    rows = "".join(
+        f'<tr><td><a href="/admin/cases/{r["id"]}" target="_blank" rel="noopener">{_esc(r["case_no"])}</a></td>'
+        f"<td>{_esc(r['provider'])}</td><td>{_esc(r['name'])}<br>{_esc(r['group'])}</td><td>{_esc(r['member'])}</td>"
+        f"<td>{_esc(r['basis'])}；{r['count']} 条（缺失 {r['missing']} 条）</td></tr>"
+        for r in preview
+    )
+    response = _page(
+        "批量结案预览",
+        f"<h2>批量保留并结案：{len(preview)} 个案件</h2>"
+        "<p>仅将以下待审案件保留成员并结案，不撤回、不禁言、不踢人。违规记录和累计次数保留，后续新违规仍可能重新立案。</p>"
+        f"<p>结案原因：{_esc(reason.strip())}</p><p>预览 5 分钟内有效；案件或证据变化需重新预览。来源为 qq_official 的成员身份是 OpenID，不是 QQ 号。</p>"
+        f"<table><tr><th>案件</th><th>来源</th><th>群名 / 群身份</th><th>成员身份</th><th>案件依据</th></tr>{rows}</table>"
+        f'<form method="post" action="/admin/cases/batch-confirm">{_csrf_field(token)}<input type="hidden" name="plan_id" value="{_esc(plan.id)}">'
+        '<p><button class="btn ok">确认保留成员并结案</button><a class="btn" href="/admin">取消，返回列表</a></p></form>',
+    )
+    response.headers["Cache-Control"] = "no-store"
+    return response
+
+
+@router.post("/cases/batch-confirm")
+async def case_batch_confirm(
+    request: Request, csrf: Annotated[str, Form()] = "", plan_id: Annotated[str, Form()] = ""
+) -> Response:
+    token = await _require_admin_post(request, csrf)
+    async with SessionLocal() as session:
+        count = await case_batch.confirm_plan(session, plan_id, _human_actor(token))
+        await session.commit()
+    return RedirectResponse(
+        "/admin?notice="
+        + quote(f"本批 {count} 个案件已保留成员并结案（未处罚成员）；重复确认不会重复处理。"),
+        status_code=303,
+    )
 
 
 # ---------- 统计大盘 ----------
