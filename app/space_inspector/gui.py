@@ -12,6 +12,7 @@ from pathlib import Path
 from tkinter import filedialog, messagebox, ttk
 
 from .contracts import LABELS, REASONS, Group, InspectionError
+from .export_paths import default_export_root
 from .options import ScanOptions
 from .service import data_root
 from .worker import Command, Event, run_worker
@@ -40,7 +41,9 @@ class Window:
         self._status = tk.StringVar(value="正在准备……")
         self._summary = tk.StringVar(value="尚未创建巡检任务")
         self._folder_text = tk.StringVar()
+        self._task_text = tk.StringVar(value="尚未创建或载入任务")
         self._export_text = tk.StringVar()
+        self._export_root_text = tk.StringVar(value=str(default_export_root()))
         self._automatic = tk.BooleanVar(value=True)
         self._reuse = tk.BooleanVar(value=True)
         self._lightweight = tk.BooleanVar(value=True)
@@ -136,23 +139,31 @@ class Window:
             actions, text="导出结果", command=lambda: self._submit("export")
         )
         self._export_button.pack(side="right")
-        ttk.Button(actions, text="打开导出目录", command=self._open_export).pack(
-            side="right", padx=6
-        )
 
         paths = ttk.Frame(outer)
         paths.grid(row=6, column=0, sticky="ew", pady=(0, 6))
         paths.columnconfigure(1, weight=1)
         for row, (label, variable) in enumerate(
-            [("任务目录：", self._folder_text), ("最近导出：", self._export_text)]
+            [
+                ("当前任务：", self._task_text),
+                ("续扫数据：", self._folder_text),
+                ("最近导出：", self._export_text),
+                ("导出总目录：", self._export_root_text),
+            ]
         ):
             ttk.Label(paths, text=label).grid(row=row, column=0, sticky="w", pady=2)
             ttk.Entry(paths, textvariable=variable, state="readonly").grid(
                 row=row, column=1, sticky="ew"
             )
-        ttk.Button(paths, text="打开任务目录", command=self._open_task_folder).grid(
-            row=0, column=2, padx=(8, 0)
+        ttk.Button(paths, text="打开任务数据", command=self._open_task_folder).grid(
+            row=1, column=2, padx=(8, 0)
         )
+        ttk.Button(paths, text="打开本次结果", command=self._open_export).grid(
+            row=2, column=2, padx=(8, 0)
+        )
+        ttk.Button(
+            paths, text="查看所有导出", command=lambda: self._open_export(all_results=True)
+        ).grid(row=3, column=2, padx=(8, 0))
         ttk.Label(outer, textvariable=self._summary, wraplength=950).grid(
             row=7, column=0, sticky="ew", pady=4
         )
@@ -479,6 +490,8 @@ class Window:
     def _show_summary(self, summary: object) -> None:
         if not isinstance(summary, dict):
             return
+        if isinstance(summary.get("task_label"), str):
+            self._task_text.set(summary["task_label"])
         labels = [
             ("total", "成员数"),
             ("checked", "已有观察"),
@@ -498,6 +511,7 @@ class Window:
             self._folder_text.set(str(folder))
         elif "folder" in payload:
             self._folder = None
+            self._task_text.set("尚未创建或载入任务")
             self._folder_text.set("")
             self._export_text.set("")
         self._show_summary(payload.get("summary"))
@@ -598,7 +612,9 @@ class Window:
             elif kind == "exported":
                 path = str(payload.get("path", ""))
                 self._export_text.set(path)
-                self._status.set("结果已导出，文件位置显示在“最近导出”一栏。")
+                self._status.set(
+                    "结果已导出。点“打开本次结果”，按群名和群号查看 CSV；总表与核验记录也保留。"
+                )
             elif kind == "error":
                 self._show_snapshot(payload)
                 self._defer_qq = str(payload.get("defer_qq", ""))
@@ -616,13 +632,21 @@ class Window:
             self._controls()
         self.root.after(100, self._poll)
 
-    def _open_export(self) -> None:
-        target = self._export_text.get()
-        if target and Path(target).is_dir() and sys.platform == "win32":
+    def _open_export(self, *, all_results: bool = False) -> None:
+        target = (
+            self._export_root_text.get()
+            if all_results or not self._export_text.get()
+            else self._export_text.get()
+        )
+        if Path(target).is_dir() and sys.platform == "win32":
             try:
                 os.startfile(target)
             except OSError:
-                self._status.set("无法打开文件夹，请复制“最近导出”中的路径自行打开。")
+                self._status.set("无法打开文件夹，请复制窗口中的导出路径自行打开。")
+        else:
+            self._status.set(
+                "导出目录尚不存在。请先载入任务并点“导出结果”；旧导出仍保留在旧任务数据中。"
+            )
 
     def _open_task_folder(self) -> None:
         target = self._folder or data_root() / "tasks"

@@ -27,6 +27,7 @@ from .contracts import (
     PlatformAccessBlocked,
     numeric_id,
 )
+from .export_paths import default_export_root
 from .options import ScanOptions
 
 EXPERIMENT_BATCH_SIZE = 300
@@ -153,6 +154,7 @@ class Service:
         except Exception:
             raise InspectionError("请先在本项目配置中填写有效的机器人 QQ 号。") from None
         self.root = data_root()
+        self.export_root = default_export_root()
         self.root.mkdir(parents=True, exist_ok=True)
         self._lock = FileLock(self.root / "desktop.lock")
         try:
@@ -334,6 +336,7 @@ class Service:
         return (
             {
                 **self._store.summary(),
+                "task_label": self._store.task_label(),
                 "reused": self._store.reused_count(),
                 "deferred": (
                     len(self._deferred.intersection(self._store.pending()))
@@ -351,7 +354,7 @@ class Service:
     def export(self) -> Path:
         if self._store is None:
             raise InspectionError("请先创建或载入任务。")
-        return self._store.export()
+        return self._store.export(self.export_root)
 
     def close(self) -> None:
         failed = False

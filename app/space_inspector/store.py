@@ -23,6 +23,7 @@ from app.space_inspector.contracts import (
     Observation,
     numeric_id,
 )
+from app.space_inspector.export_paths import group_stem
 
 APPLICATION_ID = 0x51515349
 SCHEMA_VERSION = 1
@@ -497,13 +498,29 @@ FROM (SELECT DISTINCT qq FROM membership) m LEFT JOIN observations o ON o.qq=m.q
             for row in self.db.execute(_SELECT_ROWS + " ORDER BY g.group_id,m.qq LIMIT ?", (limit,))
         ]
 
-    def export(self) -> Path:
-        target = (
-            self.folder
-            / "exports"
-            / (datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ") + "-" + uuid.uuid4().hex[:12])
-        )
-        target.mkdir(parents=True, exist_ok=False)
+    def task_label(self) -> str:
+        groups = self.db.execute(
+            "SELECT name,group_id FROM groups ORDER BY group_id LIMIT 10"
+        ).fetchall()
+        names = "、".join(f"{row['name'][:60]}（{row['group_id']}）" for row in groups)
+        created = datetime.fromisoformat(str(self.metadata["created_at"])).astimezone()
+        return f"{created:%Y-%m-%d %H:%M:%S} · {names or '尚未保存群快照'}"
+
+    @staticmethod
+    def _csv_row(row: dict[str, object]) -> list[str]:
+        evidence = row["evidence"]
+        assert isinstance(evidence, dict)
+        reuse = evidence.get("reuse", {})
+        return [_safe_csv(row[key]) for key in ("group_name", "group_id", "qq")] + [
+            LABELS[str(row["status"])],
+            str(row["checked_at"]),
+            REASONS.get(str(row["reason"]), str(row["reason"])),
+            "历史观察" if reuse else "本任务访问" if row["checked_at"] else "尚未访问",
+            str(reuse.get("reused_at", "")),
+            str(reuse.get("source_task", "")),
+        ]
+
+    def export(self, destination_root: Path | None = None) -> Path:
         self.db.execute("BEGIN")
         try:
             header = [
@@ -520,6 +537,29 @@ FROM (SELECT DISTINCT qq FROM membership) m LEFT JOIN observations o ON o.qq=m.q
             groups = [
                 dict(row) for row in self.db.execute("SELECT * FROM groups ORDER BY group_id")
             ]
+            exported_at = datetime.now(UTC).astimezone()
+            if destination_root is None:
+                # Retain the old low-level export contract for existing local integrations.
+                target = (
+                    self.folder
+                    / "exports"
+                    / (
+                        exported_at.astimezone(UTC).strftime("%Y%m%dT%H%M%SZ")
+                        + "-"
+                        + uuid.uuid4().hex[:12]
+                    )
+                )
+            else:
+                stem = (
+                    group_stem(groups[0]["name"], groups[0]["group_id"]) if groups else "未封存任务"
+                )
+                if len(groups) > 1:
+                    stem += f"_等{len(groups)}群"
+                target = (
+                    destination_root
+                    / f"{stem}_{exported_at:%Y-%m-%d_%H%M%S}_{uuid.uuid4().hex[:8]}"
+                )
+            target.mkdir(parents=True, exist_ok=False)
             metadata = self.metadata
             summary = self.summary()
             with (
@@ -533,6 +573,8 @@ FROM (SELECT DISTINCT qq FROM membership) m LEFT JOIN observations o ON o.qq=m.q
                 all_writer.writerow(header)
                 restricted_writer.writerow(header)
                 report.write('{"metadata":' + json.dumps(metadata, ensure_ascii=False))
+                report.write(',"task_id":' + json.dumps(self.folder.name, ensure_ascii=False))
+                report.write(',"exported_at":' + json.dumps(exported_at.isoformat()))
                 report.write(
                     ',"scope":"成员关联依据为任务保存的群快照；非服务器实时成员证明。QQ空间提示不等同于账号永久失效。"'
                 )
@@ -541,28 +583,40 @@ FROM (SELECT DISTINCT qq FROM membership) m LEFT JOIN observations o ON o.qq=m.q
                 first = True
                 for raw in self.db.execute(_SELECT_ROWS + " ORDER BY g.group_id,m.qq"):
                     row = self._row(raw)
-                    csv_row = [_safe_csv(row[key]) for key in ("group_name", "group_id", "qq")]
-                    csv_row += [
-                        LABELS[str(row["status"])],
-                        str(row["checked_at"]),
-                        REASONS.get(str(row["reason"]), str(row["reason"])),
-                    ]
-                    evidence = row["evidence"]
-                    assert isinstance(evidence, dict)
-                    reuse = evidence.get("reuse", {})
-                    csv_row += [
-                        "历史观察" if reuse else "本任务访问" if row["checked_at"] else "尚未访问",
-                        str(reuse.get("reused_at", "")),
-                        str(reuse.get("source_task", "")),
-                    ]
+                    csv_row = self._csv_row(row)
                     all_writer.writerow(csv_row)
                     if row["status"] == RESTRICTED:
                         restricted_writer.writerow(csv_row)
                     report.write(("" if first else ",") + json.dumps(row, ensure_ascii=False))
                     first = False
                 report.write("]}")
+            if destination_root is not None:
+                for group in groups:
+                    stem = group_stem(group["name"], group["group_id"])
+                    with (
+                        (target / f"{stem}_全部成员.csv").open(
+                            "x", encoding="utf-8-sig", newline=""
+                        ) as group_all,
+                        (target / f"{stem}_观察到限制.csv").open(
+                            "x", encoding="utf-8-sig", newline=""
+                        ) as group_restricted,
+                    ):
+                        writers = (csv.writer(group_all), csv.writer(group_restricted))
+                        for writer in writers:
+                            writer.writerow(header)
+                        for raw in self.db.execute(
+                            _SELECT_ROWS + " WHERE g.group_id=? ORDER BY m.qq", (group["group_id"],)
+                        ):
+                            row = self._row(raw)
+                            csv_row = self._csv_row(row)
+                            writers[0].writerow(csv_row)
+                            if row["status"] == RESTRICTED:
+                                writers[1].writerow(csv_row)
             explanation = (
                 "QQ 空间限制巡检结果\n"
+                f"来源任务：{self.folder.name}\n"
+                f"任务创建时间：{metadata['created_at']}\n"
+                f"本次导出时间：{exported_at.isoformat()}（本机时区）\n"
                 f"群成员来源账号：{metadata['source_self_id']}\n"
                 f"空间查看账号：{metadata['viewer_qq']}\n"
                 f"群快照已封存：{metadata['prepared']}\n"
@@ -577,13 +631,22 @@ FROM (SELECT DISTINCT qq FROM membership) m LEFT JOIN observations o ON o.qq=m.q
                 "历史观察的 evidence.reuse 记录复用时间及来源任务/访问记录；限制结果也须结合原观察时间复核。\n"
                 "接口群人数与快照人数可能不同；下列数值仅供核对。\n"
             )
+            if destination_root is not None:
+                explanation += (
+                    "\n优先打开带群名和群号的 CSV：全部成员含尚未完成者；观察到限制仅含明确提示。\n"
+                    "report.csv / restricted.csv 是多群合并总表，report.json 是完整结构化记录，保留供兼容核验。\n"
+                    "每次导出是独立快照，不覆盖旧导出；群名过长或含文件名禁用字符时仅对文件名缩写。\n"
+                    "只有存在 COMPLETE 标记时，本次导出才完整；CSV 结果不是可继续检查的任务目录。\n\n"
+                )
             for group in groups:
                 explanation += (
-                    f"群 {group['group_id']}：接口人数 {group['declared_count']}，"
+                    f"{group['name']}（群 {group['group_id']}）：接口人数 {group['declared_count']}，"
                     f"快照人数 {group['snapshot_count']}\n"
                 )
             (target / "说明.txt").write_text(explanation, encoding="utf-8-sig")
-            (target / "COMPLETE").write_text("export complete\n", encoding="utf-8")
+            marker = target / ".complete.tmp"
+            marker.write_text("export complete\n", encoding="utf-8")
+            marker.rename(target / "COMPLETE")
             return target
         except (sqlite3.Error, OSError, ValueError, TypeError, KeyError):
             raise InspectionError("导出未完成，原任务记录仍保留。") from None
