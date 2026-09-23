@@ -287,7 +287,7 @@ def eligible(rows: list[Case]) -> None:
 async def create_plan(
     session: AsyncSession, rows: list[Case], actor: str, reason: str
 ) -> tuple[AdminChangePlan, list[dict[str, Any]]]:
-    reason = reason.strip()
+    reason = reason.strip() or "人工处理"
     if not 1 <= len(reason) <= 500:
         raise HTTPException(422, "请填写 1 至 500 字的结案原因")
     eligible(rows)

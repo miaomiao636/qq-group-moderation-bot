@@ -29,7 +29,7 @@ from app.models import AdminAudit
 from app.reports.cleanup import purge_expired
 from app.reports.service import build_daily, build_weekly
 from app.reports.stats import build_stats
-from app.web import auth, case_batch
+from app.web import auth, case_batch, case_selection
 from app.web.pagination import Page, page_controls
 
 router = APIRouter(prefix="/admin", include_in_schema=False)
@@ -494,26 +494,27 @@ async def dashboard(
         f'<a class=btn href="/admin{"?archived=1" if show_archived else ""}">重置</a></form>'
     )
     batch_form = (
-        '<form id="case-batch" method="post" action="/admin/cases/batch-preview">'
+        '<form id="case-batch" method="post" action="/admin/cases/batch-preview" '
+        f'data-selection-session="{sha256(token.encode()).hexdigest()}" '
+        f'data-selection-reset="{int(request.query_params.get("case_batch_done") == "1")}">'
         + _csrf_field(token)
         + "".join(
-            f'<input type="hidden" name="{key}" value="{_esc(value)}">'
+            f'<input type="hidden" name="{key}" value="{_esc(value)}" data-case-filter="1">'
             for key, value in filters.items()
         )
-        + '<div class="card"><label>操作范围 <select name="scope"><option value="selected">勾选案件（本页）</option><option value="filtered">当前筛选全部（含其他页）</option></select></label> '
-        '<button type="button" class="btn" onclick="caseSelect(true)">全选本页</button>'
-        '<button type="button" class="btn" onclick="caseSelect(false)">清空勾选</button>'
+        + '<div class="card"><label>操作范围 <select name="scope"><option value="selected">勾选案件（可跨页）</option><option value="filtered">当前筛选全部（含其他页）</option></select></label> '
+        '<button type="button" class="btn" id="case-select-page">全选本页</button>'
+        '<button type="button" class="btn" id="case-clear-page">清空本页</button>'
+        '<button type="button" class="btn" id="case-clear-all">清空全部勾选</button>'
         '<span id="case-selected" role="status">已勾选 0 项</span>'
         '<p><button class="btn" formaction="/admin/cases/batch-export">导出 CSV</button>'
-        '<label>结案原因 <input name="reason" maxlength="500" style="width:300px" placeholder="预览结案时必填"></label> '
-        '<button class="btn" formaction="/admin/cases/batch-preview">预览批量保留并结案</button></p>'
+        '<span class="muted">结案记录：人工处理</span> '
+        '<button class="btn" formaction="/admin/cases/batch-preview">批量标记已人工处理</button></p>'
         f'<p class="muted">导出每次最多 {case_batch.EXPORT_LIMIT} 案；结案每次最多 {case_batch.CLOSE_LIMIT} 案，仅限未归档待审案件。'
-        "结案保留违规记录与累计次数，不处罚成员；以后新违规仍可能重新立案。勾选不跨页保存。上方待人工清单不属于此筛选范围。</p></div>"
+        "结案保留违规记录与累计次数，不处罚成员；以后新违规仍可能重新立案。勾选在当前标签页跨页保留，更换筛选条件或登录会话会清空。上方待人工清单不属于此筛选范围。</p></div>"
         f"<table><tr><th>选择</th><th>批次号</th><th>来源</th><th>群</th><th>成员</th><th>状态</th><th>创建</th><th></th></tr>{rows}</table></form>"
-        '<script>function caseCount(){document.getElementById("case-selected").textContent="已勾选 "+document.querySelectorAll("#case-batch input[name=case_ids]:checked").length+" 项";}'
-        'function caseSelect(on){document.querySelectorAll("#case-batch input[name=case_ids]").forEach(function(e){e.checked=on});caseCount();}'
-        'document.getElementById("case-batch").addEventListener("change",caseCount);</script>'
-        f"<p class=muted style=margin-top:8px>批量删除功能已按主审要求停用（R02/R03：硬删除破坏共用违规记录与编号/通知契约）；"
+        + case_selection.script(case_batch.EXPORT_LIMIT)
+        + f"<p class=muted style=margin-top:8px>批量删除功能已按主审要求停用（R02/R03：硬删除破坏共用违规记录与编号/通知契约）；"
         f"共 {total} 条，第 {page}/{total_pages} 页</p>"
     )
     pager = (
@@ -620,12 +621,12 @@ async def case_batch_prepare(
     )
     response = _page(
         "批量结案预览",
-        f"<h2>批量保留并结案：{len(preview)} 个案件</h2>"
-        "<p>仅将以下待审案件保留成员并结案，不撤回、不禁言、不踢人。违规记录和累计次数保留，后续新违规仍可能重新立案。</p>"
-        f"<p>结案原因：{_esc(reason.strip())}</p><p>预览 5 分钟内有效；案件或证据变化需重新预览。来源为 qq_official 的成员身份是 OpenID，不是 QQ 号。</p>"
+        f"<h2>批量标记已人工处理：{len(preview)} 个案件</h2>"
+        "<p>将以下待审案件标记为已人工处理并结案。保留证据和违规累计，不处罚成员；后续新违规仍可能重新立案。</p>"
+        f"<p>结案记录：{_esc(json.loads(plan.params_json)['reason'])}</p><p>预览 5 分钟内有效；案件或证据变化需重新预览。来源为 qq_official 的成员身份是 OpenID，不是 QQ 号。</p>"
         f"<table><tr><th>案件</th><th>来源</th><th>群名 / 群身份</th><th>成员身份</th><th>案件依据</th></tr>{rows}</table>"
         f'<form method="post" action="/admin/cases/batch-confirm">{_csrf_field(token)}<input type="hidden" name="plan_id" value="{_esc(plan.id)}">'
-        '<p><button class="btn ok">确认保留成员并结案</button><a class="btn" href="/admin">取消，返回列表</a></p></form>',
+        '<p><button class="btn ok">确认标记已人工处理</button><a class="btn" href="/admin">取消，返回列表</a></p></form>',
     )
     response.headers["Cache-Control"] = "no-store"
     return response
@@ -640,8 +641,8 @@ async def case_batch_confirm(
         count = await case_batch.confirm_plan(session, plan_id, _human_actor(token))
         await session.commit()
     return RedirectResponse(
-        "/admin?notice="
-        + quote(f"本批 {count} 个案件已保留成员并结案（未处罚成员）；重复确认不会重复处理。"),
+        "/admin?case_batch_done=1&notice="
+        + quote(f"本批 {count} 个案件已标记为人工处理并结案；重复确认不会重复处理。"),
         status_code=303,
     )
 
