@@ -92,6 +92,8 @@ QQ 群多模态智能管理机器人：**双通道**（OneBot/NapCat + QQ 官方
 
 ## 2. 状态快照（本轮与历史分开）
 
+**SPACE-EXPORT-20260923**：独立巡检导出已与内部任务分离，新结果按群名/群号/时间命名，每群独立 CSV；旧任务 ID 和旧导出保留。代码 `8fceddedc95b1fea921a332211ab504294cb7490`、内部回归 `684b4eaf1c6d8ba889769da776c992f81fd62b6d`。本轮执行命令、结果与最终 CI 核验入口见 [导出记录](2026-09-21-space-inspector.md#导出目录与群结果辨识space-export-20260923)。不涉及生产服务加载或扫描逻辑。
+
 **最新 DAILY-BACKUP-20260922**：源码 7b040b8 的全量、门禁与精确 CI、文档 HEAD 4182767 的 CI 已通过。执行 SHA 4182767 已注册每日 SYSTEM 任务，手工触发首跑和完整隔离恢复通过；完整 SHA、命令、收据和原进程/开关不变比较见 [每日备份](2026-09-22-daily-backup.md)。首次按时自动触发尚未到期，不称为已连续多日运行。
 
 **本轮 SPACE-OPTIMIZE-20260922**：独立巡检优化的冻结源码/测试 SHA 为 `df0a82b849b4a8ad598a2592f38ac99c1dc04c50`；`uv run pytest --junitxml='C:/Users/81596/AppData/Local/Temp/qqbot-space-inspector-20260922-optimize/full.xml'` 得到 2470 passed、18 skipped、0 failed/error，原主审子集保持通过。完整命令、门禁、可选浏览器测试的单独执行与跳过说明见 [优化验证](2026-09-21-space-inspector.md#自动续批与性能优化space-optimize-20260922)。本机独立桌面环境可导入新版，真实自动续批与整群完成仍待验收；未因本轮改变生产加载版本。
@@ -319,6 +321,8 @@ Start-Sleep -Seconds 600        # Windows job 约 10-13 分钟；循环检查直
 
 ## 7. 未关闭项与待办（含前置条件）
 
+**巡检导出跟进**：负责人选择稍后实机验证新布局；重开窗口、载入原任务并导出即可，无需重新扫描。旧文件不搬迁/清理，真实整群持续可行性仍按巡检原有边界单独验收。
+
 **DAILY-BACKUP 已收口**：QQBotDailyBackup 已启用，SYSTEM 首跑与完整隔离恢复已验收；新备份无需恢复密钥。日后核对 last_attempt/last_success 与磁盘空间，达到上限停止而不自动删除；QQ/邮件通知按负责人要求未配置。首次按时触发尚未到期，整机故障恢复与 N03 删除处置仍分别按下面前置条件处理。
 
 **SPACE-OPTIMIZE-20260922 当前待办**：负责人重开独立桌面工具、载入原任务后核对新版设置、自动跨批和导出；短间隔吞吐及整群持续可行性另验。候选 CGI 本次请求未取得有效限制原因，参数完整请求及对照仍未验证，尚未接入；不能把权限失败当成员违规。已有自动续批、轻量加载和历史复用的实现/离线结果见巡检记录，不能将其当作上述实机验收。
@@ -402,6 +406,8 @@ A09 前 6 秒、历史授权快照、Windows 回滚全链实机演练、
 ---
 
 ## 9. 已知"登记式适配"清单（改测试前先读）
+
+**SPACE-EXPORT-20260923**：新增内部回归 `tests/test_space_inspector_exports.py`；既有 `tests/test_space_inspector_optimization.py::test_partial_snapshot_can_be_viewed_and_exported_but_cannot_scan` 仅显式注入 TEMP 导出根目录，保留全部断言，避免新版 Service 将测试结果写到真实桌面。原外部主审探针未修改，旧 Store.export() 无参兼容契约仍被原测试覆盖。
 
 **SPACE-OPTIMIZE-20260922**：本轮没有适配或改写外部主审探针。新增内部回归 `tests/test_space_inspector_optimization.py`、`tests/test_space_inspector_lightweight.py` 已随测试提交 `df0a82b849b4a8ad598a2592f38ac99c1dc04c50` 入库；Edge 夹具只访问本机合成页面。只读审阅发现的未封存快照载入、导航旧页面、连续暂缓和过滤清理问题已补回归，完整证据见巡检记录。
 

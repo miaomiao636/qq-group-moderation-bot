@@ -11,8 +11,10 @@
 1. 打开工具，刷新群列表。群成员来源是项目已配置的机器人账号；QQ 空间观察账号由专用浏览器正常登录，两者分别显示。
 2. 点击“打开空间登录”，在独立 Microsoft Edge 中登录 QQ 空间，然后点击“确认已登录”。首次登录和之后的会话过期需要本人处理；不复制现有浏览器或 QQ 的凭据。
 3. 正常访问恢复后，选择需要检查的群，点击“开始检查所选群”。本次优化默认开启自动续批：每批 300 人、相邻实时检查等待 30 秒、批间休息 60 秒，按保存的待检查队列继续。窗口可调间隔、批量及休息，关闭自动续批则一批结束后停止；这些均为试验设置，不是腾讯允许频率，仍可能被拦截。每个任务最多选择 10 个群；同一账号跨群只访问一次，导出保留每个群的关联。
-4. 可以暂停、关闭后载入任务继续。点击“载入已有任务”，在窗口内按创建时间、群名和进度选择任务，再点“载入所选”；默认选择最新任务，不必寻找隐藏的 AppData 目录。“其他位置”保留手动选择入口。载入不会自动开始巡检；点“继续检查”才续扫。任务逐项保存；同一任务必须使用原成员来源账号和空间观察账号才能续扫。仅查看或导出已有任务不需要重新登录空间。需要查看文件时点“打开任务目录”；未载入任务时打开任务根目录。AppData 默认隐藏，也可按 Win+R 输入 `%LOCALAPPDATA%\QQSpaceInspector\tasks` 直接进入。
-5. 点击“导出结果”，再点“打开导出目录”。`restricted.csv` 仅包含明确空间违规限制提示；`report.csv` 包含全部快照成员；`report.json` 保存观察依据、统计和群快照信息；`说明.txt` 解释范围与未完成数量。CSV 可用 Excel 打开。历史复用行额外标注观察来源、原观察时间、复用时间和来源任务，不表示本次重新访问。
+4. 可以暂停、关闭后载入任务继续。点击“载入已有任务”，在窗口内按创建时间、群名和进度选择任务，再点“载入所选”；默认选择最新任务，不必寻找隐藏的 AppData 目录。“其他位置”保留手动选择入口。窗口“当前任务”显示已载入任务的创建时间、群名和群号，与上方新建任务的选群状态区分。载入不会自动开始巡检；点“继续检查”才续扫。任务逐项保存；同一任务必须使用原成员来源账号和空间观察账号才能续扫。仅查看或导出已有任务不需要重新登录空间。“打开任务数据”查看内部续扫记录，AppData 默认隐藏，也可按 Win+R 输入 `%LOCALAPPDATA%\QQSpaceInspector\tasks` 直接进入。
+5. 点击“导出结果”，再点“打开本次结果”。新结果集中保存到实际 Windows 桌面的“QQ空间巡检结果”，根目录也显示在窗口中；“查看所有导出”打开总目录。结果目录使用群名、群号、本机导出时间和区分码，多群任务标注“等 N 群”。各群分别有“群名_群号_全部成员.csv”和“群名_群号_观察到限制.csv”；后者仅包含明确空间违规限制提示，前者包含尚未完成的快照成员。兼容总表 `report.csv`、`restricted.csv` 与完整 `report.json` 保留，`说明.txt` 列出群名、群号、创建/导出时间和范围。CSV 可用 Excel 打开。历史复用行保留原观察时间、复用时间和来源任务，不表示本次重新访问。
+
+旧任务和旧导出保持原位；载入旧任务后重新导出即可得到新布局，不必重新扫描。任务 ID 用于续扫、锁和历史来源，不按群名重命名；导出的 CSV 不是可继续巡检的任务目录。每次导出建立独立快照，不覆盖旧文件。新窗口需关闭旧程序后重新打开才能加载；不会自动重启正在扫描的窗口。
 
 不要在扫描期间手动切换专用浏览器的页面或账号。已核验的“主人设置了权限”“对方未开通空间”和“功能升级维护，暂不支持非好友访问”页面记为待确认并继续；遇到登录失效、访问失败或其他未知页面会保存进度并暂停，提示具体 QQ 号及原因，用户处理后才能继续。未完成任务也可导出，导出不会把未完成成员当作正常。
 
@@ -37,11 +39,59 @@
 
 安装脚本使用 `uv sync --locked --no-dev --extra inspection`，在 `%LOCALAPPDATA%/QQSpaceInspector/runtime` 安装独立环境并创建桌面快捷方式。Playwright 是可选依赖，不加入生产基础依赖；脚本不修改主服务配置。
 
-数据目录：`%LOCALAPPDATA%/QQSpaceInspector/`。`browser/` 是工具自己的浏览器资料目录，含正常登录会话；`tasks/` 是巡检任务与导出，均仅保存在本机，不提交 Git。不要共享整个目录。群目录默认读取 `D:/QQ/config/onebot11_<ONEBOT_SELF_ID>.json`；其他部署可用进程环境变量 `QQ_SPACE_NAPCAT_CONFIG_DIR` 指定目录，不在界面输入或展示令牌。
+数据目录：`%LOCALAPPDATA%/QQSpaceInspector/`。`browser/` 是工具自己的浏览器资料目录，含正常登录会话；`tasks/` 保存巡检任务及旧版导出。新导出位于桌面“QQ空间巡检结果”；系统无法提供桌面位置时回退到用户目录下同名目录，以窗口“导出总目录”为准。均仅保存在本机，不提交 Git。不要共享整个数据目录。群目录默认读取 `D:/QQ/config/onebot11_<ONEBOT_SELF_ID>.json`；其他部署可用进程环境变量 `QQ_SPACE_NAPCAT_CONFIG_DIR` 指定目录，不在界面输入或展示令牌。
 
 目录适配器只调用 `get_login_info`、`get_group_list`、`get_group_member_list`，固定账号、回环地址、无代理、无重定向；读取群/成员前后核对登录身份。专用浏览器和任务分别加操作系统锁，异常退出不留下永久逻辑锁。只保存最小页面观察，不保存整页资料或登录令牌。
 
-## 代码与内部回归来源
+## 导出目录与群结果辨识（SPACE-EXPORT-20260923）
+
+负责人反馈目录层级与编码名难以辨认。接手基线 `907e3c66a6b84030a00947505aebd026c0697981`，`git pull --ff-only`、`git log -1`、`git status --short --branch` 确认分支已对齐且工作区干净。对 `%LOCALAPPDATA%/QQSpaceInspector/tasks` 用 `Get-ChildItem -Directory` 分层只读检查，实际是固定的 `任务/exports/每次导出/文件`，重复导出是并列快照，未发现无穷递归。旧文件原位保留。
+
+本轮新 GUI 导出改为桌面独立目录，示例仅为合成命名：
+
+```text
+QQ空间巡检结果/
+  测试交流群_群55555555_2026-09-23_120000_a1b2c3d4/
+    测试交流群_群55555555_全部成员.csv
+    测试交流群_群55555555_观察到限制.csv
+    report.csv
+    restricted.csv
+    report.json
+    说明.txt
+    COMPLETE
+```
+
+多群结果在同一层生成各群表格，合并总表保留兼容读取方。目录时间为本机导出时间，JSON/说明保留创建时间、导出时区与内部来源任务 ID；文件名中的群名可安全截短，表格保留原始群名。群号区分同名群，随机区分码配合排他创建避免同秒覆盖。临时完成标记成功关闭后才改名为 `COMPLETE`，失败不冒充完整导出。整个导出仍使用同一 SQLite 读事务，不改变既有快照、观察时间或复用来源。`Store.export()` 无参调用保留原低层契约；GUI 通过 Service 显式指定公共输出根。
+
+- 代码提交：`8fceddedc95b1fea921a332211ab504294cb7490`，仅 `app/space_inspector/`。
+- 内部回归提交：`684b4eaf1c6d8ba889769da776c992f81fd62b6d`，新增 `tests/test_space_inspector_exports.py`；已有未封存任务测试仅补 TEMP 输出根夹具，所有原断言保留。没有修改原外部主审探针。
+- 首次针对性失败复现：基线 `907e3c6...` 加当时新增测试草稿，`uv run pytest tests/test_space_inspector_exports.py -q --tb=short --junitxml=<下述证据目录>/red.xml`；预期失败为旧 Service 仍导出到任务内，且 Store 不接受独立输出根。`red.log/xml` 是修改前记录，不能作为最终测试数量。后续补同名多群、恶意/过长/Windows 设备名、CSV 公式、空/未封存任务、重复导出/强制碰撞、写入和完成标记失败的回归。
+
+本轮全量及门禁实际执行 SHA：`684b4eaf1c6d8ba889769da776c992f81fd62b6d`。证据目录：`C:/Users/81596/AppData/Local/Temp/qqbot-space-inspector-20260923-export-layout/`，`checks.json` 保存命令与退出码，`summary.json` 从 `full.xml` 复算。实际命令：
+
+```powershell
+uv run pytest --junitxml=C:/Users/81596/AppData/Local/Temp/qqbot-space-inspector-20260923-export-layout/full.xml
+uv run ruff check app tests alembic scripts
+uv run ruff format --check app tests alembic scripts
+uv run mypy app
+uv run python C:/Users/81596/AppData/Local/Temp/qqbot-space-inspector-20260923-export-layout/verify_gui.py
+```
+
+该 SHA 全量为 **2521 passed、19 skipped、0 failed/error**（共 2540 项）；原主审子集 31 文件/262 项通过；巡检子集 268 项中 266 passed、2 skipped。格式检查 380 文件，类型检查 123 源文件，门禁均通过。19 项跳过分别为生产服务持锁的隔离保护 13 项、私有样本未提供 1 项、环境链接权限 4 项、可选 inspection 运行时未安装 1 项；本轮未停止生产服务去消除这些跳过，不能统称为 Windows 平台差异。
+
+上述 GUI 脚本使用合成 worker，不连接 QQ、不加载真实任务；验证当前任务显示、导出事件、打开本次/全部目录、窄窗口布局和退出。它是本机隔离检查，TEMP 脚本未入库，不能声称被 CI 覆盖。另在相同执行 SHA 用独立桌面 runtime 的 `python.exe -c "from app.space_inspector.export_paths import default_export_root; import app.space_inspector.service as s; print(s.__file__); print(default_export_root())"` 核对实际导入本仓库和本机桌面输出位置。
+
+最终文档提交的 CI 必须另按推送后的 HEAD 查询，不沿用上一轮绿色记录：
+
+```powershell
+git rev-parse HEAD
+gh run list --branch windows-deploy-2026-09-10 --limit 5 --json databaseId,headSha,status,conclusion,url
+gh run view <匹配本轮最终HEAD的run-id> --json headSha,status,conclusion,attempt,jobs,url
+```
+
+最终交接提供实际固定 run 链接，查询结果留在上述证据目录的 `ci-final.json`。负责人选择稍后验证真实任务再导出；本轮不把隔离 GUI 或用户此前扫描反馈写成新版真实导出/全群运行验收。
+
+## 代码与内部回归来源（历史首版）
 
 - 依赖提交：`7c3a9796ae210a597825dd043106fb72637214cf`，仅 `pyproject.toml`、`uv.lock`。
 - 代码提交：`67ea1c4439abebfb8a577958e5c1f98f530e0e43`，仅 `app/space_inspector/` 与安装脚本。
