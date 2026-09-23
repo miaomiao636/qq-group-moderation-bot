@@ -51,7 +51,24 @@ NapCat `delete_msg` 的 `failed + 整数 retcode=1200`，且 message/wording 有
 
 源码 [CI run 35858634765](https://github.com/miaomiao636/qq-group-moderation-bot/actions/runs/35858634765) 与最终文档 HEAD 的 CI 分别核验。检查命令：`gh run view <run-id> --json headSha,status,conclusion,jobs,url`；再读取 job 日志，核对实际 PR 合成 checkout 及 tree，不把分支 head 直接写作 CI checkout。源码回执保存 `ci-source-*`；最终文档 HEAD 按 `git rev-parse HEAD` 和 `gh run list --commit <HEAD>` 查询，结果保存审计目录 `ci-final-head.json`。运行未完成或收据缺失时不能宣称 CI 通过；后续文档提交不借用源码 run。
 
-**部署状态：未部署本轮源码。** 生产最近已验证的加载源码仍为 `23d0a1f`。上线需按交接文档 §10 第 2 条取得本轮生产重启授权，先在 D 盘备份，保持现有急停、recall_only、群开关及图片政策；无迁移、无回滚、无历史重放。本轮没有执行线上批量结案。
+## 授权部署（2026-09-23）
+
+负责人明确选择“A：现在上线（推荐）”。部署执行提交 `22e60d19874841ad1e7f32e1c575852a46afbd6c`；其应用代码与全量测试源码 `d3e2d3c` 一致。部署前 [CI run 35859367956](https://github.com/miaomiao636/qq-group-moderation-bot/actions/runs/35859367956) 三 job 全部 success，命令 `gh run view 35859367956 --json headSha,status,conclusion,jobs,url` 与日志已核验；实际 checkout 为 `d79f68dc498c9fbdf491abe0b2a66355f9665026`，tree 与部署提交完全相同。此次上线记录提交后的最终 HEAD 再按 §11 查询，另存 `ci-deployment-doc-head.json`，不将上述 run 冒充更新后的文档 CI。
+
+私有收据目录：`D:/QQBotAudits/case-batch-20260923/deploy-01`。本批只改代码、无迁移和配置变更，变更前数据库副本保存在该 D 盘目录；没有制作 C 盘完整恢复副本。
+
+| 执行命令（仓库根，执行 SHA 均为 `22e60d1`） | 已验证结果 |
+| --- | --- |
+| `powershell.exe -NoProfile -ExecutionPolicy Bypass -File D:/QQBotAudits/case-batch-20260923/deploy-01/deploy-services.ps1`（UAC 正常授权） | 排空观察后正常停 Runtime/Web；数据库备份完整性、外键与 revision `e1c7d4b8a902` 通过；验证后依次启动 Web/Runtime |
+| 同上，`service-state.json` | Runtime NSSM PID `12596 → 31528`，Web `33776 → 17736`；运行目录和 Python 均为当前仓库。状态为 `services-running-await-health`，独立健康验收见下一行 |
+| `.venv/Scripts/python.exe -B D:/QQBotAudits/case-batch-20260923/deploy-01/deploy.py verify` | UTC `12:41:18` 登录页/健康接口成功，OneBot ready/online、队列为 0；备份后自然 inbox 4 条 DONE、shadow 判定 4 条，动作意图 0。`.env`、规则、群授权、路由、动作/白名单/系统设置指纹均未变；源码文件与固定提交逐字节一致 |
+| `.venv/Scripts/python.exe -B D:/QQBotAudits/case-batch-20260923/deploy-01/probe_routes.py` | 新批量接口 OPTIONS 均为 405 / Allow POST，案件首页未登录正确跳登录；确认已加载新入口，不执行结案或下载生产成员数据 |
+
+数据库副本 `moderation-20260923T124034Z-9cujjgur.db`，SHA256 `6201b77631b3b6972b5701693a4eef6e251c37d8f01b9086c6cdde54557be902`；完整路径与校验结果保存在 `backup.json`。授权、脚本哈希和服务轨迹分别在 `authorization.json`、`plan.json`、`service-state.json`；`verified.json` 与 `route-probe.json` 保存实际验收结果。
+
+部署前只读审查发现失败恢复可能在备份失败时启动新版，已在私有执行脚本补 `verified_backup()`，检查收据、固定目录、SHA256、完整性和 revision 后才允许启动。缺备份的 `resume-check` 实测拒绝，服务未受影响；补正收据为 `backup-guard-amendment.json`。没有执行数据库恢复或历史动作重放。第一次健康检查处于 QQ 启动连接阶段未通过，连接 ready 后按原条件复核成功；首次 GET 路由探针命中了既有整型 case ID 路由而返回 422，改用无副作用 OPTIONS 核验实际 POST 入口，未改产品代码或断言口径。
+
+**当前已部署，保持急停 false、recall_only、image_hash shadow 及群开关原值。** 没有代负责人批量结案，没有真人生产 CSV 下载验收，也未观察到新的自然 NapCat 回执超时样本；这些不能由合成回归或自然普通消息替代。应用源码未因本次记录更新改变。
 
 ## 仍然独立待办的事项
 
