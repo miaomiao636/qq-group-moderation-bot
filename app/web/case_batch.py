@@ -84,7 +84,21 @@ def conditions(filters: dict[str, str], group_names: dict[tuple[str, str], str])
             for (provider, gid), name in group_names.items()
             if needle in name
         ]
-        result.append(or_(group_id == needle, *matches))
+        # Historical incomplete rows must remain discoverable by their old
+        # group marker. This is a read-only search fallback, NOT an identity
+        # mapping: identity() still refuses the OneBot mirror for export/close.
+        legacy_groups = {needle} | {
+            gid
+            for (provider, gid), name in group_names.items()
+            if provider == "qq_official" and needle in name
+        }
+        result.append(
+            or_(
+                group_id == needle,
+                *matches,
+                and_(Case.external_group_id == "", Case.group_openid.in_(legacy_groups)),
+            )
+        )
     if start:
         result.append(Case.created_at >= start)
     if exclusive_end:
@@ -97,7 +111,7 @@ async def select_cases(
 ) -> list[Case]:
     if scope not in {"selected", "filtered"}:
         raise HTTPException(422, "请选择勾选案件或当前筛选全部")
-    if len(ids) > EXPORT_LIMIT or any(value <= 0 for value in ids):
+    if len(ids) > EXPORT_LIMIT or any(value <= 0 or value > 2**63 - 1 for value in ids):
         raise HTTPException(422, "案件编号无效或数量过多")
     ids = sorted(set(ids))
     if scope == "selected":

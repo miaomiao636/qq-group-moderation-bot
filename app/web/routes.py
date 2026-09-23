@@ -467,8 +467,8 @@ async def dashboard(
         f"<tr><td><input type=checkbox name=case_ids value={c.id}></td>"
         f"<td><a href=/admin/cases/{c.id}>{_esc(c.case_no)}</a></td>"
         f"<td>{_esc(provider)}</td>"
-        f"<td>{_esc(group_names.get((provider, gid), '') or gid)}<span class=muted> {_esc(gid)}</span></td>"
-        f"<td>{_esc(uid)}{'（OpenID）' if provider == 'qq_official' else ''}</td>"
+        f"<td>{_esc(group_names.get((provider, gid), '') or gid or ('身份未补全；历史群标识：' + c.group_openid))}<span class=muted> {_esc(gid)}</span></td>"
+        f"<td>{_esc(uid or ('身份未补全；历史成员标识：' + c.member_openid))}{'（OpenID）' if provider == 'qq_official' else ''}</td>"
         f"<td>{_esc(_status_zh(c.status))}</td><td>{_esc(f'{c.created_at:%m-%d %H:%M}')}</td>"
         f'<td><a href="/admin/cases/{c.id}">查看</a></td></tr>'
         for c in cases

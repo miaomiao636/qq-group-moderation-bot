@@ -449,3 +449,19 @@ async def test_legacy_official_only_identity_fallback(web_ui):
     }
     assert rows["LEGACY"]["成员身份"] == "official-member" and rows["LEGACY"]["QQ号"] == ""
     assert rows["BROKEN-ONEBOT"]["成员身份"] == "" and rows["BROKEN-ONEBOT"]["QQ号"] == ""
+    response = await client.get("/admin/?group=333333")
+    assert "BROKEN-ONEBOT" in response.text and "身份未补全" in response.text
+    response = await client.post(
+        "/admin/cases/batch-preview",
+        data={"csrf": csrf, "scope": "filtered", "group": "333333", "reason": "reviewed"},
+    )
+    assert response.status_code == 409
+    assert "缺少权威" in response.text
+
+
+async def test_oversized_integer_id_is_validation_error(web_ui):
+    client, _, _, csrf = web_ui
+    response = await client.post(
+        "/admin/cases/batch-export", data={"csrf": csrf, "case_ids": [str(2**64)]}
+    )
+    assert response.status_code == 422
