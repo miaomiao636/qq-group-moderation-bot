@@ -115,6 +115,36 @@ async def test_preview_and_idempotent_atomic_close_preserve_violations(web_ui):
         assert len(audits) == 2
 
 
+async def test_preview_without_reason_records_human_processing(web_ui):
+    client, factory, _, csrf = web_ui
+    await seed(factory)
+    dashboard = await client.get("/admin/")
+    batch_form = dashboard.text.split('id="case-batch"', 1)[1].split("</form>", 1)[0]
+    assert 'name="reason"' not in batch_form and "name=reason" not in batch_form
+    assert "批量标记已人工处理" in batch_form
+    response = await client.post(
+        "/admin/cases/batch-preview",
+        data={"csrf": csrf, "scope": "selected", "case_ids": ["1", "2"]},
+    )
+    assert response.status_code == 200, response.text
+    assert "人工处理" in response.text
+    plan_id = re.search(r'name="plan_id" value="([^"]+)"', response.text)[1]
+    async with factory() as session:
+        plan = await session.get(AdminChangePlan, plan_id)
+        assert json.loads(plan.params_json)["reason"] == "人工处理"
+    confirm = await client.post(
+        "/admin/cases/batch-confirm", data={"csrf": csrf, "plan_id": plan_id}
+    )
+    assert confirm.status_code == 303
+    assert "case_batch_done=1" in confirm.headers["location"]
+    completed_page = await client.get(confirm.headers["location"], follow_redirects=True)
+    assert 'data-selection-reset="1"' in completed_page.text
+    assert await statuses(factory) == ["CLOSED", "CLOSED"]
+    async with factory() as session:
+        rows = list(await session.scalars(select(Case).order_by(Case.id)))
+        assert all("人工处理" in row.audit_json for row in rows)
+
+
 @pytest.mark.parametrize("drift", ["status", "new_evidence", "revoked", "identity"])
 async def test_drift_invalidates_entire_preview(web_ui, drift):
     client, factory, _, csrf = web_ui
@@ -287,6 +317,37 @@ async def test_filtered_export_spans_pages_but_confirmation_never_adds_new_cases
     assert await statuses(factory) == ["CLOSED"] * 51 + ["PENDING_REVIEW"]
 
 
+async def test_selected_cases_from_nonadjacent_pages_export_and_close_together(web_ui):
+    client, factory, _, csrf = web_ui
+    await seed(factory, 101)
+    first_page = await client.get("/admin/?page=1")
+    third_page = await client.get("/admin/?page=3")
+    assert first_page.status_code == third_page.status_code == 200
+    first = re.findall(r"name=case_ids value=(\d+)", first_page.text)[0]
+    last = re.findall(r"name=case_ids value=(\d+)", third_page.text)[0]
+    assert first != last
+    selection = {"csrf": csrf, "scope": "selected", "case_ids": [first, last]}
+    exported = await client.post("/admin/cases/batch-export", data=selection)
+    assert exported.status_code == 200
+    rows = list(csv.DictReader(io.StringIO(exported.content.decode("utf-8-sig"))))
+    assert len(rows) == 2
+    assert {row["QQ号"] for row in rows} == {str(199999 + int(first)), str(199999 + int(last))}
+    previewed = await client.post("/admin/cases/batch-preview", data=selection)
+    assert previewed.status_code == 200, previewed.text
+    assert "人工处理" in previewed.text
+    plan_id = re.search(r'name="plan_id" value="([^"]+)"', previewed.text)[1]
+    closed = await client.post(
+        "/admin/cases/batch-confirm", data={"csrf": csrf, "plan_id": plan_id}
+    )
+    assert closed.status_code == 303
+    async with factory() as session:
+        cases = list(await session.scalars(select(Case).order_by(Case.id)))
+        assert [case.id for case in cases if case.status == "CLOSED"] == sorted(
+            [int(first), int(last)]
+        )
+        assert len([case for case in cases if case.status == "PENDING_REVIEW"]) == 99
+
+
 async def test_export_provider_isolation_formula_and_openid(web_ui):
     client, factory, _, csrf = web_ui
     await seed(factory)
@@ -352,7 +413,7 @@ def test_csv_formula_and_numeric_text(value):
         ({"case_ids": []}, 422),
         ({"case_ids": ["999"]}, 409),
         ({"case_ids": ["-1"]}, 422),
-        ({"reason": " "}, 422),
+        ({"reason": "x" * 501}, 422),
         ({"scope": "all"}, 422),
         ({"scope": "filtered", "date_from": "2026-99-00"}, 422),
         ({"scope": "filtered", "date_from": "2026-01-02", "date_to": "2026-01-01"}, 422),
