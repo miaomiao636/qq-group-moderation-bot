@@ -69,7 +69,7 @@ Windows attempt 1 曾因耗时过长被本任务取消；取回日志后确认�
 
 ## 生产加载与业务恢复
 
-执行 SHA 仍为 `23d0a1f844d0f0f3601ccab94072ce86606dafe5`。私有操作在审计目录 `deploy-01/`：`deploy.py preflight`、提升权限运行 `deploy-services.ps1`（内部依次 quiet / backup / configure）、`deploy.py verify`，均使用仓库 `.venv/Scripts/python.exe -X utf8 -B`。授权、脚本哈希、前态、各阶段收据与服务状态均保留。
+执行 SHA 仍为 `23d0a1f844d0f0f3601ccab94072ce86606dafe5`。私有操作在审计目录 `deploy-01/`：`deploy.py preflight`、提升权限运行 `deploy-services.ps1`（内部依次 quiet / backup / configure）、`deploy.py verify`。直接核验调用使用仓库 `.venv/Scripts/python.exe -X utf8 -B`；PowerShell 内部使用同一 Python 的 `-B` 与 `PYTHONUTF8=1`。授权、脚本哈希、前态、各阶段收据与服务状态均保留。
 
 先等队列与在途动作清空，再正常停止 Runtime/Web，直接在 D 盘生成 `moderation-20260923T101208Z-usijtw2w.db`（SHA256 `2556a8d3dc1992099f54e9cf990487ca99c8275cb75a436672541e23e4acd37f`）。完整性、外键核验通过；revision 仍 `e1c7d4b8a902`，无迁移、无回滚、无历史重放。随后 Web/Runtime 启动，NSSM PID 从 31940/13160 变为 33776/12596；服务操作 UTC 10:12:05—10:12:14，OneBot 于 10:12:35 重连就绪。首次紧接启动的检查尚未 ready，稍后复核成功，不计作两次部署。
 
@@ -82,7 +82,7 @@ Windows attempt 1 曾因耗时过长被本任务取消；取回日志后确认�
 独立只读命令（执行 SHA 同为 `23d0a1f`，仓库 Python 前缀同上）：
 
 - `D:/QQBotAudits/cards-groups-20260923/postdeploy-independent/collect.py`：UTC 10:18 核对新进程、NSSM 工作目录/启动模块、源码字节、健康及群状态，结果通过。末级 Python Runtime/Web PID 为 37272/11936。受权限限制未读取子进程完整 CommandLine 或内存模块，加载结论来自启动配置、新进程、源码与自然业务的交叉核验；不冒称内存自检。
-- `D:/QQBotAudits/cards-groups-20260923/natural-card-check/audit_natural_cards.py`：UTC 10:18:55 冻结 SD36019—36063，共 44 条新记录。唯一分享卡 SD36050 命中保护角色豁免，allow 且无精确关联动作；没有非保护新卡片结构命中。该 inbox 原载荷已按既有流程清空，不能再确认卡片子类。私有脱敏收据不是新增入库测试。
+- `D:/QQBotAudits/cards-groups-20260923/natural-card-check/audit_natural_cards.py`：UTC 10:18:55 冻结 `36019 < shadow_id <= 36063`，共 44 条新记录；36019 是备份下界。唯一分享卡 SD36050 命中保护角色豁免，allow 且无精确关联动作；没有非保护新卡片结构命中。该 inbox 原载荷已按既有流程清空，不能再确认卡片子类。私有脱敏收据不是新增入库测试。
 
 新增格式的自然非保护角色卡片命中与撤回回执仍需独立观察；未声称所有客户端格式都已覆盖，也没有追罚历史消息。普通二维码图片和微信小程序分享卡是不同消息类型。群主、管理员、成员白名单仍免撤回。
 
