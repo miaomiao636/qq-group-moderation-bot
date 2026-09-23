@@ -26,6 +26,7 @@ from app.moderation.decision import (
     FULL_ALLOW_NO_UPGRADE_RULE_IDS,
     GROUP_CARD_RECALL_RULE_ID,
     PROTECTED_CARD_ALLOW_RULE_ID,
+    WECHAT_MINIPROGRAM_RECALL_RULE_ID,
     ModerationDecision,
     RuleHit,
 )
@@ -540,6 +541,9 @@ class TextRuleEngine:
             seg.kind == "forward_record" for seg in msg.segments
         )
         group_card = share_card and msg.share_card is not None and msg.share_card.is_group_card
+        wechat_card = (
+            share_card and msg.share_card is not None and msg.share_card.is_wechat_miniprogram
+        )
         if member_hit:
             # 负责人 2026-09-18（成员白名单）：优先级最高（高于关键词白名单与保护角色
             # 分支），**全类别完全放行**——负责人明确选择"不守 B-2 底线"（诈骗/色情/
@@ -617,6 +621,22 @@ class TextRuleEngine:
                     evidence_masked=(
                         "群名片一律撤回（负责人 2026-09-18）；群主/管理员与成员白名单成员不撤回"
                     ),
+                )
+            )
+        elif wechat_card:
+            # CARD-RECALL-20260923: explicit owner policy; protected roles and
+            # member allowlisting above remain authoritative. Image QR policy is separate.
+            verdict = "violation_high"
+            confidence = max(confidence, 0.95)
+            actions = list(_HIGH_ACTIONS)
+            reason = "微信小程序分享卡一律撤回"
+            hits.append(
+                RuleHit(
+                    rule_id=WECHAT_MINIPROGRAM_RECALL_RULE_ID,
+                    rule_name="wechat_miniprogram_card",
+                    category="ad",
+                    confidence_delta=0.0,
+                    evidence_masked="微信小程序分享卡撤回；群主/管理员与成员白名单成员不撤回",
                 )
             )
         elif (

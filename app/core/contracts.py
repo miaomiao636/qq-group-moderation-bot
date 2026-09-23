@@ -90,6 +90,9 @@ class ShareCardInfo(BaseModel):
     preview_url: str = ""
     source_logo_url: str = ""
     is_group_card: bool = False
+    # CARD-RECALL-20260923: a structurally identified WeChat mini-program share,
+    # never inferred from image QR codes, free text, or generic QQ mini-programs.
+    is_wechat_miniprogram: bool = Field(default=False, strict=True)
 
 
 class MessageSegment(BaseModel):

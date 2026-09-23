@@ -67,6 +67,14 @@ FULL_ALLOW_NO_UPGRADE_RULE_IDS = frozenset(
 # 急停窗口，未造成真实动作）。改用具语义前缀的编号，从根上避免再次撞号。
 FORWARD_RECORD_RECALL_RULE_ID = "R_FORWARD_RECORD"
 GROUP_CARD_RECALL_RULE_ID = "R_GROUP_CARD"
+WECHAT_MINIPROGRAM_RECALL_RULE_ID = "R_WECHAT_MINIPROGRAM_CARD"
+STRUCTURAL_RECALL_RULE_IDS = frozenset(
+    {
+        FORWARD_RECORD_RECALL_RULE_ID,
+        GROUP_CARD_RECALL_RULE_ID,
+        WECHAT_MINIPROGRAM_RECALL_RULE_ID,
+    }
+)
 # 白名单非豁免类别（R-115 W01）：任一出现即视为"非广告证据"，不得沿用放行。
 ALLOWLIST_NON_EXEMPT_CATEGORIES = frozenset({"fraud", "porn", "violence", "flood"})
 

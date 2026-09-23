@@ -33,10 +33,9 @@ from app.moderation.decision import (
     ALLOWLIST_ALLOW_RULE_ID,
     ALLOWLIST_NON_EXEMPT_CATEGORIES,
     CERTIFICATE_AD_ALLOW_RULE_ID,
-    FORWARD_RECORD_RECALL_RULE_ID,
-    GROUP_CARD_RECALL_RULE_ID,
     MINIPROGRAM_QR_ALLOW_RULE_ID,
     POLICY_ALLOW_RULE_IDS,
+    STRUCTURAL_RECALL_RULE_IDS,
     Category,
     ModerationDecision,
     RuleHit,
@@ -903,9 +902,7 @@ def _cross_modal_veto(opposite: list[AIModerationResult], low_threshold: float) 
 # Content exceptions plus the existing independent flood protection.
 _MINIPROGRAM_QR_BLOCKED_CATEGORIES = frozenset({"porn", "violence", "flood"})
 # 本地硬证据：图片外观不得覆盖这些本地判定（防"配一张带码图就绕过黑名单/联系方式/卡片规则"）。
-_LOCAL_HARD_EVIDENCE_RULES = frozenset(
-    {"R001", "R003", "R006", FORWARD_RECORD_RECALL_RULE_ID, GROUP_CARD_RECALL_RULE_ID}
-)
+_LOCAL_HARD_EVIDENCE_RULES = frozenset({"R001", "R003", "R006"}) | STRUCTURAL_RECALL_RULE_IDS
 
 
 def _secondary_pair_is_valid(

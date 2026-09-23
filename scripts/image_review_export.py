@@ -29,6 +29,7 @@ sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(ROOT / "scripts"))
 
 from app.moderation.image_hash import (  # noqa: E402
+    HARD_EVIDENCE_RULES,
     best_match,
     dhash64_file,
     frame_scope_of,
@@ -49,7 +50,7 @@ from scripts.image_allowlist_seed import (  # noqa: E402
 EXCLUDE_FILE = ROOT / "docs" / "evidence" / "image-review" / "exclude_hashes.txt"
 
 BLOCKED_CATEGORIES = {"porn", "violence"}
-HARD_EVIDENCE = {"R001", "R003", "R006"}
+HARD_EVIDENCE = HARD_EVIDENCE_RULES
 
 
 def _referenced_hashes(db: Path, media_dir: Path) -> set[int]:

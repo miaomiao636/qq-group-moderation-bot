@@ -15,8 +15,7 @@ from dataclasses import dataclass
 
 from app.core.contracts import StandardMessage
 from app.moderation.decision import (
-    FORWARD_RECORD_RECALL_RULE_ID,
-    GROUP_CARD_RECALL_RULE_ID,
+    STRUCTURAL_RECALL_RULE_IDS,
     ModerationDecision,
 )
 
@@ -29,9 +28,7 @@ _BUILTIN_HARD_EVIDENCE_RULES = frozenset({"R001", "R003", "R006"})
 # **只允许加入 decision.py 导出的结构性规则常量**。内置规则的 `R0xx` 编号段绝不能
 # 出现在这里：曾把结构性规则误编为 R007，与内置 `contextual_ad_terms` 撞号，导致
 # 复核门把该内置规则当成独立硬证据、放宽了自动处罚门槛（2026-09-18 事件）。
-_HARD_EVIDENCE_RULES = _BUILTIN_HARD_EVIDENCE_RULES | frozenset(
-    {FORWARD_RECORD_RECALL_RULE_ID, GROUP_CARD_RECALL_RULE_ID}
-)
+_HARD_EVIDENCE_RULES = _BUILTIN_HARD_EVIDENCE_RULES | STRUCTURAL_RECALL_RULE_IDS
 
 
 def _is_hard_evidence(rule_id: str) -> bool:

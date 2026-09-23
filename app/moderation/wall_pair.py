@@ -26,8 +26,7 @@ from app.moderation.campus_message import (
 )
 from app.moderation.campus_source import confirmed_campus_source
 from app.moderation.decision import (
-    FORWARD_RECORD_RECALL_RULE_ID,
-    GROUP_CARD_RECALL_RULE_ID,
+    STRUCTURAL_RECALL_RULE_IDS,
     ModerationDecision,
 )
 from app.runtime.models import ShadowDecision
@@ -51,7 +50,7 @@ PAIR_BLOCKED_CATEGORIES = frozenset({"porn", "violence", "flood"})
 # 结构性确定性规则（D-038：合并转发 / 群名片"一律撤回"）**不受窗口豁免影响**——
 # 主审二轮 F04-R：`image + 群卡` 的顶部 kind=image、类别 ad，曾被窗口改成 record_only。
 # 按 `decision.py` 导出的常量判断（不猜测 R0xx 段号）。
-STRUCTURAL_RULE_IDS = frozenset({FORWARD_RECORD_RECALL_RULE_ID, GROUP_CARD_RECALL_RULE_ID})
+STRUCTURAL_RULE_IDS = STRUCTURAL_RECALL_RULE_IDS
 
 
 def effective_categories(decision: ModerationDecision) -> frozenset[str]:

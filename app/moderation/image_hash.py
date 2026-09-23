@@ -32,6 +32,7 @@ from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models import ImageAllowlist
+from app.moderation.decision import STRUCTURAL_RECALL_RULE_IDS
 
 logger = logging.getLogger(__name__)
 
@@ -40,7 +41,7 @@ DEFAULT_MAX_DISTANCE = 8
 
 # 放行例外（与 D-039 小程序码放行口径一致）
 BLOCKED_CATEGORIES = frozenset({"porn", "violence"})
-HARD_EVIDENCE_RULES = frozenset({"R001", "R003", "R006"})
+HARD_EVIDENCE_RULES = frozenset({"R001", "R003", "R006"}) | STRUCTURAL_RECALL_RULE_IDS
 
 # 负责人审核（2026-09-19）时的命中阈值：观察与 enforce 都必须显式用它，
 # **不得**回落到基础 API 默认值（主审 A07）。
