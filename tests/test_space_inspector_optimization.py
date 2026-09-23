@@ -322,6 +322,7 @@ def test_cleanup_error_does_not_hide_platform_stop(tmp_path):
 
 def test_partial_snapshot_can_be_viewed_and_exported_but_cannot_scan(tmp_path):
     service = Service.__new__(Service)
+    service.export_root = tmp_path / "exports"
     service._store = Store(tmp_path / "partial", create=True)
     service._deferred = set()
     service._store.bind_source("23456789")
