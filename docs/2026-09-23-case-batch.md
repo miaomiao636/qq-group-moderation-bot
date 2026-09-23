@@ -37,7 +37,21 @@ NapCat `delete_msg` 的 `failed + 整数 retcode=1200`，且 message/wording 有
 - 第一版源码 `2d56fc66c534a5918cfe18787f3c299e27ad467b` 的全量发现历史空外部身份归档筛选兼容问题。原样执行 `uv run --locked pytest tests/test_r109_case_ui.py -q --tb=short` 复现 `test_archived_filter_submission_stays_in_archive` 失败；不改原测试，修正查询兼容后以最终源码重新验证。
 - 源码 `2d56fc6` 的浏览器静态合成夹具：`.venv/Scripts/python.exe -X utf8 -B D:/QQBotAudits/case-batch-20260923/ui_fixture.py`；本机回环 HTTP 8129，原生浏览器验收本页全选、清空计数与预览身份/原因/确认按钮。接口执行由隔离 HTTP 测试覆盖；静态页面检查不算生产验收。
 
-最终源码、全量和 CI 结果待本轮验证结束后回填。尚未生产重启，不能将 GitHub 推送或测试通过称为线上生效。
+最终源码 `d3e2d3ce3cab14e15bd3e672542cb9e4473b0ae1`，以下命令均在仓库根执行，`PYTHONUTF8=1`，TEMP/TMP 指向审计目录下的 `test-temp`：
+
+| 命令 | 实际结果 |
+| --- | --- |
+| `uv run --locked pytest --junitxml=D:/QQBotAudits/case-batch-20260923/full-final.xml` | 2653 项：2634 passed、19 skipped、0 failed/error |
+| `.venv/Scripts/python.exe -X utf8 -B D:/QQBotAudits/case-batch-20260923/collect_validation.py` | 从同次 JUnit 提取原主审子集：31 文件、262 passed；本轮新入库回归 53 passed |
+| `uv run --locked ruff check app tests alembic` | 通过 |
+| `uv run --locked ruff format --check app tests alembic` | 360 文件通过 |
+| `uv run --locked mypy app` | 124 源文件通过 |
+
+`validation-d3e2d3c.json` 保存全部命令、源 SHA、tree 和跳过原因。19 项跳过不能全称平台差异：13 项为本机生产 runtime 锁保护，4 项为符号链接权限，另有真实图片样本与可选巡检运行时各 1 项。第一版 `2d56fc6` 的失败结果保留 `full-tests.xml/log`：2632 passed、19 skipped、1 failed；最终重跑没有覆盖它。额外全目录 `ruff check . / ruff format --check .` 检出了历史证据脚本/Markdown 代码块问题，它们不在项目 CI 门禁范围，本轮未修改历史证据。
+
+源码 [CI run 35858634765](https://github.com/miaomiao636/qq-group-moderation-bot/actions/runs/35858634765) 与最终文档 HEAD 的 CI 分别核验。检查命令：`gh run view <run-id> --json headSha,status,conclusion,jobs,url`；再读取 job 日志，核对实际 PR 合成 checkout 及 tree，不把分支 head 直接写作 CI checkout。源码回执保存 `ci-source-*`；最终文档 HEAD 按 `git rev-parse HEAD` 和 `gh run list --commit <HEAD>` 查询，结果保存审计目录 `ci-final-head.json`。运行未完成或收据缺失时不能宣称 CI 通过；后续文档提交不借用源码 run。
+
+**部署状态：未部署本轮源码。** 生产最近已验证的加载源码仍为 `23d0a1f`。上线需按交接文档 §10 第 2 条取得本轮生产重启授权，先在 D 盘备份，保持现有急停、recall_only、群开关及图片政策；无迁移、无回滚、无历史重放。本轮没有执行线上批量结案。
 
 ## 仍然独立待办的事项
 
