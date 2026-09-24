@@ -1,6 +1,6 @@
 # 撤回确认与部署准备（RECALL-CONFIRM-20260924）
 
-负责人授权制作、全面检查后准备部署；本轮不迁移生产库、不重启服务、不重放旧消息。根代理为唯一仓库写入者，辅助代理只读审查。此前案件跨页选择及“人工处理”补正仍随本批待部署。
+负责人先授权制作和全面检查，随后明确批准上线；生产迁移、备份和服务恢复结果见末节。根代理为唯一仓库写入者，辅助代理只读审查。此前案件跨页选择及“人工处理”补正随本批一并加载；未重放旧消息。
 
 ## 诊断边界
 
@@ -38,7 +38,7 @@
 
 ## 验证与部署状态
 
-最终源码测试执行 SHA 为 4d5656608a6c756773c9c9caee454ee0fdfd70bb，环境 PYTHONUTF8=1，TEMP/TMP 位于 D:/QQBotAudits/recall-confirm-20260924/test-temp。证据目录只读生产预检显示旧 schema、原服务进程、OneBot ready、急停 false、recall_only、image_hash shadow；实际生产尚未加载本批。
+最终源码测试执行 SHA 为 4d5656608a6c756773c9c9caee454ee0fdfd70bb，环境 PYTHONUTF8=1，TEMP/TMP 位于 D:/QQBotAudits/recall-confirm-20260924/test-temp。部署前只读生产预检显示旧 schema、原服务进程、OneBot ready、急停 false、recall_only、image_hash shadow；部署后的状态见末节。
 
 本地最终验证通过，未代替生产 QQ 自然消息验收：
 
@@ -53,7 +53,7 @@
 
 本地回执为证据目录下 validation-source.json；全量 JUnit SHA256 为 caffeea621aba03f43a4bd8e79177ae52c50ecd8e6dbd6c968a1e3a9d344266e。19 项跳过须按原测试的平台/能力条件解读，不能声称全部 2701 项实际执行。合成库迁移、SQLite 备份恢复、通知重复/迟到/存储失败及全链安全门禁均包含在通过结果内。
 
-文档提交后，需推送当前部署分支并核验最终 HEAD 的 Linux、Windows、干净运行时依赖三个 CI job；PR merge checkout 的 tree 必须与最终分支 tree 对应。最新核验落在同一证据目录 ci-final.json，部署待执行版本及授权状态落在 deployment-plan.json；未生成成功回执时不视为远程通过。最终文档提交不得改变已测试的 app/tests/alembic 内容。
+部署前最终 HEAD `2fc0d55` 的 Linux、Windows、干净运行时依赖三个 CI job 全部成功；PR merge checkout 的 tree 与分支 tree 一致。核验回执在同一证据目录 ci-final.json；当时的准备方案在 deployment-plan.json。下述上线记录更新仅修改文档，不改变已测试的 app/tests/alembic 内容；本次文档提交自己的 CI 另行核验。
 
 ## 可审核部署顺序
 
@@ -66,3 +66,13 @@
 7. 只通过自然新消息核对 group_recall 关联。无新样本就记待观察，不发测试消息、不追撤历史、不自动重试。
 
 回退需保持源码、数据库、备份配置三者一致；迁移后有新业务时不得直接覆盖回旧库。失败先停在当前步骤、保存证据，由负责人决定恢复或向前修复。本轮“准备部署”不等于生产迁移、重启或真实 QQ 撤回验收完成。
+
+## 授权部署（2026-09-24）
+
+负责人明确回复“现在就部署上线”。部署的应用及迁移版本为 `2fc0d55a03a76be0a935b6bfd975445424e63bbb`，提交前的 [CI 35951909027](https://github.com/miaomiao636/qq-group-moderation-bot/actions/runs/35951909027) 三 job 全部成功；逐 job checkout 的 tree 与该版本一致。部署脚本、用户授权、迁移前后及恢复收据在 `D:/QQBotAudits/recall-confirm-20260924/deploy-01`，目标和脚本 SHA 已固定，未重放历史消息。
+
+维护窗口前确认 QQBotAutoCleanup 与 QQBotDailyBackup 均未运行，下一次计划时间分别为 09-25 04:00 与 04:30:30（北京时间）。队列排空后短暂停止 Runtime/Web。D 盘迁移前 SQLite 快照 `moderation-20260924T035851Z-g9o_7vhd.db` 的 SHA256 为 `fb80c84d1199142190dedcd22f707e9ef399ebaf02ca636d61641be3d439b670`，完整性、外键、旧版本及旧业务记录数均校验通过。数据库从 `e1c7d4b8a902` 升为 `f3c8a9d12064`，新增表初始为空；备份配置只将 expected_revision 同步到新版本，旧配置保存在原私有 state_dir 的 `config.restore-e1c7d4b8a902.json`。备份格式仍为不含凭据的 plain。
+
+Web/Runtime 以新进程启动，健康页、后台登录页均 HTTP 200，OneBot ready/connected、队列空；`.env`、提示词规则、急停 false、recall_only、image_hash shadow、群授权及白名单摘要与迁移前相同。新配置实际完成 E 盘快照 `20260924T040312Z-136c36eb76b540ada0f161ec05712a67`，15,010 文件、缺失媒体 0；在 D 盘完整恢复并验证新数据库。旧配置用既有快照 `20260923T203004Z-f415e65b71fd4fb0bceb4699d200be9d` 在 D 盘完整恢复 14,440 文件，旧数据库完整性、外键与旧版本均通过。没有在 C 盘建立完整恢复副本，也没有删除这些验收证据。
+
+部署后自然消息继续进入，尚未观察到匹配的 QQ `group_recall` 通知。`recall_confirmations` 截至 12:10 北京时间有 17 条待确认、0 条已确认；这不证明撤回失败，也不能算实机撤回验收通过。系统按设计不据 API 成功虚报真实撤回，不自动补罚或重放。此前跨页案件勾选与默认“人工处理”补正一并加载；未代管理员结案。Windows 整机故障恢复演练依原决定另排维护窗口。本轮后续文档提交不改应用/迁移/测试代码，最终文档 HEAD 的 CI 需单独核验。
