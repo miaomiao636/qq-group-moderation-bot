@@ -113,4 +113,10 @@ N03 尚未闭环：现有清理有 mtime/处理时间路径；来源期限未成
 
 浏览器现在将所选案件 ID 合并为一个 `case_ids_compact` JSON 字段，提交时禁用本页重复的逐案字段；返回页面时恢复复选框状态。后台限定字段大小、整数类型和最多 5000 个 ID，再沿用既有案件存在性、身份、证据和导出校验；旧版逐案字段请求继续兼容，混用两种格式会拒绝。批量结案仍限 200 案并须预览确认。本轮无数据库迁移，不调整群审核、真实动作或生产案件状态。
 
-回归先失败再修复：1001 个合成案件通过 multipart 表单导出 CSV，条数和成员身份准确、所有案件仍待审；格式异常、混合字段及超限输入被拒。`node D:/QQBotAudits/case-batch-paging-20260923/check_compact_selection.js` 用真实前端脚本验证 1200 个跨页 ID 只提交一个字段、后退恢复和筛选范围行为。本地全量 `uv run pytest -q`、`uv run mypy app`、`uv run ruff check app tests alembic` 通过；最终提交、CI 与格式检查结果须在部署前补记。真人浏览器操作和生产加载尚未验收。部署需先备份并单独取得重启授权。
+回归先失败再修复：1001 个合成案件通过 multipart 表单导出 CSV，条数和成员身份准确、所有案件仍待审；格式异常、混合字段及超限输入被拒。`node D:/QQBotAudits/case-batch-paging-20260923/check_compact_selection.js` 用真实前端脚本验证 1200 个跨页 ID 只提交一个字段、后退恢复和筛选范围行为。本地全量 `uv run pytest -q`、`uv run mypy app`、`uv run ruff check app tests alembic` 通过。源码 CI 与上线验收记录见下节；真人生产跨页导出仍需用户刷新页面后重试。
+
+### 授权部署（2026-09-24）
+
+修复源码提交 `47eac0c622fc5e859a309552f78c8559af74bad1` 已推送；[GitHub CI run 35967964544](https://github.com/miaomiao636/qq-group-moderation-bot/actions/runs/35967964544) 的 Linux、Windows 全量与干净运行依赖三 job 均 success。`uv run ruff format --check app tests alembic` 为 366 文件通过，目标测试 53 项通过；本地全量 `uv run pytest -q` 退出码 0。脚本模拟收据为 `D:/QQBotAudits/case-batch-paging-20260923/check_compact_selection.js` 的输出。
+
+负责人确认部署可满足跨页导出要求后，本轮仅对 Web 服务做短暂重启。先在 `D:/QQBotAudits/case-export-fields-20260924` 使用项目 `backup_sqlite` 建立 162,004,992 字节一致性数据库快照，`integrity_check=ok`、外键错误 0、revision `f3c8a9d12064`，SHA256 `814be641f5671761d8da02a122eb77feccf67b7b00d15cba8e53782472db0873`；收据为 `backup-receipt.json`。普通权限重启被 Windows 拒绝后，通过本机 UAC 管理员授权执行 `restart-web.ps1`，`restart-receipt.json` 记录 Web 从 Running 恢复 Running，Runtime 始终 Running。新 Python 子进程于北京时间 15:31:38 启动；`/healthz` 为 200，`/admin/` 未登录正确跳转登录页（303）。无数据库迁移、配置或群动作变更，没有触发生产案件导出/结案。旧版已打开的浏览器页须刷新后再点击导出；真人生产跨页导出尚待用户验收，不能用合成结果替代。

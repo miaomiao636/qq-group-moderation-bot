@@ -1,6 +1,6 @@
 # Agent交接记录
 
-**CASE-EXPORT-FIELDS-20260924：源码已修复，待上线。** `app/web/case_selection.py` 将跨页所选案件压成单个表单字段，`app/web/case_batch.py`/`routes.py` 严格解析并兼容旧表单；不更改数据库、群动作或案件状态。1001 案 multipart 导出与 1200 案前端脚本验证通过，全量测试、ruff、mypy 通过。部署需要单独授权和短暂重启；未读取或导出生产名单。执行记录见 [案件批量记录](docs/2026-09-23-case-batch.md#case-export-fields-20260924跨页导出字段上限修复)。
+**CASE-EXPORT-FIELDS-20260924：已上线，待真人重试导出。** `app/web/case_selection.py` 将跨页所选案件压成单个表单字段，`app/web/case_batch.py`/`routes.py` 严格解析并兼容旧表单；不更改数据库、群动作或案件状态。1001 案 multipart 导出与 1200 案前端脚本验证通过，本地全量与源码 CI 三 job 通过。D 盘一致性备份校验后只重启 Web，新进程健康检查通过，Runtime 始终运行；未读取或导出生产名单。用户刷新旧页面后可真人重试。执行记录见 [案件批量记录](docs/2026-09-23-case-batch.md#case-export-fields-20260924跨页导出字段上限修复)。
 
 **RECALL-CONFIRM-20260924：已获授权上线，数据库与备份配置迁移、服务恢复及新旧完整备份恢复验证通过。** 部署源码 `2fc0d55`；OneBot ready，急停 false、recall_only 与群授权未变。撤回登记已有自然请求，但尚无匹配 QQ 通知，真实撤回需继续观察，不把 API 成功当确认。此前跨页案件勾选也一并加载。精确 SHA、验证、迁移与恢复收据见 [本轮记录](docs/2026-09-24-recall-confirmation.md)。
 
