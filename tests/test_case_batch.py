@@ -356,7 +356,7 @@ async def test_compact_selection_exports_more_than_form_field_limit(web_ui):
         files=[
             ("csrf", (None, csrf)),
             ("scope", (None, "selected")),
-            ("case_ids_compact", (None, json.dumps(list(range(1, 1002))))),
+            ("case_ids_compact", (None, json.dumps([str(i) for i in range(1, 1002)]))),
         ],
     )
     assert response.status_code == 200, response.text[:200]
@@ -366,9 +366,44 @@ async def test_compact_selection_exports_more_than_form_field_limit(web_ui):
     assert await statuses(factory) == ["PENDING_REVIEW"] * 1001
 
 
+async def test_compact_browser_selection_previews_without_closing(web_ui):
+    client, factory, _, csrf = web_ui
+    await seed(factory)
+    response = await client.post(
+        "/admin/cases/batch-preview",
+        data={"csrf": csrf, "scope": "selected", "case_ids_compact": '["1","2"]'},
+    )
+    assert response.status_code == 200, response.text[:200]
+    assert "2 个案件" in response.text
+    assert await statuses(factory) == ["PENDING_REVIEW"] * 2
+
+
+def test_compact_browser_selection_accepts_full_limit_and_exact_integer():
+    highest = str(2**63 - 1)
+    ids = case_batch.selected_ids(None, json.dumps([highest] * case_batch.EXPORT_LIMIT))
+    assert len(ids) == case_batch.EXPORT_LIMIT
+    assert ids[0] == ids[-1] == 2**63 - 1
+
+
 @pytest.mark.parametrize(
     "compact",
-    ["", "not json", "{}", "[0]", "[-1]", '["1"]', "[1.0]", "[1,2,3]", "[999]"],
+    [
+        "",
+        "not json",
+        "{}",
+        "[0]",
+        "[-1]",
+        '["01"]',
+        '["0"]',
+        '["-1"]',
+        '["1.0"]',
+        '[" 1"]',
+        '["１"]',
+        "[true]",
+        "[1.0]",
+        "[1,2,3]",
+        '["999"]',
+    ],
 )
 async def test_compact_selection_rejects_bad_or_changed_ids(web_ui, compact):
     client, factory, _, csrf = web_ui
@@ -385,8 +420,8 @@ async def test_compact_selection_rejects_mixed_and_over_limit(web_ui):
     client, factory, _, csrf = web_ui
     await seed(factory)
     for fields in (
-        {"case_ids_compact": "[1]", "case_ids": ["2"]},
-        {"case_ids_compact": json.dumps(list(range(1, case_batch.EXPORT_LIMIT + 2)))},
+        {"case_ids_compact": '["1"]', "case_ids": ["2"]},
+        {"case_ids_compact": json.dumps([str(i) for i in range(1, case_batch.EXPORT_LIMIT + 2)])},
     ):
         response = await client.post(
             "/admin/cases/batch-export", data={"csrf": csrf, "scope": "selected", **fields}

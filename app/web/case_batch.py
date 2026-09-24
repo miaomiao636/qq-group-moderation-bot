@@ -32,19 +32,31 @@ def selected_ids(case_ids: list[int] | None, compact: str) -> list[int]:
     """Decode the single-field browser payload while accepting older page forms."""
     if not compact:
         return case_ids or []
-    if case_ids or len(compact) > 110_000:
+    if case_ids or len(compact) > 120_000:
         raise HTTPException(422, "案件编号无效或数量过多")
     try:
         ids = json.loads(compact)
     except (TypeError, ValueError) as exc:
         raise HTTPException(422, "案件编号格式无效") from exc
-    if (
-        not isinstance(ids, list)
-        or len(ids) > EXPORT_LIMIT
-        or any(type(value) is not int or value <= 0 or value > 2**63 - 1 for value in ids)
-    ):
+    if not isinstance(ids, list) or len(ids) > EXPORT_LIMIT:
         raise HTTPException(422, "案件编号无效或数量过多")
-    return ids
+    parsed: list[int] = []
+    for raw in ids:
+        if type(raw) is int:
+            value = raw
+        elif (
+            type(raw) is str
+            and 1 <= len(raw) <= 19
+            and raw[0] != "0"
+            and all("0" <= digit <= "9" for digit in raw)
+        ):
+            value = int(raw)
+        else:
+            raise HTTPException(422, "案件编号无效或数量过多")
+        if value <= 0 or value > 2**63 - 1:
+            raise HTTPException(422, "案件编号无效或数量过多")
+        parsed.append(value)
+    return parsed
 
 
 def canonical(value: Any) -> str:
