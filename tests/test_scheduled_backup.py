@@ -428,6 +428,7 @@ def test_plain_backup_needs_no_key_and_omits_service_credentials(config, tmp_pat
 
 
 def test_default_initialize_is_keyless_plain_backup(tmp_path):
+    from app.db import get_head_revision
     from app.reports.scheduled_backup import initialize, read_config
 
     repo = tmp_path / "plain-init-repo"
@@ -436,7 +437,60 @@ def test_default_initialize_is_keyless_plain_backup(tmp_path):
         initialize(repo, tmp_path / "plain-init-data", tmp_path / "plain-init-state", None)
     )
     assert config.mode == "plain"
+    assert config.expected_revision == get_head_revision()
     assert not config.key_file.exists()
+
+
+@pytest.mark.parametrize("revision", ["e1c7d4b8a902", "f3c8a9d12064"])
+def test_backup_source_schema_must_match_config(config, monkeypatch, revision):
+    from types import SimpleNamespace
+
+    import app.config
+    import app.reports.scheduled_backup as cli
+    from app.db import get_head_revision
+
+    monkeypatch.setattr(cli, "__file__", str(config.repo / "app/reports/scheduled_backup.py"))
+    monkeypatch.setattr(cli, "_git", lambda _repo, *args: "" if args[0] == "status" else "a" * 40)
+    monkeypatch.setattr(cli, "_current_revision", get_head_revision)
+    monkeypatch.setattr(
+        app.config,
+        "Settings",
+        lambda **kw: SimpleNamespace(
+            database_url=f"sqlite:///{config.repo / 'data/moderation.db'}", ai_prompt_rules_file=""
+        ),
+    )
+    candidate = replace(config, expected_revision=revision)
+    if revision == get_head_revision():
+        assert cli.validate_source(candidate) == "a" * 40
+    else:
+        with pytest.raises(BackupError, match="SOURCE_SCHEMA_MISMATCH"):
+            cli.validate_source(candidate)
+
+
+def test_plain_old_and_new_schema_snapshots_restore_with_matching_configs(config, tmp_path):
+    previous = replace(config, mode="plain")
+    old = run_backup(previous, source_sha="a" * 40)
+    with sqlite3.connect(config.repo / "data/moderation.db") as con:
+        con.execute("UPDATE alembic_version SET version_num='f3c8a9d12064'")
+        con.execute(
+            "CREATE TABLE recall_confirmations(intent_id INTEGER PRIMARY KEY, notice_fingerprint TEXT)"
+        )
+        con.execute("INSERT INTO recall_confirmations VALUES(1,'synthetic-confirmation')")
+    current = replace(previous, expected_revision="f3c8a9d12064")
+    new = run_backup(current, source_sha="b" * 40)
+    assert (
+        restore_snapshot(current, new["snapshot_id"], tmp_path / "new-restore")["status"]
+        == "verified"
+    )
+    assert (
+        restore_snapshot(previous, old["snapshot_id"], tmp_path / "old-restore")["status"]
+        == "verified"
+    )
+    with sqlite3.connect(tmp_path / "new-restore/data/moderation.db") as con:
+        assert con.execute("SELECT notice_fingerprint FROM recall_confirmations").fetchone() == (
+            "synthetic-confirmation",
+        )
+    assert previous.expected_revision == "e1c7d4b8a902"
 
 
 def test_plain_store_rejects_old_encrypted_identity(config):

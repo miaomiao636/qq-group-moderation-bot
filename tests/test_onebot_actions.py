@@ -339,6 +339,30 @@ class _FakeOneBotClient:
         return ActionResult(action="warn", ok=True, status_code=0, attempts=1)
 
 
+class _ConfirmedOneBotClient(_FakeOneBotClient):
+    """Explicit notice delivery, not a blanket bypass of confirmation checks."""
+
+    async def recall(self, group, mid, /, *, actor="system") -> ActionResult:
+        from datetime import UTC, datetime
+
+        from app.actions.recall_confirmation import RecallNotice, accept_notice
+
+        result = await super().recall(group, mid, actor=actor)
+        async with SessionLocal() as session:
+            assert await accept_notice(
+                session,
+                RecallNotice(
+                    account_id="10000001",
+                    group_id=group,
+                    user_id="1001",
+                    message_id=mid,
+                    operator_id="10000001",
+                    occurred_at=datetime.now(UTC),
+                ),
+            )
+        return result
+
+
 def _official_onebot_settings() -> Settings:
     return Settings(
         app_env="prod",
@@ -443,10 +467,14 @@ async def test_official_onebot_actions_disabled_is_skipped() -> None:
 
 @pytest.mark.asyncio
 async def test_official_onebot_success_executes_recall_mute_warn() -> None:
-    client = _FakeOneBotClient()
-    group = f"OB_OK_{uuid.uuid4().hex[:6]}"
+    from datetime import UTC, datetime
+
+    client = _ConfirmedOneBotClient()
+    group = str(uuid.uuid4().int)[:10]
     mid = str(uuid.uuid4().int)[:12]
     msg = _ob_msg(group, "1001", mid=mid)
+    msg.external_self_id = "10000001"
+    msg.sent_at = datetime.now(UTC)
     async with SessionLocal() as session:
         await _setup_onebot_group(session, group)
         intents = await orchestrate_actions(
@@ -569,12 +597,16 @@ async def test_no_route_fail_closed() -> None:
 
 @pytest.mark.asyncio
 async def test_action_logs_written_for_audit() -> None:
+    from datetime import UTC, datetime
+
     from app.models import ActionLog
 
-    client = _FakeOneBotClient()
-    group = f"OB_AL_{uuid.uuid4().hex[:6]}"
+    client = _ConfirmedOneBotClient()
+    group = str(uuid.uuid4().int)[:10]
     mid = str(uuid.uuid4().int)[:12]
     msg = _ob_msg(group, "1001", mid=mid)
+    msg.external_self_id = "10000001"
+    msg.sent_at = datetime.now(UTC)
     async with SessionLocal() as session:
         await _setup_onebot_group(session, group)
         await orchestrate_actions(
