@@ -421,6 +421,8 @@ A09 前 6 秒、历史授权快照、Windows 回滚全链实机演练、
 
 ## 9. 已知"登记式适配"清单（改测试前先读）
 
+**RECALL-CONFIRM-20260924**：两处精确迁移 head 版本元数据从 e1c7d4b8a902 更新到 f3c8a9d12064（image_hash_core、unmigrated_startup_boundary）；原件在 dd9454f，文件头已登记。除两个 ast.Constant.value 外 AST 完全一致，旧库负控、退出码、列约束、迁移往返及业务断言结构均保留；独立审查复核，实际验证见 [本轮记录](2026-09-24-recall-confirmation.md)。这不是放宽任意旧库启动，Web/Runtime 仍严格校验 head。
+
 **CARD-RECALL-20260923**：没有修改主审探针，新增本方脱敏合成结构与初始化事务回归；真实结构来源、未采用证据及测试命令见 [本轮记录](2026-09-23-card-recall.md)。
 
 **SPACE-EXPORT-20260923**：新增内部回归 `tests/test_space_inspector_exports.py`；既有 `tests/test_space_inspector_optimization.py::test_partial_snapshot_can_be_viewed_and_exported_but_cannot_scan` 仅显式注入 TEMP 导出根目录，保留全部断言，避免新版 Service 将测试结果写到真实桌面。原外部主审探针未修改，旧 Store.export() 无参兼容契约仍被原测试覆盖。
