@@ -41,6 +41,8 @@ SCRIPT = """<script>
   }
 
   function restore() {
+    boxes.forEach(box => { box.disabled = false; });
+    form.querySelectorAll('input[data-case-selection-compact]').forEach(input => input.remove());
     if (!persistent) return;
     chosen = new Set();
     try {
@@ -108,23 +110,21 @@ SCRIPT = """<script>
   });
 
   form.addEventListener("submit", event => {
-    form.querySelectorAll('input[data-case-selection-extra]').forEach(input => input.remove());
+    form.querySelectorAll('input[data-case-selection-compact]').forEach(input => input.remove());
+    boxes.forEach(box => { box.disabled = false; });
     if (form.elements.namedItem("scope").value !== "selected") return;
     if (chosen.size === 0) {
       event.preventDefault();
       window.alert("请先勾选案件，或选择当前筛选全部");
       return;
     }
-    const current = new Set(boxes.filter(box => box.checked).map(box => box.value));
-    chosen.forEach(id => {
-      if (current.has(id)) return;
-      const hidden = document.createElement("input");
-      hidden.type = "hidden";
-      hidden.name = "case_ids";
-      hidden.value = id;
-      hidden.dataset.caseSelectionExtra = "1";
-      form.appendChild(hidden);
-    });
+    const hidden = document.createElement("input");
+    hidden.type = "hidden";
+    hidden.name = "case_ids_compact";
+    hidden.value = JSON.stringify(Array.from(chosen));
+    hidden.dataset.caseSelectionCompact = "1";
+    form.appendChild(hidden);
+    boxes.forEach(box => { box.disabled = true; });
   });
 })();
 </script>"""

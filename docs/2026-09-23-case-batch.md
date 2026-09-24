@@ -106,3 +106,11 @@ N03 尚未闭环：现有清理有 mtime/处理时间路径；来源期限未成
 19 项跳过分别为本机生产 runtime 锁保护 13 项、符号链接权限 4 项、私有真实图片及可选巡检运行时各 1 项，详见 `validation-07ec9ba.json`。工作树阶段 `uv run --locked pytest tests/test_case_batch.py tests/test_r109_case_ui.py -q --tb=short --junitxml=D:/QQBotAudits/case-batch-paging-20260923/focused.xml` 为 67 passed；最终源 SHA 的完整验证才作为当前源码基准。
 
 文档提交不改应用/测试；推送后用 `git rev-parse HEAD`、`gh run list --commit <HEAD>` 与 `gh run view <run-id> --json headSha,status,conclusion,jobs,url` 核验最终 HEAD 三 job，并核对 PR 合成 checkout 的 tree。精确回执保存在同目录 `ci-final-head.json` 和 `ci-final-verification.json`；结果未生成或不是 success 时不可宣称通过。真实浏览器点击与生产加载仍不在本地测试/CI 的证明范围内。
+
+## CASE-EXPORT-FIELDS-20260924：跨页导出字段上限修复
+
+负责人在逐页全选后导出 CSV，浏览器收到 `Too many fields. Maximum number of fields is 1000.`。原脚本为每个跨页所选案件增加一个 `case_ids` 字段，产品允许每次导出 5000 案，表单却在 FastAPI 路由执行前被解析器拒绝；CSV 本身没有生成或损坏。
+
+浏览器现在将所选案件 ID 合并为一个 `case_ids_compact` JSON 字段，提交时禁用本页重复的逐案字段；返回页面时恢复复选框状态。后台限定字段大小、整数类型和最多 5000 个 ID，再沿用既有案件存在性、身份、证据和导出校验；旧版逐案字段请求继续兼容，混用两种格式会拒绝。批量结案仍限 200 案并须预览确认。本轮无数据库迁移，不调整群审核、真实动作或生产案件状态。
+
+回归先失败再修复：1001 个合成案件通过 multipart 表单导出 CSV，条数和成员身份准确、所有案件仍待审；格式异常、混合字段及超限输入被拒。`node D:/QQBotAudits/case-batch-paging-20260923/check_compact_selection.js` 用真实前端脚本验证 1200 个跨页 ID 只提交一个字段、后退恢复和筛选范围行为。本地全量 `uv run pytest -q`、`uv run mypy app`、`uv run ruff check app tests alembic` 通过；最终提交、CI 与格式检查结果须在部署前补记。真人浏览器操作和生产加载尚未验收。部署需先备份并单独取得重启授权。

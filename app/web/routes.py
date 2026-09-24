@@ -574,6 +574,7 @@ async def case_batch_prepare(
     csrf: Annotated[str, Form()] = "",
     scope: Annotated[str, Form()] = "selected",
     case_ids: Annotated[list[int] | None, Form()] = None,
+    case_ids_compact: Annotated[str, Form()] = "",
     reason: Annotated[str, Form()] = "",
     status: Annotated[str, Form()] = "",
     group: Annotated[str, Form()] = "",
@@ -597,7 +598,7 @@ async def case_batch_prepare(
         cases = await case_batch.select_cases(
             session,
             scope,
-            case_ids or [],
+            case_batch.selected_ids(case_ids, case_ids_compact),
             filters,
             limit=case_batch.EXPORT_LIMIT if exporting else case_batch.CLOSE_LIMIT,
         )

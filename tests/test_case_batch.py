@@ -348,6 +348,53 @@ async def test_selected_cases_from_nonadjacent_pages_export_and_close_together(w
         assert len([case for case in cases if case.status == "PENDING_REVIEW"]) == 99
 
 
+async def test_compact_selection_exports_more_than_form_field_limit(web_ui):
+    client, factory, _, csrf = web_ui
+    await seed(factory, 1001)
+    response = await client.post(
+        "/admin/cases/batch-export",
+        files=[
+            ("csrf", (None, csrf)),
+            ("scope", (None, "selected")),
+            ("case_ids_compact", (None, json.dumps(list(range(1, 1002))))),
+        ],
+    )
+    assert response.status_code == 200, response.text[:200]
+    rows = list(csv.DictReader(io.StringIO(response.content.decode("utf-8-sig"))))
+    assert len(rows) == 1001
+    assert {row["QQ号"] for row in rows} == {str(200000 + i) for i in range(1001)}
+    assert await statuses(factory) == ["PENDING_REVIEW"] * 1001
+
+
+@pytest.mark.parametrize(
+    "compact",
+    ["", "not json", "{}", "[0]", "[-1]", '["1"]', "[1.0]", "[1,2,3]", "[999]"],
+)
+async def test_compact_selection_rejects_bad_or_changed_ids(web_ui, compact):
+    client, factory, _, csrf = web_ui
+    await seed(factory)
+    response = await client.post(
+        "/admin/cases/batch-export",
+        data={"csrf": csrf, "scope": "selected", "case_ids_compact": compact},
+    )
+    assert response.status_code in {409, 422}, response.text[:200]
+    assert await statuses(factory) == ["PENDING_REVIEW"] * 2
+
+
+async def test_compact_selection_rejects_mixed_and_over_limit(web_ui):
+    client, factory, _, csrf = web_ui
+    await seed(factory)
+    for fields in (
+        {"case_ids_compact": "[1]", "case_ids": ["2"]},
+        {"case_ids_compact": json.dumps(list(range(1, case_batch.EXPORT_LIMIT + 2)))},
+    ):
+        response = await client.post(
+            "/admin/cases/batch-export", data={"csrf": csrf, "scope": "selected", **fields}
+        )
+        assert response.status_code == 422, response.text[:200]
+    assert await statuses(factory) == ["PENDING_REVIEW"] * 2
+
+
 async def test_export_provider_isolation_formula_and_openid(web_ui):
     client, factory, _, csrf = web_ui
     await seed(factory)
