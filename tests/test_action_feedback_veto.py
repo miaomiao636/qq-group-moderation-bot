@@ -86,6 +86,8 @@ async def _run(
         external_user_id=user_id,
         sender=Sender(member_openid=user_id),
         text="脱敏测试",
+        external_self_id="1",
+        sent_at=datetime.now(UTC),
     )
     decision = ModerationDecision(
         message_id=message_id,
@@ -108,8 +110,26 @@ async def _run(
         onebot_action_stage="full",
     )
     async with AsyncSession(engine, expire_on_commit=False) as session:
+
+        class ConfirmedTransport:
+            # These tests probe the guards AFTER a confirmed recall. Deliver an
+            # actual matching synthetic notice, not a mocked confirmation gate.
+            async def recall(self, *args, **kwargs):
+                from app.actions.recall_confirmation import RecallNotice, accept_notice
+
+                result = await client.recall(*args, **kwargs)
+                async with AsyncSession(engine) as receipt_session:
+                    assert await accept_notice(
+                        receipt_session,
+                        RecallNotice("1", "42", user_id, message_id, "1", datetime.now(UTC)),
+                    )
+                return result
+
+            mute = client.mute
+            warn = client.warn
+
         return await orchestrate_actions(
-            session, message, decision, onebot_client=client, settings=settings
+            session, message, decision, onebot_client=ConfirmedTransport(), settings=settings
         )
 
 
