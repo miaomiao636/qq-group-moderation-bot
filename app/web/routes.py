@@ -1242,6 +1242,38 @@ async def shadow_detail(request: Request, message_id: str = "") -> Response:
                 back + "<div class=card><b>未找到该消息的影子记录。</b>"
                 "可能产生于本功能上线前，或已被保留期清理。</div>",
             )
+        from app.actions.orchestrator import ActionIntent
+        from app.actions.recall_confirmation import RecallConfirmation, confirmation_label
+
+        try:
+            snapshot = json.loads(record.detail_json or "{}")
+        except (TypeError, ValueError):
+            snapshot = {}
+        snapshots = snapshot.get("action_intents", []) if isinstance(snapshot, dict) else []
+        intent_ids = (
+            [
+                item["id"]
+                for item in snapshots
+                if isinstance(item, dict) and type(item.get("id")) is int and item["id"] > 0
+            ]
+            if isinstance(snapshots, list)
+            else []
+        )
+        # Read live evidence: the shadow JSON predates notices that arrive later.
+        action_rows = (
+            await session.execute(
+                select(ActionIntent, RecallConfirmation)
+                .outerjoin(RecallConfirmation, RecallConfirmation.intent_id == ActionIntent.id)
+                .where(
+                    ActionIntent.id.in_(intent_ids),
+                    ActionIntent.provider == record.provider,
+                    ActionIntent.external_group_id == record.external_group_id,
+                    ActionIntent.external_user_id == record.external_user_id,
+                    ActionIntent.external_message_id == record.external_message_id,
+                )
+                .order_by(ActionIntent.id)
+            )
+        ).all()
         alias = await session.get(GroupAlias, record.group_openid)
         from app.moderation.feedback import FeedbackRecord
 
@@ -1325,6 +1357,36 @@ async def shadow_detail(request: Request, message_id: str = "") -> Response:
         else "<p class=muted>尚未保存反馈</p>"
     )
     text_preview = _esc(str(detail.get("text_preview") or ""))
+    action_lines = []
+    api_labels = {
+        "SUCCEEDED": "接口返回成功",
+        "FAILED": "接口返回失败",
+        "UNKNOWN": "接口结果未知",
+        "SKIPPED": "未发送",
+        "EXECUTING": "请求处理中",
+        "PENDING": "尚未发送",
+    }
+    for intent, confirmation in action_rows:
+        line = f"<li>{_esc(intent.action)}：{_esc(api_labels.get(intent.status, intent.status))}"
+        if intent.provider == "onebot" and intent.action == "recall" and intent.status != "SKIPPED":
+            line += f"；{_esc(confirmation_label(confirmation))}"
+            if confirmation is not None:
+                line += f"；请求时间 {_esc(_beijing(confirmation.requested_at))}"
+                if confirmation.confirmed_at is not None:
+                    line += f"；通知接收时间 {_esc(_beijing(confirmation.confirmed_at))}"
+        if intent.reason:
+            line += f"；{_esc(intent.reason)}"
+        action_lines.append(line + "</li>")
+    actions_html = (
+        (
+            "<div class=card><h3>动作执行情况</h3><ul>"
+            + "".join(action_lines)
+            + "</ul><p class=muted>接口回包与 QQ 撤回通知分别记录。未确认不等于撤回失败；"
+            "不会自动重试，也不会补做后续处罚。通知只作执行证据，不作为违规标签。</p></div>"
+        )
+        if action_lines
+        else ""
+    )
     from app.core.media_diagnostics import DOWNLOAD_ERROR_LABELS, safe_download_errors
 
     errors = safe_download_errors(detail.get("media_download_errors"))
@@ -1346,7 +1408,7 @@ async def shadow_detail(request: Request, message_id: str = "") -> Response:
         f"<tr><th>类型</th><td>{_zh_kind(record.kind)}</td></tr>"
         f"<tr><th>判定</th><td><b>{_zh_verdict(record.verdict)}</b>　置信度 {record.confidence}</td></tr>"
         f"<tr><th>判定原因</th><td>{_esc(record.reason)}</td></tr>"
-        f"</table>{fb_line}</div>{download_diagnostic}"
+        f"</table>{fb_line}</div>{download_diagnostic}{actions_html}"
         "<div class=card><h3>文字内容</h3>"
         f"<p>{text_preview or '<span class=muted>（无文字）</span>'}</p>"
         "<p class=muted>隐私设计：文字仅保留前60字预览，完整原文不留存。</p></div>"
@@ -2013,7 +2075,10 @@ async def reports_page(
     notice_html = f"<p class=warn role=status>{_esc(notice)}</p>" if notice else ""
     body = (
         notice_html
-        + "<div class=card><h3>昨日日报</h3><pre>"
+        + "<div class=card><p>actions_ok 仅指接口返回成功。onebot_recall_confirmed 为已收到 QQ 撤回通知，"
+        "unconfirmed 为已登记但未确认，untracked 为未采集确认（含历史或已到保留期）。"
+        "确认数量按请求所属日期统计，迟到通知会更新；未确认不会自动补罚。</p></div>"
+        "<div class=card><h3>昨日日报</h3><pre>"
         + _esc(json.dumps(daily, ensure_ascii=False, indent=1))
         + "</pre></div>"
         "<div class=card><h3>近7天周报</h3><pre>"

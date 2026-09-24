@@ -601,7 +601,26 @@ def build_onebot_router(ws_path: str) -> APIRouter:
                     if _worker_wake is not None:
                         _worker_wake.set()
                     continue
-                # notice（含群撤回通知，T-205待标注事件）/请求/私聊等：仅计数
+                if post == "notice" and event.get("notice_type") == "group_recall":
+                    from app.actions.recall_confirmation import accept_notice
+                    from app.adapters.onebot.recall_notice import parse_recall_notice
+
+                    notice = parse_recall_notice(event, expected_self_id=settings.onebot_self_id)
+                    if notice is None:
+                        onebot_status.count_invalid()
+                        continue
+                    try:
+                        with CancelScope(shield=True):
+                            async with SessionLocal() as session:
+                                await accept_notice(session, notice)
+                    except Exception as exc:  # noqa: BLE001 - no false confirmation on storage loss
+                        onebot_status.storage_available = False
+                        onebot_status.count_failed()
+                        onebot_status.last_error = f"recall_notice_storage:{type(exc).__name__}"
+                        await websocket.close(code=1011)
+                        break
+                    continue
+                # Other notices / requests / private messages do not become labels.
                 onebot_status.count_ignored()
         except WebSocketDisconnect:
             pass

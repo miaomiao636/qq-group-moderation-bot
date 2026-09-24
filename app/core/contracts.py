@@ -115,6 +115,7 @@ class StandardMessage(BaseModel):
     - ``external_group_id``：供应商侧群标识（官方=group_openid，OneBot=数字群号字符串）；
     - ``external_user_id``：供应商侧成员标识（官方=member_openid，OneBot=数字QQ字符串）；
     - ``external_message_id``：供应商侧消息标识。
+    - ``external_self_id``：适配器明确提供的接收账号；缺失不推断跨账号确认。
 
     旧字段 ``group_openid``/``group_id`` 与 ``sender.member_openid`` 在 expand 阶段
     保留并与中立字段双向同步（镜像视图），既有官方 Adapter、审核、案件、报告与
@@ -129,6 +130,7 @@ class StandardMessage(BaseModel):
     external_group_id: str = ""
     external_user_id: str = ""
     external_message_id: str = ""
+    external_self_id: str = ""  # Receiving account, explicitly supplied by the adapter.
     sender: Sender
     sent_at: datetime | None = None
     received_at: datetime | None = None

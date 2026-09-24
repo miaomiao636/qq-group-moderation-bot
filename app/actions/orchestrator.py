@@ -27,6 +27,7 @@ from sqlalchemy import DateTime, Integer, String, Text, and_, or_, select, updat
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import Mapped, mapped_column
 
+from app.actions.recall_confirmation import arm_confirmation, is_confirmed
 from app.cases.service import record_violation
 from app.config import Settings, get_settings
 from app.core.contracts import ActionResult, ModerationActionClient, Provider, StandardMessage
@@ -302,13 +303,23 @@ async def _orchestrate_member_actions(
         intents.append(intent)
         if intent.status != "PENDING":
             continue
-        result = await _execute_intent(session, client, intent)
+        result = await _execute_intent(session, client, intent, message=msg, settings=settings)
         if result is None:
             # Another worker owns this intent. Do not overwrite it or advance
             # this competing chain to a stronger action.
             break
         await _log_action_result(session, intent, result, actor=actor)
         if intent.status in ("UNKNOWN", "FAILED", "SKIPPED"):
+            break
+        if (
+            provider == "onebot"
+            and intent.action == "recall"
+            and not await is_confirmed(session, intent.id)
+        ):
+            # A late receipt may update evidence, never resume punishment.
+            if settings.onebot_action_stage == "full":
+                intent.reason = "接口回包后尚未取得撤回确认，本次动作链已停止；迟到通知不会补罚"
+                await session.commit()
             break
     return intents
 
@@ -482,6 +493,9 @@ async def _execute_intent(
     session: AsyncSession,
     client: ModerationActionClient,
     intent: ActionIntent,
+    *,
+    message: StandardMessage | None = None,
+    settings: Settings | None = None,
 ) -> ActionResult | None:
     claimed = await session.execute(
         update(ActionIntent)
@@ -520,6 +534,14 @@ async def _execute_intent(
             )
     if is_runtime_emergency_stop() or await emergency_stop_active(session):
         reason = "运行时急停，未发送外部动作"
+    if (
+        intent.provider == "onebot"
+        and message is not None
+        and settings is not None
+        and message.external_self_id
+        and message.external_self_id != settings.onebot_self_id
+    ):
+        reason = "消息接收账号与固定动作账号不一致，未发送外部动作"
     if reason:
         intent.status = "SKIPPED"
         intent.reason = reason
@@ -529,6 +551,8 @@ async def _execute_intent(
         return result
     try:
         if intent.action == "recall":
+            if intent.provider == "onebot" and message is not None and settings is not None:
+                await arm_confirmation(session, intent.id, message, settings.onebot_self_id)
             result = await client.recall(
                 intent.external_group_id or intent.group_openid,
                 intent.external_message_id or intent.message_id,

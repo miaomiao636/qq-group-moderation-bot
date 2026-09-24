@@ -706,6 +706,14 @@ async def purge_expired(session: AsyncSession, now: datetime | None = None) -> d
     # 3) 动作日志：超判断期删除
     r3 = await session.execute(delete(ActionLog).where(ActionLog.created_at < decision_cutoff))
     deleted_logs = int(getattr(r3, "rowcount", 0) or 0)
+    from app.actions.recall_confirmation import RecallConfirmation, confirmation_table_available
+
+    deleted_confirmations = 0
+    if await confirmation_table_available(session):
+        confirmations = await session.execute(
+            delete(RecallConfirmation).where(RecallConfirmation.requested_at < decision_cutoff)
+        )
+        deleted_confirmations = int(getattr(confirmations, "rowcount", 0) or 0)
 
     # 4) 媒体文件清理（R-102-4）：与原始期一致，超保留期删除
     from app.adapters.qq_official.media import purge_media
@@ -769,6 +777,7 @@ async def purge_expired(session: AsyncSession, now: datetime | None = None) -> d
         "violation_evidence_purged": purged_violation_evidence,
         "case_reasons_purged": purged_case_reasons,
         "action_logs_deleted": deleted_logs,
+        "recall_confirmations_deleted": deleted_confirmations,
         "media_files_deleted": deleted_media,
         **managed_copy_counts,
         **case_counts,

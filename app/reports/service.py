@@ -10,9 +10,11 @@ from __future__ import annotations
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
-from sqlalchemy import func, select
+from sqlalchemy import func, literal, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.actions.orchestrator import ActionIntent
+from app.actions.recall_confirmation import RecallConfirmation, confirmation_table_available
 from app.cases.models import Case, ViolationRecord
 from app.models import ActionLog, ProcessedEvent
 
@@ -29,6 +31,42 @@ async def _counts(session: AsyncSession, **statements: Any) -> dict[str, int]:
     return {key: int(row[index]) for index, key in enumerate(statements)}
 
 
+async def _recall_counts(session: AsyncSession, start: datetime, end: datetime) -> dict[str, Any]:
+    if not await confirmation_table_available(session):
+        return {
+            "onebot_recall_confirmed": select(literal(0)),
+            "onebot_recall_unconfirmed": select(literal(0)),
+            "onebot_recall_untracked": select(func.count())
+            .select_from(ActionIntent)
+            .where(
+                ActionIntent.provider == "onebot",
+                ActionIntent.action == "recall",
+                ActionIntent.status.in_(("EXECUTING", "SUCCEEDED", "FAILED", "UNKNOWN")),
+                ActionIntent.created_at >= start,
+                ActionIntent.created_at < end,
+            ),
+        }
+    query = (
+        select(func.count())
+        .select_from(ActionIntent)
+        .outerjoin(RecallConfirmation, RecallConfirmation.intent_id == ActionIntent.id)
+        .where(
+            ActionIntent.provider == "onebot",
+            ActionIntent.action == "recall",
+            ActionIntent.status.in_(("EXECUTING", "SUCCEEDED", "FAILED", "UNKNOWN")),
+            ActionIntent.created_at >= start,
+            ActionIntent.created_at < end,
+        )
+    )
+    return {
+        "onebot_recall_confirmed": query.where(RecallConfirmation.confirmed_at.is_not(None)),
+        "onebot_recall_unconfirmed": query.where(
+            RecallConfirmation.intent_id.is_not(None), RecallConfirmation.confirmed_at.is_(None)
+        ),
+        "onebot_recall_untracked": query.where(RecallConfirmation.intent_id.is_(None)),
+    }
+
+
 async def build_daily(session: AsyncSession, day: datetime | None = None) -> dict[str, Any]:
     """构建日报（默认昨天00:00~24:00 UTC窗口）。"""
     day = day or (datetime.now(UTC) - timedelta(days=1))
@@ -37,6 +75,7 @@ async def build_daily(session: AsyncSession, day: datetime | None = None) -> dic
 
     counts = await _counts(
         session,
+        **await _recall_counts(session, start, end),
         messages_processed=select(func.count())
         .select_from(ProcessedEvent)
         .where(ProcessedEvent.processed_at >= start, ProcessedEvent.processed_at < end),
@@ -71,6 +110,7 @@ async def build_weekly(session: AsyncSession, week_end: datetime | None = None) 
     start = end - timedelta(days=7)
     counts = await _counts(
         session,
+        **await _recall_counts(session, start, end),
         violations_recorded=select(func.count())
         .select_from(ViolationRecord)
         .where(ViolationRecord.created_at >= start, ViolationRecord.created_at < end),

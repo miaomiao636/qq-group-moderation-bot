@@ -426,6 +426,7 @@ class OneBotMessageSource:
             external_group_id=group_id,
             external_user_id=user_id,
             external_message_id=message_id,
+            external_self_id=str(payload.get("self_id") or ""),
             sender=Sender(
                 member_openid=user_id,
                 username=str(sender_raw.get("card") or sender_raw.get("nickname") or "")[:64],

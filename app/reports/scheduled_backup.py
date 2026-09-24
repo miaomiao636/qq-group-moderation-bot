@@ -82,6 +82,7 @@ def initialize(
         key_file.absolute(),
         owner_sid=owner_sid,
         mode=mode,
+        expected_revision=_current_revision(),
     )
     payload = {
         key: str(value) if isinstance(value, Path) else value
@@ -90,6 +91,19 @@ def initialize(
     path = state / "config.json"
     _json(path, payload)
     return path
+
+
+def _current_revision() -> str:
+    from alembic.config import Config
+    from alembic.script import ScriptDirectory
+
+    root = Path(__file__).resolve().parents[2]
+    config = Config(str(root / "alembic.ini"))
+    config.set_main_option("script_location", str(root / "alembic"))
+    head = ScriptDirectory.from_config(config).get_current_head()
+    if not head:
+        raise BackupError("SOURCE_SCHEMA_UNKNOWN")
+    return head
 
 
 def _git(repo: Path, *args: str) -> str:
@@ -129,6 +143,8 @@ def validate_source(config: BackupConfig) -> str:
             config.repo / "config/ai_prompt_rules.txt"
         ):
             raise BackupError("PROMPT_OUTSIDE_PUBLIC_CONFIG_SCOPE")
+    if _current_revision() != config.expected_revision:
+        raise BackupError("SOURCE_SCHEMA_MISMATCH")
     return _git(config.repo, "rev-parse", "HEAD")
 
 

@@ -35,6 +35,7 @@ _COUNT_KEYS = frozenset(
         "candidate_patterns_purged",
         "ai_cache_deleted",
         "action_logs_deleted",
+        "recall_confirmations_deleted",
         "media_files_deleted",
         "inbox_payloads_purged",
         "inbox_records_deleted",
@@ -104,10 +105,15 @@ async def run_cleanup(session: AsyncSession) -> CleanupOutcome:
 async def _run_cleanup() -> CleanupOutcome:
     # Lazy imports keep configuration/connection errors inside the safe CLI error
     # boundary: raw exception text can include configuration or database content.
-    from app.db import SessionLocal, check_db_migrated, engine
+    from app.db import SessionLocal, check_db_migrated, engine, get_db_revision, get_head_revision
 
     try:
-        await check_db_migrated()
+        # Only this additive migration has an explicitly compatible cleanup path.
+        # Web/runtime startup remain strict; no older/future schema is admitted.
+        if not (
+            get_head_revision() == "f3c8a9d12064" and await get_db_revision() == "e1c7d4b8a902"
+        ):
+            await check_db_migrated()
         async with SessionLocal() as session:
             return await run_cleanup(session)
     finally:
