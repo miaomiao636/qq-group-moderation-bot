@@ -12,7 +12,7 @@
 2. 点击“打开空间登录”，在独立 Microsoft Edge 中登录 QQ 空间，然后点击“确认已登录”。首次登录和之后的会话过期需要本人处理；不复制现有浏览器或 QQ 的凭据。
 3. 正常访问恢复后，选择需要检查的群，点击“开始检查所选群”。本次优化默认开启自动续批：每批 300 人、相邻实时检查等待 30 秒、批间休息 60 秒，按保存的待检查队列继续。窗口可调间隔、批量及休息，关闭自动续批则一批结束后停止；这些均为试验设置，不是腾讯允许频率，仍可能被拦截。每个任务最多选择 10 个群；同一账号跨群只访问一次，导出保留每个群的关联。
 4. 可以暂停、关闭后载入任务继续。点击“载入已有任务”，在窗口内按创建时间、群名和进度选择任务，再点“载入所选”；默认选择最新任务，不必寻找隐藏的 AppData 目录。“其他位置”保留手动选择入口。窗口“当前任务”显示已载入任务的创建时间、群名和群号，与上方新建任务的选群状态区分。载入不会自动开始巡检；点“继续检查”才续扫。任务逐项保存；同一任务必须使用原成员来源账号和空间观察账号才能续扫。仅查看或导出已有任务不需要重新登录空间。“打开任务数据”查看内部续扫记录，AppData 默认隐藏，也可按 Win+R 输入 `%LOCALAPPDATA%\QQSpaceInspector\tasks` 直接进入。
-5. 点击“导出结果”，再点“打开本次结果”。新结果集中保存到实际 Windows 桌面的“QQ空间巡检结果”，根目录也显示在窗口中；“查看所有导出”打开总目录。结果目录使用群名、群号、本机导出时间和区分码，多群任务标注“等 N 群”。各群分别有“群名_群号_全部成员.csv”和“群名_群号_观察到限制.csv”；后者仅包含明确空间违规限制提示，前者包含尚未完成的快照成员。兼容总表 `report.csv`、`restricted.csv` 与完整 `report.json` 保留，`说明.txt` 列出群名、群号、创建/导出时间和范围。CSV 可用 Excel 打开。历史复用行保留原观察时间、复用时间和来源任务，不表示本次重新访问。
+5. 默认导出到实际 Windows 桌面的“QQ空间巡检结果”。可在空闲时点“选择导出位置”，选择 D/E 盘等可写入的现有文件夹；该位置自动记住，重开工具后仍使用。再点击“导出结果”和“打开本次结果”；“查看所有导出”打开当前总目录。结果目录使用群名、群号、本机导出时间和区分码，多群任务标注“等 N 群”。各群分别有“群名_群号_全部成员.csv”和“群名_群号_观察到限制.csv”；后者仅包含明确空间违规限制提示，前者包含尚未完成的快照成员。兼容总表 `report.csv`、`restricted.csv` 与完整 `report.json` 保留，`说明.txt` 列出群名、群号、创建/导出时间和范围。CSV 可用 Excel 打开。历史复用行保留原观察时间、复用时间和来源任务，不表示本次重新访问。
 
 旧任务和旧导出保持原位；载入旧任务后重新导出即可得到新布局，不必重新扫描。任务 ID 用于续扫、锁和历史来源，不按群名重命名；导出的 CSV 不是可继续巡检的任务目录。每次导出建立独立快照，不覆盖旧文件。新窗口需关闭旧程序后重新打开才能加载；不会自动重启正在扫描的窗口。
 
@@ -44,6 +44,30 @@
 目录适配器只调用 `get_login_info`、`get_group_list`、`get_group_member_list`，固定账号、回环地址、无代理、无重定向；读取群/成员前后核对登录身份。专用浏览器和任务分别加操作系统锁，异常退出不留下永久逻辑锁。只保存最小页面观察，不保存整页资料或登录令牌。
 
 ## 导出目录与群结果辨识（SPACE-EXPORT-20260923）
+
+### 自定义导出位置（SPACE-EXPORT-PATH-20260925）
+
+“选择导出位置”只改变后续导出的总目录。取消选择或保存失败保留旧设置；新目录必须已存在且可写，不能是巡检内部数据目录。设置仅存于本机 `QQSpaceInspector/export-settings.json`，先原子保存成功才更新窗口。自定义磁盘/目录失联会阻止导出并提示重新连接或选择，不回退到桌面，也不重建已删除的自定义目录。配置损坏时仍能打开工具及重新选择，但导出会阻止到设置修复为止。
+
+既有导出与续扫任务不会移动或删除；“最近导出”仍指向上一次真实结果，“查看所有导出”指向新总目录。旧任务可载入后直接向新目录导出，无须重新扫描。负责人已确认此前桌面导出和群名标识可用；本轮自选位置的真人操作尚待反馈。旧窗口需关闭再从桌面入口重开，才能加载按钮。
+
+本轮接手基线 `7f2b5d5f460f812436c813e4b7265ea0c1162878` 经 `git pull --ff-only` / `git log -1` / `git status --short --branch` 核对干净且对齐。实现提交 `74fa8c9`，内部回归提交及冻结执行 SHA `bbc403d8dedbf567cb07a287978857498b4286b8`。新增 `tests/test_space_inspector_export_settings.py`；既有 GUI 假服务仅补导出路径/错误字段，原断言保留。未修改外部主审探针。首次失败复现为基线加新增测试草稿，命令 `uv run pytest tests/test_space_inspector_export_settings.py -q --tb=short --junitxml=<证据目录>/red.xml`，缺少设置方法的预期失败记录在 `red.log/xml`，不能当作最终测试结果。
+
+证据目录：`C:/Users/81596/AppData/Local/Temp/qqbot-space-inspector-20260925-custom-export/`。`checks.json` 记录冻结 SHA、完整命令与退出码，`summary.json` 从 `full.xml` 复算。实际验证命令：
+
+```powershell
+uv run pytest --junitxml=C:/Users/81596/AppData/Local/Temp/qqbot-space-inspector-20260925-custom-export/full.xml
+uv run ruff check app tests alembic scripts
+uv run ruff format --check app tests alembic scripts
+uv run mypy app
+uv run python C:/Users/81596/AppData/Local/Temp/qqbot-space-inspector-20260925-custom-export/verify_gui.py
+```
+
+上述 SHA 实际全量 **2714 passed、19 skipped、0 failed/error（2733 项）**；原主审子集 31 文件/262 项全通过；巡检子集 281 项中 279 passed、2 skipped。跳过原因从 XML 复算：13 项生产服务持锁保护、1 项私有样本未提供、4 项链接权限、1 项可选 inspection 运行时未安装，不统称为平台差异。ruff check、format（393 文件）、mypy（127 源文件）均通过。GUI 隔离验证使用合成服务和临时目录，实际创建窗口并验证选择、保存、重建窗口恢复路径、保留旧结果链接与小窗口按钮布局；没有访问 QQ 或变更用户现有设置。源码位于桌面入口运行环境实际加载的仓库内，未重启用户正在使用的巡检窗口或生产服务。
+
+最终文档 HEAD 的 CI 按 `gh run list --branch windows-deploy-2026-09-10 --commit <最终HEAD> --json databaseId,headSha,status,conclusion,url` 定位，再用 `gh run view <runId> --json headSha,status,conclusion,jobs,url` 核验精确 SHA 与三个 job。私有最终收据保存在上述目录 `ci-final.json`；未成功前不得宣称 CI 通过。
+
+### 既有布局与验证（2026-09-23）
 
 负责人反馈目录层级与编码名难以辨认。接手基线 `907e3c66a6b84030a00947505aebd026c0697981`，`git pull --ff-only`、`git log -1`、`git status --short --branch` 确认分支已对齐且工作区干净。对 `%LOCALAPPDATA%/QQSpaceInspector/tasks` 用 `Get-ChildItem -Directory` 分层只读检查，实际是固定的 `任务/exports/每次导出/文件`，重复导出是并列快照，未发现无穷递归。旧文件原位保留。
 

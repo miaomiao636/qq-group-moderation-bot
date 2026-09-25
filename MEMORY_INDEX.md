@@ -1,5 +1,7 @@
 # 项目记忆索引
 
+- **SPACE-EXPORT-PATH-20260925**：独立巡检支持选择并记住导出总目录。后续结果使用新位置，旧结果与续扫数据保留。使用和验证见 [自定义导出位置](docs/2026-09-21-space-inspector.md#自定义导出位置space-export-path-20260925)。
+
 **RECALL-CONFIRM-20260924：已获授权上线，迁移和新旧完整备份恢复验证通过。** 部署源码 `2fc0d55`，OneBot ready，急停 false、recall_only 与群授权未变；此前跨页案件补正一并加载。自然撤回通知尚未匹配，继续观察；精确证据见 [本轮记录](docs/2026-09-24-recall-confirmation.md)。
 
 **CASE-BATCH-20260923：已推送并经负责人授权上线。** 部署提交 `22e60d1` 的应用源码与全量验证的 `d3e2d3c` 一致：案件摘要 CSV、冻结预览后批量 KEEP/CLOSED、撤回回执超时 UNKNOWN 均已加载。D 盘数据库备份校验、Web/Runtime 新进程、OneBot ready、自然消息恢复与配置不变已核验；急停 false、recall_only、群开关保持原样。未代用户结案、导出生产名单或重放历史动作。执行 SHA、命令、CI 与实机边界见 [本轮记录](docs/2026-09-23-case-batch.md#授权部署2026-09-23)。N03 与整机故障恢复仍独立待办。
