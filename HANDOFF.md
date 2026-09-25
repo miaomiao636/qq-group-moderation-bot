@@ -1,5 +1,7 @@
 # Agent交接记录
 
+**COMPANION-DELIVERY-20260925**：负责人要求方案 A 的 GitHub/文件包和配套说明，当前提供同仓库候选打包及手册，入口 [DELIVERY.md](DELIVERY.md)。根代理唯一写入，只读辅助核查指出并纠正 NapCat-only 不需要 `app.runtime` 的部署误导；未调整现有生产服务。不能直接用 ZIP 套旧双服务安装或每日备份脚本；这些适配、巡检备份、新机验收与许可仍是正式交付前待办。执行 SHA、测试、候选包及最终 CI 核验见 [本轮记录](docs/2026-09-25-companion-delivery.md)。现有仓库已核实公开，未发 Release、未改变可见性。
+
 **SPACE-EXPORT-PATH-20260925**：独立桌面巡检增加“选择导出位置”，保存后重启仍使用。仅修改 `app/space_inspector/{export_paths,service,worker,gui}.py` 与内部回归；未操作真实导出、任务数据、QQ 或生产服务。旧窗口关闭后重开即可加载，负责人需自行选择目标目录；既有结果不会迁移。执行 SHA、命令、测试与最终 CI 核验入口见 [巡检记录](docs/2026-09-21-space-inspector.md#自定义导出位置space-export-path-20260925)。负责人此前已确认桌面结果和群名标识可用，覆盖下文旧批次“未反馈”；本轮新目录选择尚待真人反馈。
 
 **CASE-EXPORT-FIELDS-20260924 热修复：已上线，待真人再试。** 真人“案件编号无效或数量过多”的根因是 `case_selection.py` 发送字符串 ID，首轮后端测试仅用整数；`edf986b` 后端按严格十进制字符串转换，保留旧整数格式和 5000 案上限。同型 1001 案 multipart 导出、批量预览、5000 案边界与异常格式均入库；本地全量、ruff/mypy 和 [源码 CI](https://github.com/miaomiao636/qq-group-moderation-bot/actions/runs/35973756828) 三 job 成功。新 D 盘备份一致性校验后只重启 Web，Runtime 全程运行；OneBot 重连后 ready、在线、队列空。未处理或导出生产案件。用户须刷新案件页再试，若仍失败保留响应和选中数继续诊断；详情见 [案件批量记录](docs/2026-09-23-case-batch.md#浏览器字符串-id-热修复2026-09-24)。

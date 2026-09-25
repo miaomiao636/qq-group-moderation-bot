@@ -1,5 +1,7 @@
 # 项目进度
 
+**COMPANION-DELIVERY-20260925**：已编写允许清单打包工具、入库合成回归及接收方配套手册。主应用、现有安装脚本、生产服务与账号配置未修改；README 中 NapCat/官方运行器说明按代码纠正。完整验证及候选包哈希见 [本轮记录](docs/2026-09-25-companion-delivery.md)，不表示已在接收方电脑安装或已发布。
+
 **SPACE-EXPORT-PATH-20260925**：自定义导出目录实现 `74fa8c9`、内部回归 `bbc403d8dedbf567cb07a287978857498b4286b8`；精确 SHA、执行命令、完整回归及最终 HEAD CI 核验入口见 [巡检记录](docs/2026-09-21-space-inspector.md#自定义导出位置space-export-path-20260925)。设置及 GUI 使用隔离临时数据验证；真人选择目录尚待反馈，不从测试推断用户已使用。
 
 **CASE-EXPORT-FIELDS-20260924 热修复：已加载，待真人再试。** 首版虽解决 1000 表单字段限制，却误把浏览器 JSON 中的字符串案件 ID 判为无效；之前 1001 案测试用的是整数，遗漏实际前端数据类型。`edf986b` 对十进制字符串做严格校验并转换，补真实同型 1001 案 multipart 导出、预览及 5000 案边界；本地全量、静态检查和 [源码 CI](https://github.com/miaomiao636/qq-group-moderation-bot/actions/runs/35973756828) 三 job 通过。新一致性备份校验后 Web 单独重启，OneBot 已重连 ready、在线、队列空。未导出或处理生产案件；用户须刷新原页面再试。详见 [案件批量记录](docs/2026-09-23-case-batch.md#浏览器字符串-id-热修复2026-09-24)。

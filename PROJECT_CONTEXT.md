@@ -1,5 +1,7 @@
 # 项目上下文
 
+**COMPANION-DELIVERY-20260925**：负责人选择方案 A，群管理主项目与空间巡检同仓库、同提交、两套入口配套交付。接收方文档集中于 [DELIVERY.md](DELIVERY.md) 和 `docs/delivery/`，双方手册互链。当前仅候选源码包；不将公司试用等同正式验收，不创建新仓库或擅自发布 Release。待办和实际验证见 [本轮记录](docs/2026-09-25-companion-delivery.md)。
+
 **SPACE-EXPORT-PATH-20260925**：负责人要求自定义巡检导出位置，新增目录选择及本机持久化；不可用目录明确报错，保留旧任务和旧导出，不改变扫描判据、频率或生产服务。具体行为与验收证据见 [巡检记录](docs/2026-09-21-space-inspector.md#自定义导出位置space-export-path-20260925)。
 
 **RECALL-CONFIRM-20260924：已获授权上线并完成迁移、服务恢复及新旧备份恢复验证。** 部署源码 `2fc0d55`，OneBot ready，急停 false、recall_only 与群授权未变；跨页案件勾选补正一并加载。撤回 API 成功与 QQ 通知单独记录，当前自然撤回尚未匹配，实机效果待观察。验证与恢复证据见 [本轮记录](docs/2026-09-24-recall-confirmation.md)。

@@ -1,5 +1,7 @@
 # 项目记忆索引
 
+- **COMPANION-DELIVERY-20260925**：方案 A 已选定，同仓库维护群管理与空间巡检，接收方入口 [DELIVERY.md](DELIVERY.md)。新手册与固定提交候选包不包含现场运行资料；正式交付还需解决服务安装模式、无 Git 备份、巡检备份、许可及新现场验收。证据与边界见 [本轮交付记录](docs/2026-09-25-companion-delivery.md)。
+
 - **SPACE-EXPORT-PATH-20260925**：独立巡检支持选择并记住导出总目录。后续结果使用新位置，旧结果与续扫数据保留。使用和验证见 [自定义导出位置](docs/2026-09-21-space-inspector.md#自定义导出位置space-export-path-20260925)。
 
 **RECALL-CONFIRM-20260924：已获授权上线，迁移和新旧完整备份恢复验证通过。** 部署源码 `2fc0d55`，OneBot ready，急停 false、recall_only 与群授权未变；此前跨页案件补正一并加载。自然撤回通知尚未匹配，继续观察；精确证据见 [本轮记录](docs/2026-09-24-recall-confirmation.md)。
