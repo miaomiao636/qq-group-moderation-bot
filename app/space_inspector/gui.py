@@ -164,6 +164,10 @@ class Window:
         ttk.Button(
             paths, text="查看所有导出", command=lambda: self._open_export(all_results=True)
         ).grid(row=3, column=2, padx=(8, 0))
+        self._choose_export_button = ttk.Button(
+            paths, text="选择导出位置", command=self._choose_export_location
+        )
+        self._choose_export_button.grid(row=3, column=3, padx=(8, 0))
         ttk.Label(outer, textvariable=self._summary, wraplength=950).grid(
             row=7, column=0, sticky="ew", pady=4
         )
@@ -283,6 +287,7 @@ class Window:
             self._resume_button,
             self._select_visible,
             self._clear_selection,
+            self._choose_export_button,
         ):
             button.configure(state="normal" if available else "disabled")
         self._search_entry.configure(state="normal" if available else "disabled")
@@ -569,6 +574,8 @@ class Window:
                 continue
             self._busy = False
             self._scanning = False
+            if "export_root" in payload:
+                self._export_root_text.set(str(payload["export_root"]))
             if kind == "ready":
                 groups = payload.get("groups")
                 if isinstance(groups, list):
@@ -578,7 +585,15 @@ class Window:
                     self._selected.intersection_update(self._groups)
                     self._render_groups()
                 self._source.set(f"群目录机器人账号：{payload.get('source_id', '—')}")
-                self._status.set("选择需要检查的群，然后打开空间登录并确认账号。")
+                self._status.set(
+                    str(payload.get("export_settings_error"))
+                    if payload.get("export_settings_error")
+                    else "选择需要检查的群，然后打开空间登录并确认账号。"
+                )
+            elif kind == "export_location_saved":
+                self._status.set(
+                    "导出位置已保存，重开工具后继续使用。后续导出使用新目录，已有文件保留原位。"
+                )
             elif kind == "browser_opened":
                 self._logged_in = False
                 self._viewer.set("空间访问账号：请在独立浏览器中登录，再点击“确认已登录”")
@@ -632,13 +647,26 @@ class Window:
             self._controls()
         self.root.after(100, self._poll)
 
+    def _choose_export_location(self) -> None:
+        if self._busy or self._closing or self._shutdown_failed:
+            return
+        current = self._export_root_text.get()
+        chosen = filedialog.askdirectory(
+            parent=self.root,
+            title="选择导出总目录（仅影响后续导出）",
+            initialdir=current if current and Path(current).is_dir() else str(Path.home()),
+            mustexist=True,
+        )
+        if chosen:
+            self._submit("set_export_root", Path(chosen))
+
     def _open_export(self, *, all_results: bool = False) -> None:
         target = (
             self._export_root_text.get()
             if all_results or not self._export_text.get()
             else self._export_text.get()
         )
-        if Path(target).is_dir() and sys.platform == "win32":
+        if target and Path(target).is_dir() and sys.platform == "win32":
             try:
                 os.startfile(target)
             except OSError:

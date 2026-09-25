@@ -27,7 +27,7 @@ from .contracts import (
     PlatformAccessBlocked,
     numeric_id,
 )
-from .export_paths import default_export_root
+from .export_paths import default_export_root, load_export_root, save_export_root
 from .options import ScanOptions
 
 EXPERIMENT_BATCH_SIZE = 300
@@ -142,6 +142,9 @@ def data_root() -> Path:
 
 
 class Service:
+    export_settings_error = ""
+    _custom_export_root = False
+
     def __init__(self) -> None:
         from app.config import get_settings
 
@@ -154,8 +157,8 @@ class Service:
         except Exception:
             raise InspectionError("请先在本项目配置中填写有效的机器人 QQ 号。") from None
         self.root = data_root()
-        self.export_root = default_export_root()
         self.root.mkdir(parents=True, exist_ok=True)
+        self.load_export_settings()
         self._lock = FileLock(self.root / "desktop.lock")
         try:
             self._lock.__enter__()
@@ -172,6 +175,20 @@ class Service:
         self._task_lock: FileLock | None = None
         self.current_folder: Path | None = None
         self._deferred: set[str] = set()
+
+    def load_export_settings(self) -> None:
+        self.export_root = default_export_root()
+        self.export_settings_error = ""
+        self._custom_export_root = False
+        try:
+            self.export_root, self._custom_export_root = load_export_root(self.root)
+        except InspectionError as exc:
+            self.export_settings_error = str(exc)
+
+    def set_export_root(self, chosen: Path) -> None:
+        self.export_root = save_export_root(self.root, chosen)
+        self._custom_export_root = True
+        self.export_settings_error = ""
 
     def groups(self) -> list[Group]:
         return self._directory.groups()
@@ -352,6 +369,12 @@ class Service:
         return self._store.rows(limit=200) if self._store else []
 
     def export(self) -> Path:
+        if self.export_settings_error:
+            raise InspectionError(self.export_settings_error)
+        if self._custom_export_root and not self.export_root.is_dir():
+            raise InspectionError(
+                "选定的导出目录不可用。请连接对应磁盘，或点击“选择导出位置”重新设置。"
+            )
         if self._store is None:
             raise InspectionError("请先创建或载入任务。")
         return self._store.export(self.export_root)

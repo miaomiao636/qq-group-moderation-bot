@@ -50,6 +50,8 @@ def run_worker(
         message: str, operation: str, *, platform_blocked: bool = False, defer_qq: str = ""
     ) -> None:
         payload: dict[str, object] = {"message": message, "operation": operation}
+        if service is not None and operation == "groups":
+            payload.update(export_location())
         if platform_blocked:
             payload["requires_browser_confirmation"] = True
         if defer_qq:
@@ -58,6 +60,13 @@ def run_worker(
             with suppress(Exception):
                 payload.update(snapshot())
         emit("error", payload)
+
+    def export_location() -> dict[str, object]:
+        assert service is not None
+        return {
+            "export_root": str(service.export_root) if not service.export_settings_error else "",
+            "export_settings_error": service.export_settings_error,
+        }
 
     while True:
         kind, payload = commands.get()
@@ -74,7 +83,19 @@ def run_worker(
             if service is None:
                 service = service_factory()
             if kind == "groups":
-                emit("ready", {"groups": service.groups(), "source_id": service.source_id})
+                emit(
+                    "ready",
+                    {
+                        "groups": service.groups(),
+                        "source_id": service.source_id,
+                        **export_location(),
+                    },
+                )
+            elif kind == "set_export_root":
+                if not isinstance(payload, Path):
+                    raise InspectionError("请选择导出文件夹。")
+                service.set_export_root(payload)
+                emit("export_location_saved", export_location())
             elif kind == "history":
                 emit("history", {"tasks": service.history()})
             elif kind == "browser":

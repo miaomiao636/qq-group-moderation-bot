@@ -2,9 +2,69 @@
 
 from __future__ import annotations
 
+import json
+import os
 import sys
+import tempfile
 import unicodedata
 from pathlib import Path
+
+from .contracts import InspectionError
+
+
+def _checked_path(path: Path, data_root: Path) -> Path:
+    if not path.is_absolute() or "\x00" in str(path):
+        raise ValueError("invalid export path")
+    path = path.resolve()
+    if path.is_relative_to(data_root.resolve()):
+        raise ValueError("internal task/browser data directory")
+    return path
+
+
+def load_export_root(data_root: Path) -> tuple[Path, bool]:
+    """A missing setting uses the default; unreadable settings never silently fall back."""
+    try:
+        with (data_root / "export-settings.json").open(encoding="utf-8") as stream:
+            settings = json.load(stream)
+    except FileNotFoundError:
+        return default_export_root(), False
+    except (OSError, ValueError):
+        raise InspectionError("无法读取导出位置设置，请点击“选择导出位置”重新设置。") from None
+    try:
+        if not isinstance(settings, dict) or not isinstance(settings.get("export_root"), str):
+            raise ValueError("invalid export settings")
+        return _checked_path(Path(settings["export_root"]), data_root), True
+    except (OSError, ValueError, RuntimeError):
+        raise InspectionError("导出位置设置无效，请点击“选择导出位置”重新设置。") from None
+
+
+def save_export_root(data_root: Path, chosen: Path) -> Path:
+    """Verify the chosen folder and atomically persist before changing the live value."""
+    temporary: Path | None = None
+    try:
+        path = _checked_path(chosen, data_root)
+        if not path.is_dir():
+            raise ValueError("not an existing directory")
+        with tempfile.TemporaryFile(dir=path) as probe:
+            probe.write(b"export directory check")
+            probe.flush()
+        with tempfile.NamedTemporaryFile(
+            mode="w", encoding="utf-8", dir=data_root, suffix=".tmp", delete=False
+        ) as stream:
+            temporary = Path(stream.name)
+            json.dump({"export_root": str(path)}, stream, ensure_ascii=False)
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.replace(temporary, data_root / "export-settings.json")
+        return path
+    except (OSError, ValueError, RuntimeError):
+        raise InspectionError(
+            "导出位置未更改。请选择可写入的现有文件夹，避开巡检内部数据目录；"
+            "并检查磁盘连接及设置文件写入权限。"
+        ) from None
+    finally:
+        if temporary is not None:
+            temporary.unlink(missing_ok=True)
 
 
 def default_export_root() -> Path:
