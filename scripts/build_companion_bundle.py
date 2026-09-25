@@ -138,6 +138,7 @@ def build(repo: Path, ref: str, output: Path) -> dict[str, object]:
         "components": ["group_management", "space_inspector"],
         "release_blockers": [
             "recipient_clean_install_and_recovery_not_verified",
+            "napcat_only_service_installer_requires_adaptation",
             "gitless_scheduled_backup_not_supported",
             "inspector_data_not_in_main_backup_scope",
             "license_metadata_requires_owner_confirmation",
