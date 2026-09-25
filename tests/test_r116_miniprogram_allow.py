@@ -42,7 +42,7 @@ def _local(
         category=category,  # type: ignore[arg-type]
         confidence=0.95 if verdict == "violation_high" else 0.0,
         rule_hits=list(hits),
-        recommended_actions=["recall", "mute", "warn"] if verdict == "violation_high" else [],
+        recommended_actions=["recall"] if verdict == "violation_high" else [],
     )
 
 

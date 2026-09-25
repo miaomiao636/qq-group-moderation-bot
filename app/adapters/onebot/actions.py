@@ -1,7 +1,7 @@
 """NapCat/OneBot 11 管理动作适配器（T-307）。
 
 架构约束：
-- 实现 ``app.core.contracts.ModerationActionClient`` 契约（recall/mute/warn），
+- 实现 ``app.core.contracts.ModerationActionClient`` 契约（仅 recall），
   **不含任何踢人逻辑**（踢人必须人工审批，T-304）；
 - 不在 Adapter 内重复审核逻辑——意图、幂等键、保护角色、急停、按群开关
   均由 provider-neutral orchestrator（``app.actions.orchestrator``）先行裁决；
@@ -18,7 +18,7 @@
   async、缺字段、类型错误及矛盾响应 → UNKNOWN（禁止升级或重放）；
   含 NapCat 权限不足等场景，可审计）。
 
-警告（send_group_msg）非幂等，不做自动重试；撤回/禁言同样只单次调用，
+撤回只单次调用，
 UNKNOWN 意图的重放必须由人工触发。
 """
 
@@ -39,7 +39,6 @@ __all__ = [
 # 由组合根（runtime 层反向WS hub）注入；抛 OneBotActionError 表示传输层失败。
 OneBotActionCaller = Callable[[str, Mapping[str, Any]], Awaitable[Mapping[str, Any]]]
 
-_MAX_MUTE_SECONDS = 30 * 24 * 3600
 _RECALL_CALLBACK_TIMEOUT = (
     "Timeout: NTEvent serviceAndMethod:NodeIKernelMsgService/recallMsg "
     "ListenerName:NodeIKernelMsgListener/onMsgInfoListUpdate EventRet:"
@@ -69,21 +68,19 @@ def _numeric_id(value: str, field: str) -> int:
 
 
 class OneBotActionClient:
-    """OneBot 11 动作客户端：recall=delete_msg，mute=set_group_ban，warn=send_group_msg。"""
+    """OneBot 11 自动审核客户端：recall=delete_msg。"""
 
     def __init__(self, caller: OneBotActionCaller) -> None:
         self._caller = caller
 
-    async def _call(
-        self, action_name: str, endpoint: str, params: Mapping[str, Any]
-    ) -> ActionResult:
+    async def _call_recall(self, message_id: int) -> ActionResult:
         try:
-            resp = await self._caller(endpoint, params)
+            resp = await self._caller("delete_msg", {"message_id": message_id})
         except OneBotActionError as exc:
             if exc.kind in ("not_ready", "disconnected"):
                 # 发送前失败：确定没有请求发出，明确 FAILED 而非 UNKNOWN。
                 return ActionResult(
-                    action=action_name,
+                    action="recall",
                     ok=False,
                     err_message=f"NapCat未就绪或未连接（{exc}），未发出请求",
                     attempts=1,
@@ -103,7 +100,7 @@ class OneBotActionClient:
         # P0-7: OneBot规范——status=ok+retcode=0 才是确定成功；
         # status=async 仅表示排队，不代表最终成功 → UNKNOWN
         if status == "ok" and retcode == 0:
-            return ActionResult(action=action_name, ok=True, status_code=0, attempts=1)
+            return ActionResult(action="recall", ok=True, status_code=0, attempts=1)
         if status == "ok" and retcode != 0:
             # 矛盾响应：status=ok 但 retcode≠0 → 结果不确定
             raise OneBotActionError(
@@ -117,9 +114,7 @@ class OneBotActionClient:
                 "OneBot status=async（请求已排队，结果不确定）",
             )
         if (
-            action_name == "recall"
-            and endpoint == "delete_msg"
-            and status == "failed"
+            status == "failed"
             and retcode == 1200
             and any(
                 isinstance(value, str) and value.startswith(_RECALL_CALLBACK_TIMEOUT)
@@ -135,7 +130,7 @@ class OneBotActionClient:
             )
         if status == "failed" and retcode not in (0, 1):
             return ActionResult(
-                action=action_name,
+                action="recall",
                 ok=False,
                 status_code=0,
                 err_code=err_code,
@@ -155,54 +150,4 @@ class OneBotActionClient:
             message_id = _numeric_id(external_message_id, "message_id")
         except ValueError as exc:
             return ActionResult(action="recall", ok=False, err_message=str(exc), attempts=1)
-        return await self._call("recall", "delete_msg", {"message_id": message_id})
-
-    async def mute(
-        self,
-        external_group_id: str,
-        external_user_id: str,
-        seconds: int,
-        /,
-        *,
-        actor: str = "system",
-    ) -> ActionResult:
-        try:
-            group_id = _numeric_id(external_group_id, "group_id")
-            user_id = _numeric_id(external_user_id, "user_id")
-        except ValueError as exc:
-            return ActionResult(action="mute", ok=False, err_message=str(exc), attempts=1)
-        if seconds <= 0 or seconds > _MAX_MUTE_SECONDS:
-            return ActionResult(
-                action="mute",
-                ok=False,
-                err_message=f"禁言时长非法：{seconds}秒（允许 1~{_MAX_MUTE_SECONDS}）",
-                attempts=1,
-            )
-        return await self._call(
-            "mute", "set_group_ban", {"group_id": group_id, "user_id": user_id, "duration": seconds}
-        )
-
-    async def warn(
-        self,
-        external_group_id: str,
-        reply_to_message_id: str,
-        text: str,
-        /,
-        *,
-        msg_seq: int = 1,
-        actor: str = "system",
-    ) -> ActionResult:
-        try:
-            group_id = _numeric_id(external_group_id, "group_id")
-            reply_id = _numeric_id(reply_to_message_id, "reply_to_message_id")
-        except ValueError as exc:
-            return ActionResult(action="warn", ok=False, err_message=str(exc), attempts=1)
-        if not text.strip():
-            return ActionResult(action="warn", ok=False, err_message="警告文本为空", attempts=1)
-        message: list[dict[str, Any]] = [
-            {"type": "reply", "data": {"id": reply_id}},
-            {"type": "text", "data": {"text": text}},
-        ]
-        return await self._call(
-            "warn", "send_group_msg", {"group_id": group_id, "message": message}
-        )
+        return await self._call_recall(message_id)

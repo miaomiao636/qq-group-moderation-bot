@@ -177,11 +177,11 @@ class Settings(BaseSettings):
         default=90, ge=5, le=3600, alias="ONEBOT_HEARTBEAT_TIMEOUT_SECONDS"
     )
 
-    # T-307：OneBot 真实管理动作（撤回/禁言/警告）。独立于 ACTION_MODE=OFFICIAL
-    # 的第二道开关：代码同步、服务重启或 NapCat 重连都不会自动开启真实处罚。
+    # OneBot 真实撤回。独立于 ACTION_MODE=OFFICIAL
+    # 的第二道开关：代码同步、服务重启或 NapCat 重连都不会自动开启真实撤回。
     onebot_actions_enabled: bool = Field(default=False, alias="ONEBOT_ACTIONS_ENABLED")
-    # Local owner-controlled rollout stage; changing it requires a service restart.
-    onebot_action_stage: Literal["recall_only", "full"] = Field(
+    # Keep the existing environment key compatible, but reject the retired full stage.
+    onebot_action_stage: Literal["recall_only"] = Field(
         default="recall_only", alias="ONEBOT_ACTION_STAGE"
     )
     onebot_action_timeout_seconds: int = Field(

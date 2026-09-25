@@ -17,7 +17,7 @@
 
 暴露的小而稳定接口（seam）：
 - ``MessageSource``：入站 Adapter 实现，把传输层原始事件转换为 ``StandardMessage``。
-- ``ModerationActionClient``：出站动作 Adapter 实现，按中立 ID 执行撤回/禁言/警告。
+- ``ModerationActionClient``：出站动作 Adapter 实现，按中立 ID 执行撤回。
 """
 
 from __future__ import annotations
@@ -48,7 +48,7 @@ MessageKind = Literal[
 
 SenderRole = Literal["owner", "admin", "member", "unknown"]
 
-# 中立动作名（动作结构中永不存在 kick；unmute 供运维解除禁言）。
+# 兼容历史动作审计；新自动审核仅可创建 recall，unmute 供人工补救旧禁言。
 ActionName = Literal["recall", "mute", "unmute", "warn"]
 
 
@@ -224,7 +224,7 @@ class MessageSource(Protocol):
 
 @runtime_checkable
 class ModerationActionClient(Protocol):
-    """出站动作 Adapter seam：按中立 ID 执行撤回/禁言/警告。
+    """出站自动审核动作 Adapter seam：按中立 ID 只执行撤回。
 
     位置限定参数（``/``）使实现方自由命名形参；协议不含踢人，任何实现
     都不得添加自动踢人路径（踢人必须人工审批，T-304）。
@@ -234,29 +234,4 @@ class ModerationActionClient(Protocol):
         self, external_group_id: str, external_message_id: str, /, *, actor: str = "system"
     ) -> ActionResult:
         """撤回一条消息。"""
-        ...
-
-    async def mute(
-        self,
-        external_group_id: str,
-        external_user_id: str,
-        seconds: int,
-        /,
-        *,
-        actor: str = "system",
-    ) -> ActionResult:
-        """禁言一名成员。"""
-        ...
-
-    async def warn(
-        self,
-        external_group_id: str,
-        reply_to_message_id: str,
-        text: str,
-        /,
-        *,
-        msg_seq: int = 1,
-        actor: str = "system",
-    ) -> ActionResult:
-        """发送一次被动警告回复。"""
         ...

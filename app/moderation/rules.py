@@ -2,7 +2,7 @@
 
 置信度模型（可解释、确定性，不使用大模型自由文本控制处罚）：
 - 每条命中规则贡献 confidence_delta；总分 >= HIGH_THRESHOLD(0.90) 且命中
-  两条以上独立信号（或命中明确黑名单词）=> violation_high（建议撤回+禁言+警告）；
+  两条以上独立信号（或命中明确黑名单词）=> violation_high（仅建议撤回）；
 - 有信号但未达阈值 => record_only（只记录转人工）；
 - 无信号 => allow。
 
@@ -235,10 +235,10 @@ SOFT_SIGNALS: tuple[str, ...] = (
 )
 
 FLOOD_WINDOW_SECONDS = 60.0
-FLOOD_MAX_MESSAGES = 3  # 负责人确认：连续发3条一模一样即撤回+禁言
+FLOOD_MAX_MESSAGES = 3  # 负责人确认：连续发3条一模一样即撤回
 FLOOD_CONFIDENCE = 0.95  # 刷屏为负责人明确的确定性规则，单条规则即高置信
 
-_HIGH_ACTIONS: tuple[str, ...] = ("recall", "mute", "warn")  # 永远不含 kick
+_HIGH_ACTIONS: tuple[str, ...] = ("recall",)
 
 
 def _fingerprint(msg: StandardMessage) -> str:
@@ -586,9 +586,7 @@ class TextRuleEngine:
         elif forward_record:
             # 负责人 2026-09-18：合并转发（聊天记录）**一律撤回**——无需展开内容
             # （不调用 get_forward_msg），纯本地确定性规则。保护角色与成员白名单已在
-            # 上面分支排除。动作沿用标准高置信违规集（与处罚阶梯 record_violation
-            # 实际规划的动作保持一致，避免"记录建议"与"实际动作"不符）：
-            # 当前 OneBot 处于 recall_only 阶段时只会执行 recall。
+            # 上面分支排除。高置信违规只建议撤回，与实际动作保持一致。
             verdict = "violation_high"
             confidence = max(confidence, 0.95)
             actions = list(_HIGH_ACTIONS)

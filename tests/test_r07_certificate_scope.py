@@ -57,7 +57,7 @@ def test_non_certificate_ads_still_punished() -> None:
     engine = TextRuleEngine()
     decision = engine.evaluate(_msg("刷单兼职日结，加我微信赚外快"))
     assert decision.verdict == "violation_high"
-    assert decision.recommended_actions == ["recall", "mute", "warn"]
+    assert decision.recommended_actions == ["recall"]
 
 
 def test_normal_text_still_allowed() -> None:

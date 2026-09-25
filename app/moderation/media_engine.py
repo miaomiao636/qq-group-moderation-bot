@@ -35,7 +35,7 @@ def _decision(
     category: str | None = None,
     rule_hits: list[RuleHit] | None = None,
 ) -> ModerationDecision:
-    actions: list[str] = ["recall", "mute", "warn"] if verdict == "violation_high" else []
+    actions: list[str] = ["recall"] if verdict == "violation_high" else []
     return ModerationDecision(
         message_id=message_id,
         group_openid=group_openid,

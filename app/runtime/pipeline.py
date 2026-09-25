@@ -2,7 +2,7 @@
 
 处理顺序：begin_processing → 解析 → 文字规则 → 复核门 → 按媒体类型分发对应引擎 → 落库 → mark_processed。
 任何异常 → mark_failed（可重试）；媒体缺失/下载失败/解析失败 → record_only，绝不允许放行。
-影子模式：**任何判定都不执行**撤回/禁言/警告。
+影子模式：**任何判定都不执行**撤回。
 """
 
 from __future__ import annotations
@@ -387,7 +387,7 @@ async def _run_pipeline(
                     # D-037（负责人 2026-09-18："名单内成员发的所有信息都通过"）：
                     # 成员白名单为**全类别完全放行**，媒体层独立违规信号只作证据，
                     # 不升级、不处罚。若不拦截，merge_decisions 会把 allow 直接改成
-                    # violation_high，编排层随即产生真实撤回/禁言——等于白名单被旁路
+                    # violation_high，编排层随即产生真实撤回——等于白名单被旁路
                     # （与保护角色同样免罚的待遇一致）。
                     decision = decision.model_copy(
                         update={

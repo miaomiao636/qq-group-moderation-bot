@@ -221,9 +221,8 @@ async def test_member_allowlist_dynamic_rule_does_not_upgrade() -> None:
 def test_forward_record_is_recalled() -> None:
     decision = TextRuleEngine().evaluate(_msg(kind="forward_record", text="[合并转发]"))
     assert decision.verdict == "violation_high"
-    # 与处罚阶梯 record_violation 实际规划的动作保持一致（撤回+禁言+警告）；
-    # OneBot 处于 recall_only 阶段时只会执行 recall。
-    assert decision.recommended_actions == ["recall", "mute", "warn"]
+    # 高置信违规也只建议撤回。
+    assert decision.recommended_actions == ["recall"]
     assert any(h.rule_id == FORWARD_RECORD_RECALL_RULE_ID for h in decision.rule_hits)
 
 
@@ -248,7 +247,7 @@ def test_group_card_is_recalled() -> None:
         _msg(kind="share_card", share_card=ShareCardInfo(is_group_card=True, title="某交流群"))
     )
     assert decision.verdict == "violation_high"
-    assert decision.recommended_actions == ["recall", "mute", "warn"]
+    assert decision.recommended_actions == ["recall"]
     assert any(h.rule_id == GROUP_CARD_RECALL_RULE_ID for h in decision.rule_hits)
 
 
@@ -607,8 +606,8 @@ async def test_pipeline_forward_recall_intent_is_shadow_only() -> None:
         assert record is not None
         assert record.verdict == "violation_high"
         detail = json.loads(record.detail_json)
-        assert detail["recommended_actions"] == ["recall", "mute", "warn"]
-        # 外部动作结果表为空 = 没有任何真实撤回/禁言/警告被发出
+        assert detail["recommended_actions"] == ["recall"]
+        # 外部动作结果表为空 = 没有任何真实撤回被发出
         executed = await session.scalar(
             select(func.count())
             .select_from(ActionLog)

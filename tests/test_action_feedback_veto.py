@@ -1,4 +1,4 @@
-"""Human correction must win before each remaining external punishment action."""
+"""Human correction, identity matching, and action serialization protect recalls."""
 
 from __future__ import annotations
 
@@ -107,7 +107,7 @@ async def _run(
         onebot_actions_enabled=True,
         onebot_access_token="test-onebot-token",
         onebot_self_id="1",
-        onebot_action_stage="full",
+        onebot_action_stage="recall_only",
     )
     async with AsyncSession(engine, expire_on_commit=False) as session:
 
@@ -125,16 +125,13 @@ async def _run(
                     )
                 return result
 
-            mute = client.mute
-            warn = client.warn
-
         return await orchestrate_actions(
             session, message, decision, onebot_client=ConfirmedTransport(), settings=settings
         )
 
 
 @pytest.mark.parametrize("correction_kind", ["feedback", "revoked"])
-async def test_correction_after_recall_stops_mute_and_warn(
+async def test_correction_after_recall_does_not_trigger_additional_actions(
     veto_engine: AsyncEngine, correction_kind: str
 ) -> None:
     async def correct() -> None:
@@ -149,7 +146,12 @@ async def test_correction_after_recall_stops_mute_and_warn(
     intents = await _run(veto_engine, client)
 
     assert client.calls == ["recall"]
-    assert [intent.status for intent in intents] == ["SUCCEEDED", "SKIPPED"]
+    assert [intent.status for intent in intents] == ["SUCCEEDED"]
+    async with AsyncSession(veto_engine) as session:
+        violation = await session.scalar(select(ViolationRecord))
+        assert violation is not None
+        if correction_kind == "revoked":
+            assert violation.revoked is True
 
 
 @pytest.mark.parametrize("label", ["false_positive", "confirmed_normal"])
@@ -193,7 +195,7 @@ async def test_negative_feedback_never_guesses_cross_identity(
 
     await _run(veto_engine, client)
 
-    assert client.calls == ["recall", "mute", "warn"]
+    assert client.calls == ["recall"]
 
 
 async def test_latest_explicit_positive_supersedes_negative_without_prior_strike(
@@ -206,7 +208,7 @@ async def test_latest_explicit_positive_supersedes_negative_without_prior_strike
 
     await _run(veto_engine, client)
 
-    assert client.calls == ["recall", "mute", "warn"]
+    assert client.calls == ["recall"]
 
 
 async def test_latest_feedback_follows_insertion_order_after_clock_rollback(
@@ -240,7 +242,6 @@ class _DelayedClient(_FakeClient):
         super().__init__()
         self.first_started = asyncio.Event()
         self.release_first = asyncio.Event()
-        self.durations: list[int] = []
 
     async def recall(self, group: str, message_id: str, **kwargs) -> ActionResult:
         if message_id == "101":
@@ -248,25 +249,20 @@ class _DelayedClient(_FakeClient):
             await self.release_first.wait()
         return await super().recall(group, message_id, **kwargs)
 
-    async def mute(self, group: str, user: str, seconds: int, **kwargs) -> ActionResult:
-        self.durations.append(seconds)
-        return await super().mute(group, user, seconds, **kwargs)
 
-
-async def test_delayed_first_chain_cannot_shorten_second_mute(veto_engine: AsyncEngine) -> None:
+async def test_delayed_first_recall_serializes_same_member(veto_engine: AsyncEngine) -> None:
     client = _DelayedClient()
     first = asyncio.create_task(_run(veto_engine, client))
     await asyncio.wait_for(client.first_started.wait(), timeout=10)
     second = asyncio.create_task(_run(veto_engine, client, message_id="102"))
     try:
-        # Old implementation completes the second chain here, producing 24h→1h.
-        # Serialized implementation waits until first.release_first below.
+        # The second message must wait for the first member action to finish.
         await asyncio.wait({second}, timeout=0.2)
+        assert not second.done()
     finally:
         client.release_first.set()
         await asyncio.gather(first, second)
-    assert client.durations == [3600, 86400]
-    assert client.calls.count("warn") == 1
+    assert client.calls == ["recall", "recall"]
     assert not orchestrator._member_action_chains
 
 
@@ -278,7 +274,7 @@ async def test_different_members_do_not_block_each_other(veto_engine: AsyncEngin
         second = await asyncio.wait_for(
             _run(veto_engine, client, message_id="102", user_id="85"), timeout=10
         )
-        assert [intent.status for intent in second] == ["SUCCEEDED"] * 3
+        assert [intent.status for intent in second] == ["SUCCEEDED"]
     finally:
         client.release_first.set()
         await first
@@ -324,7 +320,7 @@ async def test_cancelled_member_chain_waiter_releases_reference(veto_engine: Asy
         await first
     assert not orchestrator._member_action_chains
     await _run(veto_engine, client, message_id="103")
-    assert client.durations == [3600, 86400]
+    assert client.calls == ["recall", "recall"]
     assert not orchestrator._member_action_chains
 
 
@@ -343,5 +339,5 @@ async def test_exception_or_cancellation_releases_owned_chain(
     monkeypatch.setattr(orchestrator, "_orchestrate_member_actions", original)
     client = _FakeClient()
     await _run(veto_engine, client)
-    assert client.calls == ["recall", "mute", "warn"]
+    assert client.calls == ["recall"]
     assert not orchestrator._member_action_chains

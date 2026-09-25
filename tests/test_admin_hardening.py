@@ -157,7 +157,7 @@ async def test_existing_duplicate_routes_fail_closed_then_explicit_owner_wins():
 
 
 @pytest.mark.asyncio
-async def test_shared_stop_after_recall_prevents_later_actions():
+async def test_shared_stop_after_recall_prevents_next_message_recall():
     from app.actions.orchestrator import orchestrate_actions
     from app.core.emergency_stop import set_emergency_stop
     from app.db import SessionLocal
@@ -189,8 +189,17 @@ async def test_shared_stop_after_recall_prevents_later_actions():
                 official_client=client,
                 settings=_official_settings(),
             )
+            next_message = _msg(msg.external_group_id, "other")
+            next_results = await orchestrate_actions(
+                session,
+                next_message,
+                _high_decision(next_message),
+                official_client=client,
+                settings=_official_settings(),
+            )
         assert [action for action, _ in client.calls] == ["recall"]
-        assert results[-1].status == "SKIPPED"
+        assert [intent.status for intent in results] == ["SUCCEEDED"]
+        assert [intent.status for intent in next_results] == ["SKIPPED"]
     finally:
         async with SessionLocal() as session:
             await set_emergency_stop(session, False, actor="test-human")

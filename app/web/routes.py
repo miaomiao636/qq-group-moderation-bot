@@ -1179,9 +1179,9 @@ async def shadow_page(request: Request, verdict: str = "") -> Response:
         f"{await _media_capacity_banner()}<h2>影子模式判定（最近100条）</h2><p>分布：{_esc(summary)}　"
         "<span class=muted>影子模式只记录不处罚；时间为北京时间</span></p>"
         f'<form style="display:none">{csrf}</form>'
-        "<div class=card><b>判定说明：</b>高置信违规=确定违规（正式模式自动撤回+禁言+警告）；"
+        "<div class=card><b>判定说明：</b>高置信违规=确定违规（正式模式仅自动撤回）；"
         "转人工复核=有疑点但证据不足（不处罚，人工确认）；放行=正常内容。"
-        "<b>置信度</b>=系统对判定的把握程度（0~1），≥0.90才自动处罚。</div>"
+        "<b>置信度</b>=系统对判定的把握程度（0~1）；高置信违规才可能自动撤回。</div>"
         '<div class=card style="border-color:#b45309"><b>首次使用：</b>'
         "群名称尚未备注时，列表「群」列显示OpenID代码——请在<b>页面最底部「群名称备注」表格</b>"
         "把每个代码对应的群名填一次并保存，之后列表直接显示群名。</div>"
@@ -1660,11 +1660,11 @@ async def rules_page(request: Request, notice: str = "") -> Response:
         "<li>带「万能校园墙」小程序码的分享图（白名单）</li>"
         "<li>正常聊天内容</li></ul></div>"
         "<div class=card><h3>违规类别</h3><ul>"
-        "<li>广告/引流（兼职、刷单、代发、房产等）——自动撤回+禁言+警告</li>"
+        "<li>广告/引流（兼职、刷单、代发、房产等）——仅自动撤回</li>"
         "<li>色情/暴力/血腥/恐怖——只记录转人工复核</li>"
         "<li>刷屏：1分钟>5条相同字样/图片/表情包</li></ul></div>"
         f"<div class=card><h3>黑名单词（{len(BLACKLIST_EXPLICIT)}）</h3><p>{blacklist}</p></div>"
-        f"<div class=card><h3>弱信号词（{len(SOFT_SIGNALS)}，组合达到阈值才处罚）</h3><p>{soft}</p></div>"
+        f"<div class=card><h3>弱信号词（{len(SOFT_SIGNALS)}，组合达到阈值才可能撤回）</h3><p>{soft}</p></div>"
     )
     return _page("规则", body)
 

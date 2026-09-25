@@ -1287,7 +1287,7 @@ def merge_ai_evidence(
                 "category": best.category,
                 "confidence": min(best.confidence, 0.95),
                 "rule_hits": local.rule_hits + hits,
-                "recommended_actions": ["recall", "mute", "warn"],
+                "recommended_actions": ["recall"],
                 "reason": "AI条件复核策略通过"
                 if best.review_reason
                 else "主视觉模型高置信且无冲突",

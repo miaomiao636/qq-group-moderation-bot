@@ -64,14 +64,12 @@ def test_other_failures_stay_failed(wording):
     assert result.ok is False and result.err_code == 1200
 
 
-@pytest.mark.parametrize("action", ["mute", "warn"])
-def test_other_actions_do_not_use_recall_signature(action):
-    caller = _FakeCaller(response={"status": "failed", "retcode": 1200, "wording": PREFIX + "{}"})
+def test_onebot_adapter_has_no_mute_or_warning_entrypoint():
+    caller = _FakeCaller(response={"status": "ok", "retcode": 0})
     client = OneBotActionClient(caller)
-    result = asyncio.run(
-        client.mute("100", "200", 60) if action == "mute" else client.warn("100", "999", "test")
-    )
-    assert result.ok is False and len(caller.calls) == 1
+    assert not hasattr(client, "mute")
+    assert not hasattr(client, "warn")
+    assert caller.calls == []
 
 
 @pytest.mark.asyncio

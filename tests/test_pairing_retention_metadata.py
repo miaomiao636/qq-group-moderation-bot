@@ -125,7 +125,7 @@ async def test_cleanup_markers_do_not_poison_or_bypass_pairing(historical_kind, 
             verdict="violation_high",
             category="ad",
             confidence=0.99,
-            recommended_actions=["recall", "mute", "warn"],
+            recommended_actions=["recall"],
         )
         decision = await maybe_wall_text_pairing(
             session,

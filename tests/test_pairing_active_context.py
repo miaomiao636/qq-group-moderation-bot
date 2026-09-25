@@ -125,7 +125,7 @@ class _HighAI:
             category="ad",
             confidence=0.99,
             reason="synthetic high ad",
-            recommended_actions=["recall", "mute", "warn"],
+            recommended_actions=["recall"],
         ), []
 
 

@@ -1,7 +1,7 @@
 """审核决策契约（T-103）。
 
-硬约束：决策结构中不存在 kick / 踢人 动作（D-001）。允许的动作仅限
-recall / mute / warn，且仅在 verdict=violation_high 时给出建议；
+硬约束：新的自动审核决策只建议 recall，不包含禁言、警告或踢人。
+历史决策中的 mute / warn 值仍可读取，不能作为执行许可；
 record_only 表示中等风险只记录转人工，allow 表示放行。
 """
 
@@ -12,7 +12,7 @@ from typing import Any, Literal
 from pydantic import BaseModel, Field, model_validator
 
 Verdict = Literal["allow", "record_only", "violation_high"]
-RecommendedAction = Literal["recall", "mute", "warn"]
+RecommendedAction = Literal["recall", "mute", "warn"]  # 旧审计记录兼容
 Category = Literal["ad", "fraud", "porn", "violence", "flood", "other", None]
 
 # Deterministic local policy marker, never inferred from an AI explanation.

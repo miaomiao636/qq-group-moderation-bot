@@ -1,5 +1,7 @@
 # 项目进度
 
+**RECALL-ONLY-20260925（源码与本地验证完成，生产待加载）**：负责人取消自动首违/再次违规禁言和群内警告，本轮同步停用第二次违规自动立案；OneBot/官方出口新自动动作仅为撤回。两 Adapter 的禁言/群内警告方法和完整处罚档位已移除；旧动作意图不会恢复执行。逐条违规证据、历史案件和处罚记录保留。全量 `uv run pytest -q --tb=line` 退出码 0；`uv run --locked ruff check app tests alembic`、`ruff format --check app tests alembic`、`mypy app` 及 `git diff --check` 均通过。源码提交、远端 CI 与生产加载状态须分别记录；不能把此前生产 `recall_only` 配置等同新源码已经部署。
+
 **COMPANION-DELIVERY-20260925**：已编写允许清单打包工具、入库合成回归及接收方配套手册。主应用、现有安装脚本、生产服务与账号配置未修改；README 中 NapCat/官方运行器说明按代码纠正。完整验证及候选包哈希见 [本轮记录](docs/2026-09-25-companion-delivery.md)，不表示已在接收方电脑安装或已发布。
 
 **SPACE-EXPORT-PATH-20260925**：自定义导出目录实现 `74fa8c9`、内部回归 `bbc403d8dedbf567cb07a287978857498b4286b8`；精确 SHA、执行命令、完整回归及最终 HEAD CI 核验入口见 [巡检记录](docs/2026-09-21-space-inspector.md#自定义导出位置space-export-path-20260925)。设置及 GUI 使用隔离临时数据验证；真人选择目录尚待反馈，不从测试推断用户已使用。

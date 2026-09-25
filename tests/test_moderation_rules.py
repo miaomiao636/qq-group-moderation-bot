@@ -49,7 +49,7 @@ def fixture_message(name: str) -> StandardMessage:
 
 def test_decision_structure_never_contains_kick() -> None:
     """任何决策的 recommended_actions 都不允许出现 kick（D-001 硬约束）。"""
-    allowed = {"recall", "mute", "warn", ""}
+    allowed = {"recall", ""}
     spam = make_message(text="招募兼职刷单，日结，加我微信 abc12345")
     engine = TextRuleEngine()
     decision = engine.evaluate(spam)
@@ -89,7 +89,7 @@ def test_spam_texts_flagged(text: str) -> None:
         f"应为高置信违规: {decision.reason} hits={[(h.rule_id, h.confidence_delta) for h in decision.rule_hits]}"
     )
     assert decision.category in ("ad", "fraud")
-    assert set(decision.recommended_actions) == {"recall", "mute", "warn"}
+    assert decision.recommended_actions == ["recall"]
 
 
 # ---------- 允许反例 ----------

@@ -33,7 +33,7 @@ def local(category="ad"):
         verdict="violation_high",
         category=category,
         confidence=0.95,
-        recommended_actions=["recall", "mute", "warn"],
+        recommended_actions=["recall"],
     )
 
 

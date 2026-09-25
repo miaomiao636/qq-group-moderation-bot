@@ -25,7 +25,7 @@ def test_onebot_stage_defaults_to_recall_only_and_actions_remain_disabled(monkey
     assert settings.onebot_actions_enabled is False
 
 
-@pytest.mark.parametrize("value", ["", "all", "mute", "FULL"])
+@pytest.mark.parametrize("value", ["", "all", "mute", "FULL", "full"])
 def test_invalid_onebot_stage_fails_configuration(value):
     with pytest.raises(ValueError, match="ONEBOT_ACTION_STAGE"):
         Settings(ONEBOT_ACTION_STAGE=value, _env_file=None)
@@ -54,13 +54,7 @@ async def test_stage_controls_two_strikes_without_replaying_old_actions(stage):
             await orchestrate_actions(
                 session, msg, _high_decision(msg), onebot_client=client, settings=settings
             )
-    expected = (
-        ["recall", "recall"]
-        if stage == "recall_only"
-        else ["recall", "mute", "warn", "recall", "mute"]
-    )
+    expected = ["recall", "recall"]
     assert [name for name, _ in client.calls] == expected
     assert [intent.action for intent in intents] == expected
     assert all(intent.status == "SUCCEEDED" for intent in intents)
-    if stage == "full":
-        assert [args[2] for name, args in client.calls if name == "mute"] == [3600, 86400]

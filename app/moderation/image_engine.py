@@ -32,7 +32,7 @@ MediaVerdict = Literal["allow", "record_only", "violation_high"]
 _CAMPUS_WALL_MARKERS = ("长按识别小程序码", "一起看吧")
 
 # 与文字规则一致的处置动作（永无 kick）
-_HIGH_ACTIONS: tuple[str, ...] = ("recall", "mute", "warn")
+_HIGH_ACTIONS: tuple[str, ...] = ("recall",)
 
 
 @dataclass
@@ -191,7 +191,7 @@ def merge_decisions(text_decision: Any, media: MediaAnalysis | None) -> Any:
     """合并文字决策与媒体判定（T-201 聚合层）。
 
     规则：
-    - 任一层 violation_high => violation_high（建议 recall/mute/warn）；
+    - 任一层 violation_high => violation_high（仅建议 recall）；
     - 媒体 allow 且文字无信号 => allow；
     - 其余 => record_only（分析失败或证据不足绝不触发处罚）。
     """

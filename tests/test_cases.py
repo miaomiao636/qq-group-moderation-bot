@@ -1,7 +1,8 @@
-"""T-104 测试：两次违规状态机、30天窗口、白名单保护、误判撤销、案件双出口互斥。"""
+"""T-104 测试：只撤回、保留违规历史、旧案件状态机与审计。"""
 
 from __future__ import annotations
 
+import json
 import uuid
 
 import pytest
@@ -61,16 +62,16 @@ async def test_first_strike_plan() -> None:
         )
         assert isinstance(outcome, ViolationOutcome)
         assert outcome.strike_no == 1
-        actions = {p.action for p in outcome.planned_actions}
-        assert actions == {"recall", "mute", "warn"}
+        actions = [p.action for p in outcome.planned_actions]
+        assert actions == ["recall"]
         assert outcome.case is None
-        mute = next(p for p in outcome.planned_actions if p.action == "mute")
-        assert mute.params["seconds"] == 3600
 
 
 @pytest.mark.asyncio
-async def test_second_strike_creates_case_and_no_kick() -> None:
+async def test_second_strike_only_recalls_without_creating_case() -> None:
+    from app.cases.models import Case
     from app.db import SessionLocal
+    from sqlalchemy import func, select
 
     group, member = _ids()
     async with SessionLocal() as session:
@@ -85,12 +86,14 @@ async def test_second_strike_creates_case_and_no_kick() -> None:
             high_decision("CASE_MSG_S2_2", group, member),
         )
         assert outcome.strike_no == 2
-        actions = {p.action for p in outcome.planned_actions}
-        assert "warn" not in actions  # 第二次不警告
-        assert "kick" not in actions  # 永不自动踢人
-        assert outcome.case is not None
-        assert outcome.case.status == "PENDING_REVIEW"
-        assert outcome.case.case_no.startswith("R")
+        actions = [p.action for p in outcome.planned_actions]
+        assert actions == ["recall"]
+        assert outcome.case is None
+        assert (
+            await session.execute(
+                select(func.count()).select_from(Case).where(Case.group_openid == group)
+            )
+        ).scalar_one() == 0
 
 
 @pytest.mark.asyncio
@@ -193,8 +196,19 @@ async def test_revoke_all_case_violations_closes_case() -> None:
             make_message("CASE_MSG_C2", group, member),
             high_decision("CASE_MSG_C2", group, member),
         )
-        assert o2.case is not None
-        case_id = o2.case.id
+        # Existing cases remain readable and correctable after automatic case creation stops.
+        case = Case(
+            case_no=f"LEGACY-{uuid.uuid4().hex[:12]}",
+            group_openid=group,
+            member_openid=member,
+            violation_ids_json=json.dumps([o1.violation.id, o2.violation.id]),
+        )
+        session.add(case)
+        await session.flush()
+        o1.violation.case_id = case.id
+        o2.violation.case_id = case.id
+        await session.commit()
+        case_id = case.id
         await revoke_violation(session, o1.violation.id, "误判A", operator="admin_test")
         await revoke_violation(session, o2.violation.id, "误判B", operator="admin_test")
         case = await session.get(Case, case_id)
@@ -276,18 +290,14 @@ async def test_case_transition_via_service_audited() -> None:
 
     group, member = _ids()
     async with SessionLocal() as session:
-        await record_violation(
-            session,
-            make_message("CASE_MSG_T1", group, member),
-            high_decision("CASE_MSG_T1", group, member),
+        historical = Case(
+            case_no=f"LEGACY-{uuid.uuid4().hex[:12]}",
+            group_openid=group,
+            member_openid=member,
         )
-        o2 = await record_violation(
-            session,
-            make_message("CASE_MSG_T2", group, member),
-            high_decision("CASE_MSG_T2", group, member),
-        )
-        assert o2.case is not None
-        case_id = o2.case.id
+        session.add(historical)
+        await session.commit()
+        case_id = historical.id
         case = await transition_case(session, case_id, "APPROVED_MANUAL", operator="admin_test")
         assert case.status == "APPROVED_MANUAL"
         case = await transition_case(session, case_id, "MANUAL_PENDING", operator="admin_test")

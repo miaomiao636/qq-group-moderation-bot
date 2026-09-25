@@ -5,7 +5,12 @@ from __future__ import annotations
 import uuid
 
 import pytest
-from app.actions.orchestrator import orchestrate_actions
+from app.actions.orchestrator import (
+    ActionIntent,
+    _create_intent,
+    _execute_intent,
+    orchestrate_actions,
+)
 from app.adapters.qq_official.actions import ActionResult
 from app.adapters.qq_official.contract import Sender, StandardMessage
 from app.cases.models import Case, ViolationRecord
@@ -159,16 +164,84 @@ async def test_official_first_strike_persists_intents_then_calls() -> None:
             )
         ).scalar_one()
 
-    assert [intent.action for intent in intents] == ["recall", "mute", "warn"]
+    # Legacy recommendations must never become new punishment intents.
+    assert [intent.action for intent in intents] == ["recall"]
     assert {intent.status for intent in intents} == {"SUCCEEDED"}
-    assert [call[0] for call in client.calls] == ["recall", "mute", "warn"]
-    assert client.calls[1][1][2] == 3600
-    assert action_log_count == 3
+    assert [call[0] for call in client.calls] == ["recall"]
+    assert action_log_count == 1
     assert "kick" not in {intent.action for intent in intents}
 
 
 @pytest.mark.asyncio
-async def test_official_second_strike_uses_24h_mute_and_no_warn() -> None:
+@pytest.mark.parametrize("legacy_action", ["mute", "warn"])
+async def test_persisted_legacy_punishment_intents_are_never_sent(legacy_action: str) -> None:
+    client = FakeOfficialClient()
+    group = f"G_ACT_LEGACY_{uuid.uuid4().hex[:6]}"
+    async with SessionLocal() as session:
+        pending = ActionIntent(
+            idempotency_key=uuid.uuid4().hex,
+            action=legacy_action,
+            status="PENDING",
+            group_openid=group,
+            message_id="OLD_1",
+            external_group_id=group,
+            external_message_id="OLD_1",
+        )
+        completed = ActionIntent(
+            idempotency_key=uuid.uuid4().hex,
+            action=legacy_action,
+            status="SUCCEEDED",
+            group_openid=group,
+            message_id="OLD_2",
+            external_group_id=group,
+            external_message_id="OLD_2",
+            result_json='{"legacy":true}',
+        )
+        historical_log = ActionLog(
+            action=legacy_action,
+            group_openid=group,
+            message_id="OLD_2",
+            ok=True,
+            attempts=1,
+        )
+        session.add_all([pending, completed, historical_log])
+        await session.commit()
+        result = await _execute_intent(session, client, pending)
+        assert result is not None and result.attempts == 0
+        assert pending.status == "SKIPPED"
+        assert await _execute_intent(session, client, completed) is None
+        await session.refresh(completed)
+        await session.refresh(historical_log)
+        assert completed.status == "SUCCEEDED"
+        assert completed.result_json == '{"legacy":true}'
+        assert historical_log.action == legacy_action and historical_log.ok is True
+        assert (
+            await session.execute(
+                select(func.count()).select_from(ActionLog).where(ActionLog.group_openid == group)
+            )
+        ).scalar_one() == 1
+    assert client.calls == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("legacy_action", ["mute", "warn"])
+async def test_new_punishment_intent_cannot_be_created(legacy_action: str) -> None:
+    msg = _msg(f"G_ACT_DENY_{uuid.uuid4().hex[:6]}", "M1")
+    async with SessionLocal() as session:
+        with pytest.raises(ValueError, match="非法动作"):
+            await _create_intent(session, msg, legacy_action, {"external_user_id": "M1"}, "system")
+        count = (
+            await session.execute(
+                select(func.count())
+                .select_from(ActionIntent)
+                .where(ActionIntent.message_id == msg.message_id)
+            )
+        ).scalar_one()
+    assert count == 0
+
+
+@pytest.mark.asyncio
+async def test_official_second_strike_still_only_recalls() -> None:
     client = FakeOfficialClient()
     group = f"G_ACT_SECOND_{uuid.uuid4().hex[:6]}"
     member = "M1"
@@ -194,12 +267,9 @@ async def test_official_second_strike_uses_24h_mute_and_no_warn() -> None:
             await session.execute(select(Case).where(Case.group_openid == group))
         ).scalar_one_or_none()
 
-    assert [intent.action for intent in intents] == ["recall", "mute"]
-    assert client.calls[-2][0] == "recall"
-    assert client.calls[-1][0] == "mute"
-    assert client.calls[-1][1][2] == 24 * 3600
-    assert case is not None
-    assert case.status == "PENDING_REVIEW"
+    assert [intent.action for intent in intents] == ["recall"]
+    assert [call[0] for call in client.calls] == ["recall", "recall"]
+    assert case is None
 
 
 @pytest.mark.asyncio
@@ -232,8 +302,8 @@ async def test_duplicate_message_does_not_replay_or_create_second_violation() ->
             )
         ).scalar_one()
 
-    assert len(intents) == 3
-    assert [call[0] for call in client.calls] == ["recall", "mute", "warn"]
+    assert len(intents) == 1
+    assert [call[0] for call in client.calls] == ["recall"]
     assert violation_count == 1
 
 
@@ -269,8 +339,8 @@ async def test_same_message_id_from_onebot_does_not_reuse_official_intents() -> 
         )
 
     assert [intent.status for intent in onebot_intents] == ["SKIPPED"]
-    assert [intent.action for intent in official_intents] == ["recall", "mute", "warn"]
-    assert [call[0] for call in client.calls] == ["recall", "mute", "warn"]
+    assert [intent.action for intent in official_intents] == ["recall"]
+    assert [call[0] for call in client.calls] == ["recall"]
 
 
 @pytest.mark.asyncio

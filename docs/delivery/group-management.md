@@ -24,6 +24,7 @@ Copy-Item -LiteralPath .env.example -Destination .env
 | `ONEBOT_SELF_ID` | 公司指定、当前登录 NapCat 的机器人 QQ |
 | `ONEBOT_WS_ENABLED` / `ONEBOT_ACCESS_TOKEN` | 开启消息接入，令牌与 NapCat WebSocket 客户端一致 |
 | `ACTION_MODE` / `ONEBOT_ACTIONS_ENABLED` | 首次验收保持 `SHADOW` / `false`，先验证只记录链路 |
+| `ONEBOT_ACTION_STAGE` | 固定为 `recall_only`；自动审核只撤回，不启用旧版 `full` 禁言/群内警告档位 |
 | `AI_*` | 默认关闭；需要远程审核时另行配置供应商、模型、预算和获批群范围 |
 | `AI_PROMPT_RULES_FILE` | 保留与本版本配套的 `config/ai_prompt_rules.txt`，不能遗漏或拿旧版替换 |
 | `NOTIFICATION_*` | 不因安装巡检自动开启通知，按公司批准范围另行配置 |
@@ -56,7 +57,7 @@ uv run --no-sync python -m app
 
 ## 操作人员：日常工作
 
-- 群管理：核对群号、审核开关、动作开关和唯一执行出口；真实动作按公司的逐群批准流程开启。
+- 群管理：核对群号、审核开关、动作开关和唯一执行出口；按公司的逐群批准流程开启仅撤回，首次与再次违规都不自动禁言、群内警告或自动立案。
 - 案件：核对消息证据和成员身份，再按后台预览与确认流程处理。API 返回成功与 QQ 撤回确认记录分别查看，不把未知状态当作完成。
 - 白名单：成员白名单与关键词白名单作用不同，变更须按本版本页面说明和公司授权执行。
 - 急停：发生账号错配、异常动作或不确定状态时由授权人员使用急停，再联系维护人员核查；不要反复重放历史动作。

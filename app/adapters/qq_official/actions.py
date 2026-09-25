@@ -1,20 +1,14 @@
-"""官方动作适配器：撤回 / 禁言 / 警告（T-102）。
+"""官方自动审核动作适配器：仅撤回（T-102）。
 
 架构约束（D-001）：本适配器**不含任何踢人逻辑**。
 实测结论（D-012/D-013）：
 - 撤回：DELETE /v2/groups/{group_openid}/messages/{message_id}，接口幂等（重复撤回返回200）；
-- 禁言：POST /v2/groups/{group_openid}/restrict_chat_setting，`mute_expire_at` 为
-  RFC3339 到期时间（Asia/Shanghai），单批≤20人，最长30天；群主/管理员/机器人被平台拒绝（40103004）；
-- 警告：以被动回复实现（POST /v2/groups/{group_openid}/messages，携带被审消息 id 作为
-  msg_id 上下文）。被动回复**不做自动重试**，避免重复警告刷屏。
+- 旧禁言的人工解除入口保留为 ``unmute``；不再创建禁言或群内违规警告。
 
 所有动作：超时受限、有限重试（可幂等者）、结果可审计（ActionResult + ActionLog 持久化由调用方完成）。
 """
 
 from __future__ import annotations
-
-from datetime import datetime, timedelta
-from zoneinfo import ZoneInfo
 
 import httpx
 
@@ -28,22 +22,12 @@ __all__ = [
     "OfficialActionAdapter",
 ]
 
-CITY_TZ = ZoneInfo("Asia/Shanghai")
-
-_MAX_MUTE_SECONDS = 30 * 24 * 3600
 _ACTION_TIMEOUT = httpx.Timeout(10.0)
-_MAX_ATTEMPTS_IDEMPOTENT = 2  # 撤回/禁言可安全重试
-_MAX_ATTEMPTS_NON_IDEMPOTENT = 1  # 警告不可重试
+_MAX_ATTEMPTS_IDEMPOTENT = 2  # 撤回和人工解除旧禁言可安全重试
 
 
 class ActionNotConfiguredError(RuntimeError):
     """动作适配器未正确配置（缺少令牌等）。"""
-
-
-def _mute_expire_at(seconds: int) -> str:
-    """按 Asia/Shanghai 计算 RFC3339 到期时间。"""
-    expire = datetime.now(CITY_TZ) + timedelta(seconds=seconds)
-    return expire.isoformat()
 
 
 def _err_from_body(body: dict[str, object]) -> tuple[int | None, str]:
@@ -142,39 +126,6 @@ class OfficialActionAdapter:
         )
         return result.model_copy(update={"action": "recall"})
 
-    async def mute(
-        self,
-        group_openid: str,
-        member_openid: str,
-        seconds: int,
-        *,
-        actor: str = "system",
-    ) -> ActionResult:
-        """禁言普通成员。seconds 范围 1..30天；到期时间按 Asia/Shanghai 计算。"""
-        if seconds < 1 or seconds > _MAX_MUTE_SECONDS:
-            return ActionResult(
-                action="mute",
-                ok=False,
-                err_message=f"禁言时长 {seconds}s 超出允许范围 1..{_MAX_MUTE_SECONDS}",
-                attempts=0,
-            )
-        body: dict[str, object] = {
-            "members": [
-                {
-                    "op": "add",
-                    "member_openid": member_openid,
-                    "mute_expire_at": _mute_expire_at(seconds),
-                }
-            ]
-        }
-        result = await self._request(
-            "POST",
-            self._group_url(group_openid, "restrict_chat_setting"),
-            json_body=body,
-            max_attempts=_MAX_ATTEMPTS_IDEMPOTENT,
-        )
-        return result.model_copy(update={"action": "mute"})
-
     async def unmute(
         self, group_openid: str, member_openid: str, *, actor: str = "system"
     ) -> ActionResult:
@@ -195,32 +146,3 @@ class OfficialActionAdapter:
             max_attempts=_MAX_ATTEMPTS_IDEMPOTENT,
         )
         return result.model_copy(update={"action": "unmute"})
-
-    async def warn(
-        self,
-        group_openid: str,
-        reply_to_message_id: str,
-        text: str,
-        *,
-        msg_seq: int = 1,
-        actor: str = "system",
-    ) -> ActionResult:
-        """以被动回复发送警告文本。
-
-        被动回复依赖被回复消息仍在时限内（官方约5分钟），且**不重试**（避免重复警告刷屏）。
-        """
-        if not text.strip():
-            return ActionResult(action="warn", ok=False, err_message="警告内容为空", attempts=0)
-        body: dict[str, object] = {
-            "content": text,
-            "msg_type": 0,
-            "msg_id": reply_to_message_id,
-            "msg_seq": msg_seq,
-        }
-        result = await self._request(
-            "POST",
-            self._group_url(group_openid, "messages"),
-            json_body=body,
-            max_attempts=_MAX_ATTEMPTS_NON_IDEMPOTENT,
-        )
-        return result.model_copy(update={"action": "warn"})

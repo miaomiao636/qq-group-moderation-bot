@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import uuid
 from collections.abc import Generator
 from datetime import UTC, datetime, timedelta
@@ -20,9 +21,10 @@ def unique_ids() -> tuple[str, str]:
 
 
 def make_case(group: str, member: str, message_id: str) -> int:
-    """直接构造一个 PENDING_REVIEW 案件（两次违规）。"""
+    """保留旧案件管理回归；新违规已不再自动立案。"""
     import asyncio
 
+    from app.cases.models import Case
     from app.db import SessionLocal
 
     async def _run() -> int:
@@ -41,7 +43,7 @@ def make_case(group: str, member: str, message_id: str) -> int:
                 category="ad",
                 confidence=0.95,
             )
-            await record_violation(session, msg, decision)
+            first = await record_violation(session, msg, decision)
             outcome = await record_violation(
                 session,
                 StandardMessage(
@@ -59,8 +61,21 @@ def make_case(group: str, member: str, message_id: str) -> int:
                     confidence=0.95,
                 ),
             )
-            assert outcome.case is not None
-            return outcome.case.id
+            assert outcome.case is None
+            historical = Case(
+                case_no=f"LEGACY-{uuid.uuid4().hex[:12]}",
+                group_openid=group,
+                member_openid=member,
+                external_group_id=group,
+                external_user_id=member,
+                violation_ids_json=json.dumps([first.violation.id, outcome.violation.id]),
+            )
+            session.add(historical)
+            await session.flush()
+            first.violation.case_id = historical.id
+            outcome.violation.case_id = historical.id
+            await session.commit()
+            return historical.id
 
     return asyncio.run(_run())
 

@@ -331,7 +331,7 @@ async def test_single_modal_text_ad_without_media_still_upgrades(tmp_path):
     decision, _ = await review_mixed(tmp_path, text, primary, with_media=False)
     assert primary.calls == 0
     assert decision.verdict == "violation_high"
-    assert decision.recommended_actions == ["recall", "mute", "warn"]
+    assert decision.recommended_actions == ["recall"]
 
 
 def test_supplied_secondary_disagreement_is_a_veto_even_without_a_reason_marker():
@@ -470,7 +470,7 @@ async def test_a04_successful_secondary_review_clears_original_needs_review(tmp_
     assert secondary.calls == 1
     assert decision.verdict == "violation_high"
     assert decision.category == "ad"
-    assert decision.recommended_actions == ["recall", "mute", "warn"]
+    assert decision.recommended_actions == ["recall"]
 
 
 @pytest.mark.asyncio

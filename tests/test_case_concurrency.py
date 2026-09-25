@@ -3,10 +3,8 @@
 from __future__ import annotations
 
 import asyncio
-import json
 from contextlib import suppress
 from pathlib import Path
-from unittest.mock import AsyncMock
 
 import pytest
 from app.cases import service
@@ -77,28 +75,19 @@ async def test_two_sessions_allocate_first_and_second_strikes_without_lost_recor
             )
         assert sorted(outcome.strike_no for outcome in outcomes) == [1, 2]
         by_strike = {outcome.strike_no: outcome for outcome in outcomes}
-        assert [action.action for action in by_strike[1].planned_actions] == [
-            "recall",
-            "mute",
-            "warn",
-        ]
-        assert [action.action for action in by_strike[2].planned_actions] == ["recall", "mute"]
-        assert by_strike[1].planned_actions[1].params["seconds"] == 3600
-        assert by_strike[2].planned_actions[1].params["seconds"] == 86400
+        assert [action.action for action in by_strike[1].planned_actions] == ["recall"]
+        assert [action.action for action in by_strike[2].planned_actions] == ["recall"]
         async with AsyncSession(engine) as session:
             violations = (await session.scalars(select(ViolationRecord))).all()
             cases = (await session.scalars(select(Case))).all()
             assert {violation.message_id for violation in violations} == {"101", "102"}
             assert len(violations) == 2
-            assert len(cases) == 1
-            assert set(json.loads(cases[0].violation_ids_json)) == {
-                violation.id for violation in violations
-            }
+            assert cases == []
     finally:
         await engine.dispose()
 
 
-async def test_case_number_retry_does_not_discard_violation(tmp_path: Path, monkeypatch) -> None:
+async def test_legacy_case_number_does_not_trigger_new_case(tmp_path: Path, monkeypatch) -> None:
     engine = create_async_engine(f"sqlite+aiosqlite:///{tmp_path / 'case-number-retry.db'}")
     try:
         async with engine.begin() as connection:
@@ -107,18 +96,20 @@ async def test_case_number_retry_does_not_discard_violation(tmp_path: Path, monk
             session.add(Case(case_no="collision", group_openid="other", member_openid="other"))
             await session.commit()
             await service.record_violation(session, _message("101"), _decision("101"))
+
+            async def case_number_must_not_be_generated(*args, **kwargs):
+                raise AssertionError("automatic case creation is disabled")
+
             monkeypatch.setattr(
-                service, "_generate_case_no", AsyncMock(side_effect=["collision", "unique"])
+                service, "_generate_case_no", case_number_must_not_be_generated, raising=False
             )
 
             outcome = await service.record_violation(session, _message("102"), _decision("102"))
 
             violations = (await session.scalars(select(ViolationRecord))).all()
             assert {violation.message_id for violation in violations} == {"101", "102"}
-            assert outcome.case is not None
-            assert outcome.case.case_no == "unique"
-            assert set(json.loads(outcome.case.violation_ids_json)) == {
-                violation.id for violation in violations
-            }
+            assert outcome.case is None
+            cases = (await session.scalars(select(Case))).all()
+            assert len(cases) == 1 and cases[0].case_no == "collision"
     finally:
         await engine.dispose()

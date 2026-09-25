@@ -27,7 +27,7 @@ from sqlalchemy import DateTime, Integer, String, Text, and_, or_, select, updat
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import Mapped, mapped_column
 
-from app.actions.recall_confirmation import arm_confirmation, is_confirmed
+from app.actions.recall_confirmation import arm_confirmation
 from app.cases.service import record_violation
 from app.config import Settings, get_settings
 from app.core.contracts import ActionResult, ModerationActionClient, Provider, StandardMessage
@@ -144,7 +144,7 @@ async def orchestrate_actions(
     settings: Settings | None = None,
     actor: str = "system",
 ) -> list[ActionIntent]:
-    """Persist and execute recall/mute/warn in guarded OFFICIAL mode.
+    """Persist and execute recall only in guarded OFFICIAL mode.
 
     T-305：先按消息来源+群解析动作出口。``ACTION_MODE=OFFICIAL`` 下
     QQ官方与OneBot Adapter 各自需要显式客户端配置；OneBot 真实动作
@@ -291,11 +291,8 @@ async def _orchestrate_member_actions(
     outcome = await record_violation(session, msg, decision)
     intents: list[ActionIntent] = []
     for planned in outcome.planned_actions:
-        if (
-            provider == "onebot"
-            and settings.onebot_action_stage == "recall_only"
-            and planned.action != "recall"
-        ):
+        # Also reject legacy plans supplied by old callers or unvalidated settings.
+        if planned.action != "recall":
             continue
         intent = await _create_intent(
             session, msg, planned.action, planned.params, actor, provider=provider
@@ -305,21 +302,10 @@ async def _orchestrate_member_actions(
             continue
         result = await _execute_intent(session, client, intent, message=msg, settings=settings)
         if result is None:
-            # Another worker owns this intent. Do not overwrite it or advance
-            # this competing chain to a stronger action.
+            # Another worker owns this intent. Do not overwrite it or replay it.
             break
         await _log_action_result(session, intent, result, actor=actor)
         if intent.status in ("UNKNOWN", "FAILED", "SKIPPED"):
-            break
-        if (
-            provider == "onebot"
-            and intent.action == "recall"
-            and not await is_confirmed(session, intent.id)
-        ):
-            # A late receipt may update evidence, never resume punishment.
-            if settings.onebot_action_stage == "full":
-                intent.reason = "接口回包后尚未取得撤回确认，本次动作链已停止；迟到通知不会补罚"
-                await session.commit()
             break
     return intents
 
@@ -411,7 +397,7 @@ async def _create_intent(
     *,
     provider: str = "qq_official",
 ) -> ActionIntent:
-    if action not in ("recall", "mute", "warn"):
+    if action != "recall":
         raise ValueError(f"非法动作: {action}")
     key = _intent_key(msg, action, params)
     existing = await session.scalar(select(ActionIntent).where(ActionIntent.idempotency_key == key))
@@ -497,6 +483,17 @@ async def _execute_intent(
     message: StandardMessage | None = None,
     settings: Settings | None = None,
 ) -> ActionResult | None:
+    # A persisted legacy intent must never reach the old mute/warn adapters,
+    # including when this internal function is called outside orchestration.
+    if intent.action != "recall":
+        if intent.status != "PENDING":
+            return None
+        intent.status = "SKIPPED"
+        intent.reason = "历史禁言或警告动作已停用，仅允许自动撤回"
+        result = ActionResult(action=intent.action, ok=False, err_message=intent.reason, attempts=0)
+        intent.result_json = result.model_dump_json()
+        await session.commit()
+        return result
     claimed = await session.execute(
         update(ActionIntent)
         .where(
@@ -510,7 +507,6 @@ async def _execute_intent(
         await session.refresh(intent)
         return None
     await session.commit()
-    params = json.loads(intent.params_json)
     from app.core.group_settings import is_action_enabled
 
     reason = ""
@@ -556,24 +552,6 @@ async def _execute_intent(
             result = await client.recall(
                 intent.external_group_id or intent.group_openid,
                 intent.external_message_id or intent.message_id,
-                actor=intent.actor,
-            )
-        elif intent.action == "mute":
-            result = await client.mute(
-                intent.external_group_id or intent.group_openid,
-                intent.external_user_id or intent.target_member_openid,
-                int(params.get("seconds") or 0),
-                actor=intent.actor,
-            )
-        elif intent.action == "warn":
-            result = await client.warn(
-                intent.external_group_id or intent.group_openid,
-                str(
-                    params.get("reply_to_external_message_id")
-                    or intent.external_message_id
-                    or intent.message_id
-                ),
-                str(params.get("text") or ""),
                 actor=intent.actor,
             )
         else:

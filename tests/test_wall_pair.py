@@ -45,7 +45,7 @@ def _decision(category: str = "ad", message_id: str | None = None) -> Moderation
         category=category,
         confidence=0.95,
         reason="广告",
-        recommended_actions=["recall", "mute", "warn"],
+        recommended_actions=["recall"],
     )
 
 
@@ -240,7 +240,7 @@ async def test_miniprogram_mark_without_text_is_not_a_source() -> None:
     await _insert_wall_image(group=g, vision_evidence="小程序码通过|", seconds_ago=8)
     decision = await _run_pairing("支付宝亲密号拉新 一单20 一天三单", g)
     assert decision.verdict == "violation_high"
-    assert decision.recommended_actions == ["recall", "mute", "warn"]
+    assert decision.recommended_actions == ["recall"]
 
 
 @pytest.mark.asyncio
@@ -412,7 +412,7 @@ async def test_structural_card_hit_is_not_window_exempted() -> None:
         )
         await session.commit()
     assert result.verdict == "violation_high"
-    assert result.recommended_actions == ["recall", "mute", "warn"]
+    assert result.recommended_actions == ["recall"]
 
 
 @pytest.mark.asyncio
@@ -428,7 +428,7 @@ async def test_pairing_does_not_exempt_fraud_after_campus_wall_source() -> None:
         )
         await session.commit()
     assert result.verdict == "violation_high"
-    assert result.recommended_actions == ["recall", "mute", "warn"]
+    assert result.recommended_actions == ["recall"]
 
 
 @pytest.mark.asyncio
@@ -451,7 +451,7 @@ async def test_pairing_blocked_when_secondary_evidence_is_severe() -> None:
             )
             await session.commit()
         assert result.verdict == "violation_high", secondary
-        assert result.recommended_actions == ["recall", "mute", "warn"]
+        assert result.recommended_actions == ["recall"]
 
 
 @pytest.mark.parametrize("category", ["porn", "violence", "flood"])
@@ -468,7 +468,7 @@ async def test_pairing_never_exempts_porn_violence_flood(category: str) -> None:
         )
         await session.commit()
     assert result.verdict == "violation_high"
-    assert result.recommended_actions == ["recall", "mute", "warn"]
+    assert result.recommended_actions == ["recall"]
 
 
 @pytest.mark.asyncio

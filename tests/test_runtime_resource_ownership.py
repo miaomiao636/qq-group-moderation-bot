@@ -128,7 +128,7 @@ async def _run_chain(*, official_client=None):
         verdict="violation_high",
         category="ad",
         confidence=0.95,
-        recommended_actions=["recall", "mute", "warn"],
+        recommended_actions=["recall"],
         reason="synthetic high-confidence violation",
     )
     async with SessionLocal() as session:
@@ -170,7 +170,7 @@ async def test_default_official_chain_closes_owned_clients(monkeypatch, result):
                 await task
         else:
             intents = await task
-            assert len(intents) == (3 if result == "success" else 1)
+            assert len(intents) == 1
             assert all(
                 i.status == ("SUCCEEDED" if result == "success" else "FAILED") for i in intents
             )
@@ -197,7 +197,7 @@ async def test_injected_official_adapter_is_left_open_by_orchestrator(monkeypatc
     adapter = OfficialActionAdapter(token_manager)
     try:
         intents = await _run_chain(official_client=adapter)
-        assert len(intents) == 3 and all(i.status == "SUCCEEDED" for i in intents)
+        assert len(intents) == 1 and all(i.status == "SUCCEEDED" for i in intents)
         assert len(clients) == 2 and all(not c.is_closed for c in clients)
     finally:
         await adapter.aclose()

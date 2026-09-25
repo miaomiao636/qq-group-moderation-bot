@@ -114,6 +114,41 @@ async def test_late_notice_survives_new_session_never_replays_or_relabels() -> N
 
 
 @pytest.mark.asyncio
+async def test_confirmed_recall_does_not_resume_legacy_pending_punishments() -> None:
+    msg, client, intents = await _attempt()
+    async with SessionLocal() as session:
+        legacy = [
+            ActionIntent(
+                idempotency_key=uuid4().hex,
+                action=action,
+                status="PENDING",
+                provider="onebot",
+                group_openid=msg.external_group_id,
+                message_id=msg.message_id,
+                external_group_id=msg.external_group_id,
+                external_user_id=msg.external_user_id,
+                external_message_id=msg.external_message_id,
+            )
+            for action in ("mute", "warn")
+        ]
+        session.add_all(legacy)
+        await session.commit()
+        assert await accept_notice(session, _notice(msg))
+        again = await orchestrate_actions(
+            session,
+            msg,
+            _high_decision(msg),
+            onebot_client=client,
+            settings=_official_onebot_settings(),
+        )
+        assert {i.id for i in again} == {intents[0].id, *(i.id for i in legacy)}
+        for row in legacy:
+            await session.refresh(row)
+            assert row.status == "PENDING"
+    assert [call[0] for call in client.calls] == ["recall"]
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize(
     "field,value",
     [

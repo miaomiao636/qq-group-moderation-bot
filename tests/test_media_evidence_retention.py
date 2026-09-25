@@ -65,7 +65,7 @@ def test_media_evaluators_preserve_real_rule_hits(tmp_path, term, category, kind
     assert decision.verdict == "violation_high"
     assert decision.category == category
     assert decision.rule_hits == expected_hits
-    assert decision.recommended_actions == ["recall", "mute", "warn"]
+    assert decision.recommended_actions == ["recall"]
 
 
 @pytest.mark.asyncio
@@ -89,7 +89,7 @@ async def test_actual_service_preserves_file_evidence(
     assert row is not None
     detail = json.loads(row.detail_json)
     assert row.verdict == "violation_high"
-    assert detail["recommended_actions"] == ["recall", "mute", "warn"]
+    assert detail["recommended_actions"] == ["recall"]
     assert fake.calls == 0 and detail["ai_results"] == []
     assert category in evidence_categories(row, detail)
     assert {"R001", "R003"} <= {h["rule_id"] for h in detail["rule_hits"]}
@@ -126,7 +126,7 @@ async def test_official_voice_retains_severe_evidence(monkeypatch, tmp_path, ter
     detail = json.loads(row.detail_json)
     assert row.verdict == "violation_high"
     assert fake.calls == 0 and detail["ai_results"] == []
-    assert detail["recommended_actions"] == ["recall", "mute", "warn"]
+    assert detail["recommended_actions"] == ["recall"]
     assert category in evidence_categories(row, detail)
     assert {"R001", "R003"} <= {h["rule_id"] for h in detail["rule_hits"]}
     assert "abc12345" not in json.dumps(detail["rule_hits"])
@@ -246,5 +246,5 @@ async def test_adding_audit_category_does_not_newly_grant_window(monkeypatch, tm
     assert row is not None and row.verdict == "violation_high"
     detail = json.loads(row.detail_json)
     assert fake.calls == 0
-    assert detail["recommended_actions"] == ["recall", "mute", "warn"]
+    assert detail["recommended_actions"] == ["recall"]
     assert "campus_source_policy" not in detail

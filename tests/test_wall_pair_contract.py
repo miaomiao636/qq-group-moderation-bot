@@ -49,7 +49,7 @@ def _high(msg: StandardMessage) -> ModerationDecision:
         category="ad",
         confidence=0.99,
         reason="synthetic confirmed ad",
-        recommended_actions=["recall", "mute", "warn"],
+        recommended_actions=["recall"],
     )
 
 
