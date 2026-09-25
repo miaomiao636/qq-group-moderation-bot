@@ -121,9 +121,12 @@ def build(repo: Path, ref: str, output: Path) -> dict[str, object]:
     sha, files = _sources(repo, ref)
     for line in files[".env.example"].decode("utf-8-sig").splitlines():
         key, separator, value = line.partition("=")
-        if separator and re.search(r"(?:^|_)(?:PASSWORD|TOKEN|SECRET|API_KEY)$", key.strip()):
-            if value.strip().strip("\"'"):
-                raise BundleError("A credential field in the public template is not empty.")
+        if (
+            separator
+            and re.search(r"(?:^|_)(?:PASSWORD|TOKEN|SECRET|API_KEY)$", key.strip())
+            and value.strip().strip("\"'")
+        ):
+            raise BundleError("A credential field in the public template is not empty.")
     files["README.md"] = (
         "# QQ 群管理与空间巡检配套交付候选包\n\n"
         f"来源提交：`{sha}`。本包尚未完成接收方现场验收。\n\n"
