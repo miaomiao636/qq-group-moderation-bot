@@ -18,7 +18,7 @@ from urllib.parse import quote
 
 from fastapi import APIRouter, File, Form, HTTPException, Request, Response, UploadFile
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse
-from sqlalchemy import and_, case, func, select, text, update
+from sqlalchemy import and_, case, func, or_, select, text, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.cases.case_sm import IllegalTransitionError
@@ -511,7 +511,7 @@ async def dashboard(
         '<span class="muted">结案记录：人工处理</span> '
         '<button class="btn" formaction="/admin/cases/batch-preview">批量标记已人工处理</button></p>'
         f'<p class="muted">导出每次最多 {case_batch.EXPORT_LIMIT} 案；结案每次最多 {case_batch.CLOSE_LIMIT} 案，仅限未归档待审案件。'
-        "结案保留违规记录与累计次数，不处罚成员；以后新违规仍可能重新立案。勾选在当前标签页跨页保留，更换筛选条件或登录会话会清空。上方待人工清单不属于此筛选范围。</p></div>"
+        "重复选中的已关闭案件在预览中列出并跳过；结案不踢人，同群成员再犯会新建待审案。勾选在当前标签页跨页保留，更换筛选条件或登录会话会清空。上方待人工清单不属于此筛选范围。</p></div>"
         f"<table><tr><th>选择</th><th>批次号</th><th>来源</th><th>群</th><th>成员</th><th>状态</th><th>创建</th><th></th></tr>{rows}</table></form>"
         + case_selection.script(case_batch.EXPORT_LIMIT)
         + f"<p class=muted style=margin-top:8px>批量删除功能已按主审要求停用（R02/R03：硬删除破坏共用违规记录与编号/通知契约）；"
@@ -540,8 +540,9 @@ async def dashboard(
         else '<a class=btn href="/admin?archived=1">查看已归档案件</a>'
     )
     archive_note = (
-        "<p class=muted>已关闭案件满 15 天自动归档；归档满 90 天且关联安全时清除非必要内容，"
-        "保留编号、最小违规记录与处理审计。未关闭案件不归档；原文仍单独按 15 天上限清理。</p>"
+        "<p class=muted>已关闭案件仍在本列表，可用状态筛选只看待处理；结案满 15 天由维护任务自动归档，"
+        "随后可在已归档案件中查询。归档不是删除：归档满 90 天且关联安全时才清除非必要内容，"
+        "保留编号、最小违规记录与处理审计。未关闭案件不归档；原文另按 15 天上限清理。</p>"
     )
     # 负责人 2026-09-18：待人工清单默认折叠（条目多时页面过长；证据与操作在下方案件列表/详情页）。
     pending_block = (
@@ -600,7 +601,7 @@ async def case_batch_prepare(
             scope,
             case_batch.selected_ids(case_ids, case_ids_compact),
             filters,
-            limit=case_batch.EXPORT_LIMIT if exporting else case_batch.CLOSE_LIMIT,
+            limit=case_batch.EXPORT_LIMIT,
         )
         if exporting:
             data = case_batch.export_csv(await case_batch.summaries(session, cases))
@@ -612,8 +613,30 @@ async def case_batch_prepare(
                     "Cache-Control": "no-store",
                 },
             )
-        plan, preview = await case_batch.create_plan(session, cases, _human_actor(token), reason)
-        await session.commit()
+        pending, closed = case_batch.partition_for_close(cases)
+        if pending:
+            plan, preview = await case_batch.create_plan(
+                session, pending, _human_actor(token), reason
+            )
+            await session.commit()
+        else:
+            plan, preview = None, []
+    closed_labels = "、".join(_esc(row.case_no) for row in closed[:20])
+    closed_note = (
+        f"<p>跳过 {len(closed)} 个已关闭案件（重复选中不再处理）：{closed_labels}"
+        f"{'等' if len(closed) > 20 else ''}</p>"
+        if closed
+        else ""
+    )
+    if plan is None:
+        response = _page(
+            "批量结案预览",
+            f"<h2>所选 {len(closed)} 个案件均已关闭</h2>{closed_note}"
+            "<p>没有需要再次处理的待审案件。</p>"
+            '<a class="btn" href="/admin?case_batch_done=1">清空勾选并返回案件列表</a>',
+        )
+        response.headers["Cache-Control"] = "no-store"
+        return response
     rows = "".join(
         f'<tr><td><a href="/admin/cases/{r["id"]}" target="_blank" rel="noopener">{_esc(r["case_no"])}</a></td>'
         f"<td>{_esc(r['provider'])}</td><td>{_esc(r['name'])}<br>{_esc(r['group'])}</td><td>{_esc(r['member'])}</td>"
@@ -623,7 +646,8 @@ async def case_batch_prepare(
     response = _page(
         "批量结案预览",
         f"<h2>批量标记已人工处理：{len(preview)} 个案件</h2>"
-        "<p>将以下待审案件标记为已人工处理并结案。保留证据和违规累计，不处罚成员；后续新违规仍可能重新立案。</p>"
+        f"{closed_note}"
+        "<p>将以下待审案件标记为已人工处理并结案。保留证据和违规累计，不踢人；同群成员再犯将新建待审案。</p>"
         f"<p>结案记录：{_esc(json.loads(plan.params_json)['reason'])}</p><p>预览 5 分钟内有效；案件或证据变化需重新预览。来源为 qq_official 的成员身份是 OpenID，不是 QQ 号。</p>"
         f"<table><tr><th>案件</th><th>来源</th><th>群名 / 群身份</th><th>成员身份</th><th>案件依据</th></tr>{rows}</table>"
         f'<form method="post" action="/admin/cases/batch-confirm">{_csrf_field(token)}<input type="hidden" name="plan_id" value="{_esc(plan.id)}">'
@@ -670,11 +694,13 @@ async def _load_case(case_id: int) -> tuple[Case, list[ViolationRecord]]:
         if case is None:
             raise HTTPException(404, "案件不存在")
         ids = json.loads(case.violation_ids_json)
-        records: list[ViolationRecord] = []
-        for vid in ids:
-            record = await session.get(ViolationRecord, int(vid))
-            if record:
-                records.append(record)
+        records = list(
+            await session.scalars(
+                select(ViolationRecord)
+                .where(or_(ViolationRecord.id.in_(ids), ViolationRecord.case_id == case.id))
+                .order_by(ViolationRecord.id)
+            )
+        )
         return case, records
 
 

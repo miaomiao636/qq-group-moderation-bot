@@ -269,7 +269,7 @@ async def test_official_second_strike_still_only_recalls() -> None:
 
     assert [intent.action for intent in intents] == ["recall"]
     assert [call[0] for call in client.calls] == ["recall", "recall"]
-    assert case is None
+    assert case is not None and case.status == "PENDING_REVIEW"
 
 
 @pytest.mark.asyncio

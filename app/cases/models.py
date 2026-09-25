@@ -44,7 +44,7 @@ class ViolationRecord(Base):
 
 
 class Case(Base):
-    """人工审核案件：两次违规合并证据后生成，状态机见 `case_sm.py`。"""
+    """人工审核案件：首次两次有效违规或结案后再犯生成，状态机见 `case_sm.py`。"""
 
     __tablename__ = "cases"
 

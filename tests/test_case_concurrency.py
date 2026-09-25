@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 from contextlib import suppress
+from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
@@ -82,12 +83,15 @@ async def test_two_sessions_allocate_first_and_second_strikes_without_lost_recor
             cases = (await session.scalars(select(Case))).all()
             assert {violation.message_id for violation in violations} == {"101", "102"}
             assert len(violations) == 2
-            assert cases == []
+            assert len(cases) == 1 and cases[0].status == "PENDING_REVIEW"
+            assert {violation.case_id for violation in violations} == {cases[0].id}
     finally:
         await engine.dispose()
 
 
-async def test_legacy_case_number_does_not_trigger_new_case(tmp_path: Path, monkeypatch) -> None:
+async def test_case_number_collision_retries_without_losing_violation(
+    tmp_path: Path, monkeypatch
+) -> None:
     engine = create_async_engine(f"sqlite+aiosqlite:///{tmp_path / 'case-number-retry.db'}")
     try:
         async with engine.begin() as connection:
@@ -97,19 +101,44 @@ async def test_legacy_case_number_does_not_trigger_new_case(tmp_path: Path, monk
             await session.commit()
             await service.record_violation(session, _message("101"), _decision("101"))
 
-            async def case_number_must_not_be_generated(*args, **kwargs):
-                raise AssertionError("automatic case creation is disabled")
+            attempts = 0
 
-            monkeypatch.setattr(
-                service, "_generate_case_no", case_number_must_not_be_generated, raising=False
-            )
+            async def colliding_then_unique(*args, **kwargs):
+                nonlocal attempts
+                attempts += 1
+                return "collision" if attempts == 1 else "retry-case"
+
+            monkeypatch.setattr(service, "_generate_case_no", colliding_then_unique)
 
             outcome = await service.record_violation(session, _message("102"), _decision("102"))
 
             violations = (await session.scalars(select(ViolationRecord))).all()
             assert {violation.message_id for violation in violations} == {"101", "102"}
-            assert outcome.case is None
+            assert outcome.case is not None and outcome.case.case_no == "retry-case"
+            assert attempts == 2
             cases = (await session.scalars(select(Case))).all()
-            assert len(cases) == 1 and cases[0].case_no == "collision"
+            assert {case.case_no for case in cases} == {"collision", "retry-case"}
+    finally:
+        await engine.dispose()
+
+
+async def test_case_number_skips_gap_without_repeating_an_occupied_number(tmp_path: Path) -> None:
+    engine = create_async_engine(f"sqlite+aiosqlite:///{tmp_path / 'case-number-gap.db'}")
+    prefix = f"R{datetime.now(UTC):%Y%m%d}"
+    try:
+        async with engine.begin() as connection:
+            await connection.run_sync(Base.metadata.create_all)
+        async with AsyncSession(engine, expire_on_commit=False) as session:
+            session.add_all(
+                [
+                    Case(case_no=f"{prefix}-01", group_openid="other", member_openid="other"),
+                    Case(case_no=f"{prefix}-03", group_openid="other", member_openid="other"),
+                ]
+            )
+            await session.commit()
+            await service.record_violation(session, _message("gap-1"), _decision("gap-1"))
+            outcome = await service.record_violation(session, _message("gap-2"), _decision("gap-2"))
+            assert outcome.case is not None
+            assert outcome.case.case_no == f"{prefix}-04"
     finally:
         await engine.dispose()

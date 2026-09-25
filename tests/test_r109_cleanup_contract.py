@@ -183,6 +183,22 @@ async def test_logical_clear_preserves_audit_chain_ids_and_is_idempotent(
     assert second["cases_purged"] == 0
 
 
+async def test_logical_clear_keeps_prior_confirmed_case_reference(
+    lifecycle_session: AsyncSession,
+) -> None:
+    session = lifecycle_session
+    new_case = case(2)
+    audit = json.loads(new_case.audit_json)
+    audit["prior_case_id"] = 1
+    new_case.audit_json = json.dumps(audit)
+    session.add(new_case)
+    await session.commit()
+
+    await cleanup.purge_expired(session, NOW)
+    await session.refresh(new_case)
+    assert json.loads(new_case.audit_json)["prior_case_id"] == 1
+
+
 async def test_candidate_expiry_preserves_scope_and_previous_replay_metadata(
     lifecycle_session: AsyncSession,
 ) -> None:

@@ -286,13 +286,12 @@ async def test_case_audit_records_correct_from_to() -> None:
 
 
 @pytest.mark.asyncio
-async def test_repeated_violations_do_not_create_case() -> None:
-    """同群同成员多次违规仍保留证据，但不自动立案。"""
+async def test_repeated_violations_share_pending_case_without_extra_actions() -> None:
+    """同群同成员多次违规只保留一件待审案及逐条证据。"""
     from app.cases.models import Case, ViolationRecord
     from sqlalchemy import select
 
     group, member = f"G_CONC_{uuid.uuid4().hex[:6]}", f"M_CONC_{uuid.uuid4().hex[:6]}"
-    # 旧计数仍可用于证据与统计，但不再触发案件。
     await _record(group, member, f"MSG_C1_{uuid.uuid4().hex[:6]}")
     await _record(group, member, f"MSG_C2_{uuid.uuid4().hex[:6]}")
     await _record(group, member, f"MSG_C3_{uuid.uuid4().hex[:6]}")
@@ -310,8 +309,9 @@ async def test_repeated_violations_do_not_create_case() -> None:
             .scalars()
             .all()
         )
-    assert cases == []
+    assert len(cases) == 1 and cases[0].status == "PENDING_REVIEW"
     assert len(violations) == 3
+    assert {record.case_id for record in violations} == {cases[0].id}
 
 
 async def _record(group: str, member: str, message_id: str) -> None:
@@ -347,23 +347,10 @@ async def _record(group: str, member: str, message_id: str) -> None:
 
 
 async def _make_case(group: str, member: str) -> int:
-    from app.cases.models import Case
-
-    first = await _record_outcome(group, member, f"MSG_M1_{uuid.uuid4().hex[:6]}")
+    await _record_outcome(group, member, f"MSG_M1_{uuid.uuid4().hex[:6]}")
     outcome = await _record_outcome(group, member, f"MSG_M2_{uuid.uuid4().hex[:6]}")
-    assert outcome.case is None
-    async with SessionLocal() as session:
-        historical = Case(
-            case_no=f"LEGACY-{uuid.uuid4().hex[:12]}",
-            group_openid=group,
-            member_openid=member,
-            external_group_id=group,
-            external_user_id=member,
-            violation_ids_json=json.dumps([first.violation.id, outcome.violation.id]),
-        )
-        session.add(historical)
-        await session.commit()
-        return historical.id
+    assert outcome.case is not None
+    return outcome.case.id
 
 
 async def _record_outcome(group: str, member: str, message_id: str):

@@ -140,6 +140,8 @@ def _case_audit_metadata(audit: dict[str, Any], now: datetime) -> str:
     cleaned: dict[str, Any] = {"lifecycle_purged_at": now.replace(tzinfo=UTC).isoformat()}
     if type(audit.get("evidence_count")) is int:
         cleaned["evidence_count"] = audit["evidence_count"]
+    if type(audit.get("prior_case_id")) is int and audit["prior_case_id"] > 0:
+        cleaned["prior_case_id"] = audit["prior_case_id"]
     if isinstance(audit.get("revoked_by"), str):
         cleaned["revoked_by"] = audit["revoked_by"][:64]
     if audit.get("revoke_reason"):

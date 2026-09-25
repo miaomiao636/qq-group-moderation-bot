@@ -1,4 +1,4 @@
-"""T-104 测试：只撤回、保留违规历史、旧案件状态机与审计。"""
+"""T-104 测试：仅自动撤回、再犯待审、违规历史与案件审计。"""
 
 from __future__ import annotations
 
@@ -68,7 +68,7 @@ async def test_first_strike_plan() -> None:
 
 
 @pytest.mark.asyncio
-async def test_second_strike_only_recalls_without_creating_case() -> None:
+async def test_second_strike_only_recalls_and_creates_review_case() -> None:
     from app.cases.models import Case
     from app.db import SessionLocal
     from sqlalchemy import func, select
@@ -88,12 +88,171 @@ async def test_second_strike_only_recalls_without_creating_case() -> None:
         assert outcome.strike_no == 2
         actions = [p.action for p in outcome.planned_actions]
         assert actions == ["recall"]
-        assert outcome.case is None
+        assert outcome.case is not None
+        assert outcome.case.status == "PENDING_REVIEW"
+        assert outcome.violation.case_id == outcome.case.id
         assert (
             await session.execute(
                 select(func.count()).select_from(Case).where(Case.group_openid == group)
             )
-        ).scalar_one() == 0
+        ).scalar_one() == 1
+
+
+@pytest.mark.asyncio
+async def test_after_manual_close_next_violation_gets_new_case_with_only_new_evidence() -> None:
+    from app.db import SessionLocal
+
+    group, member = _ids()
+    async with SessionLocal() as session:
+        first = await record_violation(
+            session,
+            make_message("CASE_REOPEN_1", group, member),
+            high_decision("CASE_REOPEN_1", group, member),
+        )
+        second = await record_violation(
+            session,
+            make_message("CASE_REOPEN_2", group, member),
+            high_decision("CASE_REOPEN_2", group, member),
+        )
+        assert second.case is not None
+        old_case_id = second.case.id
+        await transition_case(session, old_case_id, "KEEP", operator="admin_test")
+        await transition_case(session, old_case_id, "CLOSED", operator="admin_test")
+
+        later = await record_violation(
+            session,
+            make_message("CASE_REOPEN_3", group, member),
+            high_decision("CASE_REOPEN_3", group, member),
+        )
+        assert later.case is not None and later.case.id != old_case_id
+        assert later.case.status == "PENDING_REVIEW"
+        assert later.planned_actions[0].action == "recall"
+        assert len(later.planned_actions) == 1
+        assert json.loads(later.case.violation_ids_json) == [later.violation.id]
+        assert later.violation.case_id == later.case.id
+        assert first.violation.case_id == old_case_id
+        old = await session.get(type(later.case), old_case_id)
+        assert old is not None and old.status == "CLOSED"
+
+
+@pytest.mark.asyncio
+async def test_closed_case_reoffense_after_window_or_archive_still_creates_case() -> None:
+    from datetime import UTC, datetime, timedelta
+
+    from app.cases.models import Case
+    from app.db import SessionLocal
+
+    group, member = _ids()
+    async with SessionLocal() as session:
+        session.add(
+            Case(
+                case_no=f"OLD-{uuid.uuid4().hex[:12]}",
+                group_openid=group,
+                member_openid=member,
+                status="CLOSED",
+                archived=True,
+                closed_at=datetime.now(UTC) - timedelta(days=45),
+                audit_json=json.dumps({"transitions": [{"to": "KEEP"}]}),
+            )
+        )
+        await session.commit()
+        outcome = await record_violation(
+            session,
+            make_message("CASE_ARCHIVED_REOFFEND", group, member),
+            high_decision("CASE_ARCHIVED_REOFFEND", group, member),
+        )
+        assert outcome.strike_no == 1
+        assert outcome.case is not None and outcome.case.status == "PENDING_REVIEW"
+        assert json.loads(outcome.case.violation_ids_json) == [outcome.violation.id]
+
+
+@pytest.mark.asyncio
+async def test_false_positive_closed_case_does_not_trigger_first_new_violation() -> None:
+    from app.cases.models import Case
+    from app.db import SessionLocal
+
+    group, member = _ids()
+    async with SessionLocal() as session:
+        session.add(
+            Case(
+                case_no=f"FALSE-{uuid.uuid4().hex[:12]}",
+                group_openid=group,
+                member_openid=member,
+                status="CLOSED",
+                audit_json=json.dumps({"revoked_by": "admin_test"}),
+            )
+        )
+        await session.commit()
+        outcome = await record_violation(
+            session,
+            make_message("CASE_FALSE_REOFFEND", group, member),
+            high_decision("CASE_FALSE_REOFFEND", group, member),
+        )
+        assert outcome.strike_no == 1 and outcome.case is None
+
+
+@pytest.mark.asyncio
+async def test_reoffense_ignores_damaged_closed_audit_and_finds_earlier_confirmation() -> None:
+    from datetime import UTC, datetime, timedelta
+
+    from app.cases.models import Case
+    from app.db import SessionLocal
+
+    group, member = _ids()
+    async with SessionLocal() as session:
+        session.add_all(
+            [
+                Case(
+                    case_no=f"CONFIRMED-{uuid.uuid4().hex[:12]}",
+                    group_openid=group,
+                    member_openid=member,
+                    status="CLOSED",
+                    closed_at=datetime.now(UTC) - timedelta(days=50),
+                    audit_json=json.dumps({"transitions": [{"to": "KEEP"}]}),
+                ),
+                Case(
+                    case_no=f"DAMAGED-{uuid.uuid4().hex[:12]}",
+                    group_openid=group,
+                    member_openid=member,
+                    status="CLOSED",
+                    closed_at=datetime.now(UTC) - timedelta(days=40),
+                    audit_json="{",
+                ),
+            ]
+        )
+        await session.commit()
+        outcome = await record_violation(
+            session,
+            make_message("CASE_DAMAGED_AUDIT", group, member),
+            high_decision("CASE_DAMAGED_AUDIT", group, member),
+        )
+        assert outcome.case is not None
+        assert outcome.case.status == "PENDING_REVIEW"
+
+
+@pytest.mark.asyncio
+async def test_revoking_one_of_multiple_case_violations_keeps_case_pending() -> None:
+    from app.db import SessionLocal
+
+    group, member = _ids()
+    async with SessionLocal() as session:
+        first = await record_violation(
+            session,
+            make_message("CASE_PARTIAL_REVOKE_1", group, member),
+            high_decision("CASE_PARTIAL_REVOKE_1", group, member),
+        )
+        second = await record_violation(
+            session,
+            make_message("CASE_PARTIAL_REVOKE_2", group, member),
+            high_decision("CASE_PARTIAL_REVOKE_2", group, member),
+        )
+        assert second.case is not None
+        await revoke_violation(session, first.violation.id, "误判一条", "admin_test")
+        case = await session.get(type(second.case), second.case.id)
+        assert case is not None and case.status == "PENDING_REVIEW"
+        await revoke_violation(session, second.violation.id, "全部误判", "admin_test")
+        await session.refresh(case)
+        assert case.status == "CLOSED"
 
 
 @pytest.mark.asyncio

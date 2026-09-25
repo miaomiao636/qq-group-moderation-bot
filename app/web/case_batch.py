@@ -315,6 +315,25 @@ def eligible(rows: list[Case]) -> None:
         raise HTTPException(409, "案件缺少权威群或成员身份，请逐案检查后再结案")
 
 
+def partition_for_close(rows: list[Case]) -> tuple[list[Case], list[Case]]:
+    """Skip already closed selections only at preview; never skip changed plans."""
+    pending = [row for row in rows if row.status == "PENDING_REVIEW" and not row.archived]
+    closed = [row for row in rows if row.status == "CLOSED"]
+    if len(pending) + len(closed) != len(rows):
+        invalid = [
+            row.case_no
+            for row in rows
+            if row.status != "CLOSED" and (row.status != "PENDING_REVIEW" or row.archived)
+        ]
+        raise HTTPException(
+            409, "包含仍在审批中或归档异常的案件，请逐案核对：" + "、".join(invalid[:10])
+        )
+    if len(pending) > CLOSE_LIMIT:
+        raise HTTPException(422, f"本次最多处理 {CLOSE_LIMIT} 个待审案件，请缩小范围")
+    eligible(pending)
+    return pending, closed
+
+
 async def create_plan(
     session: AsyncSession, rows: list[Case], actor: str, reason: str
 ) -> tuple[AdminChangePlan, list[dict[str, Any]]]:
