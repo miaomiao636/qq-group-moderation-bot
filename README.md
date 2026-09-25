@@ -7,19 +7,19 @@ GIF / 表情 / 视频 / 语音 / 文件 / 卡片），自动执行高置信消�
 > **交付说明**：本项目面向单一接收方交付（文件包）。使用**自己的 QQ 账号、自己的群、自己的
 > 密钥**从零部署，即为独立安装。**新部署 = 新现场验收**：代码行为一致，生效证据由各部署方
 > 自行采集（见 §7）。
-> 交付包中的历史文档用 `<BOT_QQ>` / `<OLD_BOT_QQ>` / `<OWNER_EMAIL>` 占位符代替了原部署的
-> 真实账号与邮箱；`.env`、`data/`、日志等运行数据不在包内。
+> **配套交付入口：[DELIVERY.md](DELIVERY.md)**。群管理与 QQ 空间限制巡检同仓库维护，按固定提交制作候选包；两份操作手册相互引用。当前候选包排除历史评审文档、现场数据和登录会话，正式发布仍需通过接收方验收及发布清单。
 
 ## 能力概览
 
 - **多模态审核**：文本 / 图片 / GIF / 表情 / 视频 / 语音 / 文件 / 卡片
 - **分级处置**：记录 → 撤回 → 1 小时禁言 + 警告 → 24 小时禁言（高置信自动执行）；
   两次违规合并为案件，由人工决定是否踢出
-- **策略保护**：全局白名单（仅免广告）、办证/学历内容放行、群主/管理员卡片放行
-  （均可在代码策略与后台配置，详见 `DECISIONS.md` 中的 D-031/D-032/D-033）
+- **策略保护**：群主/管理员保护、成员白名单与关键词白名单按各自范围生效
+  （成员白名单按 D-037，关键词白名单按 D-033；详见 `DECISIONS.md`）
 - **管理后台**：群管理、案件处理、影子记录、白名单、动态规则、通知中心、审计
 - **安全底线**：急停开关（只记录不动手）、按群动作开关、动作结果未知不盲目重放、全链路审计
 - **主通道**：NapCat + OneBot 11（反向 WebSocket）；可选 QQ 官方机器人通道
+- **配套巡检**：独立桌面 QQ 空间限制巡检，通过同机 NapCat HTTP 读取群成员，使用专用 Edge 登录查看空间并导出；不自动向主服务导入案件或触发处罚，见 [巡检操作手册](docs/delivery/space-inspector.md)。
 
 ## 架构
 
@@ -98,12 +98,13 @@ uv run alembic upgrade head
 ### 2.4 前台试运行与验证
 
 ```powershell
-uv run python -m app           # 终端 A：Web + OneBot WS + 通知工作器
-uv run python -m app.runtime   # 终端 B：常驻运行器
+uv run python -m app           # NapCat 主通道：Web + OneBot WS + 通知工作器
 ```
 
 - 健康检查：`http://127.0.0.1:<WEB_PORT>/healthz` → `"status":"ok"`
 - 管理后台：`http://127.0.0.1:<WEB_PORT>/admin` → 用 `ADMIN_*` 登录
+
+`uv run python -m app.runtime` 仅用于另外配置 `QQ_APP_ID` / `QQ_APP_SECRET` 的官方机器人接入，不是 NapCat-only 环境必需进程。
 
 ### 2.5 接入 NapCat（反向 WebSocket）
 
@@ -124,6 +125,8 @@ uv run python -m app.runtime   # 终端 B：常驻运行器
    校验拦截可关闭"SSL 证书验证"；令牌仅经 `Authorization` 头传递，**不要**拼接进 URL。
 
 ### 2.6 服务化（开机自启）
+
+**以下既有脚本无条件安装并启动两项服务，不能直接用于缺少官方机器人凭据的 NapCat-only 新部署。** 公司配套交付须由维护人员先适配部署模式并验收；不要以缺少凭据的运行器循环重启代替安装成功。已有同名服务也不可未经核对直接覆盖，见 [新接收方说明](docs/delivery/group-management.md)。
 
 ```powershell
 # 管理员 PowerShell：
@@ -149,7 +152,7 @@ NapCat 自启：把 `scripts\napcat-autostart-template.bat` 复制到「启动�
 
 | # | 检查 | 通过标准 |
 | --- | --- | --- |
-| 1 | 服务 | `sc query QQBotWeb` / `QQBotRuntime` = RUNNING；`/healthz` = ok |
+| 1 | 服务 | 已批准的主服务运行、`/healthz` 就绪；仅启用官方接入时另验 `QQBotRuntime` |
 | 2 | NapCat | `/onebot/status` = online；`/healthz` napcat = ready |
 | 3 | 后台 | `/admin` 登录正常 |
 | 4 | 影子链路 | 在机器人所在任意群发一条消息 → 后台「影子记录」出现该消息判定（只记录，不动手） |
@@ -188,6 +191,9 @@ uv run mypy app
 
 | 主题 | 文档 |
 | --- | --- |
+| 公司配套交付入口与版本边界 | [DELIVERY.md](DELIVERY.md) |
+| 群管理 / 巡检搭配使用 | [群管理手册](docs/delivery/group-management.md) / [巡检手册](docs/delivery/space-inspector.md) |
+| 接收方验收与配套维护 | [验收维护清单](docs/delivery/acceptance-maintenance.md) |
 | Windows 运行要求与恢复模型 | `docs/windows-operations.md` |
 | 交付与实测清单 | `docs/windows-delivery-checklist.md` |
 | 部署配置对照表（复刻同款效果） | `docs/deploy-config-reference.md` |
@@ -198,4 +204,4 @@ uv run mypy app
 
 ## 8. 许可
 
-MIT License，见 [`LICENSE`](LICENSE)。
+现有 [`LICENSE`](LICENSE) 为 MIT，但 `pyproject.toml` 元数据仍标注 Proprietary。当前配套候选包保留现状，正式发布前由负责人统一确认，见 [交付说明](DELIVERY.md)。
