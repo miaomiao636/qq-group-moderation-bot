@@ -15,6 +15,8 @@ from app.space_inspector.worker import Command, Event, run_worker
 
 class FakeService:
     source_id = "12345678"
+    export_root = Path("synthetic-exports")
+    export_settings_error = ""
     current_folder: Path | None = None
 
     def __init__(self, calls: list[tuple[str, int]]) -> None:
