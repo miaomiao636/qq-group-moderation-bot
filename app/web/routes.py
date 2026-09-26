@@ -1043,13 +1043,53 @@ async def _transition_case_chain(
             audit_details["case_no"] = case_row.case_no
         if revoke_records:
             count = 0
-            for violation_id in json.loads(case_row.violation_ids_json):
-                record = await session.get(ViolationRecord, int(violation_id))
-                if record is not None:
-                    count += 1
-                    if not record.revoked:
-                        record.revoked = True
-                        record.revoke_reason = f"管理员标记误判（案件{case_row.case_no}）"
+            explicit_ids = json.loads(case_row.violation_ids_json)
+            case_identity = case_batch.identity(case_row)
+            if not all(case_identity):
+                raise HTTPException(409, "案件缺少权威群或成员身份，请逐案检查")
+            records = list(
+                await session.scalars(
+                    select(ViolationRecord)
+                    .where(
+                        or_(
+                            ViolationRecord.id.in_(explicit_ids),
+                            ViolationRecord.case_id == case_id,
+                        )
+                    )
+                    .limit(case_batch.EVIDENCE_LIMIT + 1)
+                )
+            )
+            if len(records) > case_batch.EVIDENCE_LIMIT:
+                raise HTTPException(422, "证据数量过多，请逐案核对")
+            record_ids = {record.id for record in records}
+            if record_ids:
+                # A global revoke must not silently invalidate evidence that
+                # another case also names in its explicit evidence index.
+                other_indexes = await session.execute(
+                    select(Case.case_no, Case.violation_ids_json).where(Case.id != case_id)
+                )
+                for other_case_no, raw_ids in other_indexes:
+                    try:
+                        other_ids = json.loads(raw_ids)
+                    except (TypeError, ValueError) as exc:
+                        raise HTTPException(409, "其他案件证据索引异常，请先核对") from exc
+                    if not isinstance(other_ids, list) or any(
+                        type(value) is not int or value <= 0 for value in other_ids
+                    ):
+                        raise HTTPException(409, "其他案件证据索引异常，请先核对")
+                    if record_ids.intersection(other_ids):
+                        raise HTTPException(
+                            409, f"案件证据也被案件 {other_case_no} 引用，请逐案核对"
+                        )
+            for record in records:
+                if case_batch.identity(record) != case_identity:
+                    raise HTTPException(409, "案件关联证据身份不一致，请逐案检查")
+                if record.case_id not in (None, case_id):
+                    raise HTTPException(409, "案件证据已归属另一案件，请逐案核对")
+                count += 1
+                if not record.revoked:
+                    record.revoked = True
+                    record.revoke_reason = f"管理员标记误判（案件{case_row.case_no}）"
             audit_details["records"] = count
         await record_admin_audit(
             operator, audit_action, "case", str(case_id), audit_details, session=session

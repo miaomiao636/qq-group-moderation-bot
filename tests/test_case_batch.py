@@ -98,6 +98,105 @@ async def test_case_detail_includes_reverse_linked_new_evidence(web_ui):
     assert "证据（1 条）" in detail.text
 
 
+async def test_single_case_false_positive_revokes_reverse_linked_evidence(web_ui):
+    client, factory, _, csrf = web_ui
+    await seed(factory, 1)
+
+    response = await client.post(
+        "/admin/cases/1/false-positive", data={"csrf": csrf}, follow_redirects=False
+    )
+    assert response.status_code == 303
+
+    async with factory() as session:
+        case = await session.get(Case, 1)
+        records = list(await session.scalars(select(ViolationRecord)))
+        audits = list(
+            await session.scalars(
+                select(AdminAudit).where(AdminAudit.action == "case_false_positive")
+            )
+        )
+        assert case is not None and case.status == "CLOSED"
+        assert len(records) == 1 and records[0].revoked
+        assert "管理员标记误判" in records[0].revoke_reason
+        assert len(audits) == 1 and json.loads(audits[0].detail_json)["records"] == 1
+
+
+async def test_single_case_false_positive_rejects_evidence_owned_by_another_case(web_ui):
+    client, factory, _, csrf = web_ui
+    await seed(factory, 2)
+    async with factory() as session:
+        cases = list(await session.scalars(select(Case).order_by(Case.id)))
+        records = list(await session.scalars(select(ViolationRecord).order_by(ViolationRecord.id)))
+        cases[1].external_user_id = cases[0].external_user_id
+        records[1].external_user_id = cases[0].external_user_id
+        cases[0].violation_ids_json = json.dumps([records[1].id])
+        await session.commit()
+
+    response = await client.post(
+        "/admin/cases/1/false-positive", data={"csrf": csrf}, follow_redirects=False
+    )
+    assert response.status_code == 409
+
+    async with factory() as session:
+        case = await session.get(Case, 1)
+        records = list(await session.scalars(select(ViolationRecord).order_by(ViolationRecord.id)))
+        audits = list(
+            await session.scalars(
+                select(AdminAudit).where(AdminAudit.action == "case_false_positive")
+            )
+        )
+        assert case is not None and case.status == "PENDING_REVIEW"
+        assert len(records) == 2 and not any(record.revoked for record in records)
+        assert not audits
+
+
+async def test_single_case_false_positive_rejects_shared_explicit_evidence(web_ui):
+    client, factory, _, csrf = web_ui
+    await seed(factory, 2)
+    async with factory() as session:
+        cases = list(await session.scalars(select(Case).order_by(Case.id)))
+        record = await session.scalar(select(ViolationRecord).where(ViolationRecord.case_id == 1))
+        assert record is not None
+        cases[1].external_user_id = cases[0].external_user_id
+        cases[0].violation_ids_json = json.dumps([record.id])
+        cases[1].violation_ids_json = json.dumps([record.id])
+        await session.commit()
+
+    response = await client.post(
+        "/admin/cases/1/false-positive", data={"csrf": csrf}, follow_redirects=False
+    )
+    assert response.status_code == 409
+
+    async with factory() as session:
+        case = await session.get(Case, 1)
+        record = await session.get(ViolationRecord, record.id)
+        assert case is not None and case.status == "PENDING_REVIEW"
+        assert record is not None and not record.revoked
+
+
+async def test_single_case_false_positive_rejects_incomplete_onebot_identity(web_ui):
+    client, factory, _, csrf = web_ui
+    await seed(factory, 1)
+    async with factory() as session:
+        case = await session.get(Case, 1)
+        record = await session.scalar(select(ViolationRecord))
+        assert case is not None and record is not None
+        case.external_user_id = ""
+        record.external_user_id = ""
+        await session.commit()
+
+    response = await client.post(
+        "/admin/cases/1/false-positive", data={"csrf": csrf}, follow_redirects=False
+    )
+    assert response.status_code == 409
+
+    async with factory() as session:
+        case = await session.get(Case, 1)
+        record = await session.scalar(select(ViolationRecord))
+        assert case is not None and case.status == "PENDING_REVIEW"
+        assert record is not None and not record.revoked
+
+
 async def test_preview_and_idempotent_atomic_close_preserve_violations(web_ui):
     client, factory, _, csrf = web_ui
     await seed(factory)
