@@ -67,6 +67,8 @@ class BackupConfig:
     timeout_seconds: float = 1800
     owner_sid: str | None = None
     mode: str = "encrypted"  # Legacy configs retain readability; new init defaults to plain.
+    source_kind: str = "git"
+    source_manifest_sha256: str = ""
 
 
 def _now() -> str:
@@ -288,9 +290,15 @@ def _restore(
     manifest = json.loads(manifest_temp.read_text(encoding="utf-8"))
     if manifest.get("format") != (1 if key else 2) or manifest.get("snapshot_id") != snapshot_id:
         raise BackupError("INVALID_MANIFEST")
-    sizes = [
-        e["size"] for e in manifest["files"] if materialize or e["path"] == "data/moderation.db"
-    ]
+
+    def needs_file(name: str) -> bool:
+        return (
+            materialize
+            or name == "data/moderation.db"
+            or (name == "recovery-source.zip" and manifest.get("source_kind") == "bundle")
+        )
+
+    sizes = [e["size"] for e in manifest["files"] if needs_file(e["path"])]
     if any(type(size) is not int or size < 0 for size in sizes):
         raise BackupError("INVALID_MANIFEST_SIZE")
     _free(target, sum(sizes), config.min_free_bytes)
@@ -336,7 +344,7 @@ def _restore(
             raise BackupError("INVALID_MANIFEST_PATH")
         seen.add(name.casefold())
         output = checked(target / name, exists=False)
-        write_file = materialize or name == "data/moderation.db"
+        write_file = needs_file(name)
         if write_file:
             output.parent.mkdir(parents=True, exist_ok=True)
             _free(target, entry["size"], config.min_free_bytes)
@@ -349,6 +357,16 @@ def _restore(
         )
         if actual != (entry["sha256"], entry["size"]):
             raise BackupError("OBJECT_DIGEST_MISMATCH")
+    if manifest.get("source_kind") == "bundle":
+        from app.reports.backup_source import verify_archive
+
+        if not manifest.get("source_archived") or "recovery-source.zip" not in seen:
+            raise BackupError("DELIVERY_SOURCE_MISSING")
+        verify_archive(
+            target / "recovery-source.zip",
+            manifest["source_manifest_sha256"],
+            manifest["source_sha"],
+        )
     database = _database(target / "data/moderation.db", config.expected_revision, deadline)
     if database != manifest["database"]:
         raise BackupError("DATABASE_SUMMARY_MISMATCH")
@@ -450,7 +468,16 @@ def run_backup(config: BackupConfig, *, source_sha: str) -> dict[str, Any]:
                 coverage = _media_coverage(snapshot, source_files)
                 source_files.insert(0, ("data/moderation.db", snapshot))
                 source_archived = (config.repo / ".git").exists()
-                if source_archived:
+                if config.source_kind == "bundle":
+                    from app.reports.backup_source import archive_bundle
+
+                    archive = staging / "source.zip"
+                    archive_bundle(config.repo, config.source_manifest_sha256, source_sha, archive)
+                    source_files.append(("recovery-source.zip", archive))
+                    source_archived = True
+                elif config.source_kind != "git":
+                    raise BackupError("UNKNOWN_SOURCE_KIND")
+                elif source_archived:
                     archive = staging / "source.zip"
                     with archive.open("xb") as out:
                         subprocess.run(
@@ -551,6 +578,8 @@ def run_backup(config: BackupConfig, *, source_sha: str) -> dict[str, Any]:
                     "snapshot_id": snapshot_id,
                     "source_sha": source_sha,
                     "source_archived": source_archived,
+                    "source_kind": config.source_kind,
+                    "source_manifest_sha256": config.source_manifest_sha256,
                     "capture_start": receipt["started_at"],
                     "capture_end": _now(),
                     "filesystem_atomic": False,

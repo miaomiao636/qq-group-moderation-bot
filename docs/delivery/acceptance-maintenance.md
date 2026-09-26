@@ -4,12 +4,11 @@
 
 ## 当前发布门槛
 
-- [ ] 负责人核对公司接收范围、GitHub Release 可见性及维护责任人。
-- [ ] 统一现有 LICENSE 的 MIT 与项目元数据 Proprietary 标注；本候选包不擅自改变许可。
+- 已确认：MIT 许可、仅向这家公司提供 ZIP；本轮不公开发布 Release。接收方仍需指定维护责任人。
 - [ ] 完成接收方新环境安装与账号配置，不携带原部署 `.env`、数据库、群名单、凭据或浏览器会话。
-- [ ] 适配并验收 NapCat-only 服务安装模式；现有双服务脚本不能直接作为无官方机器人凭据的新环境默认入口。
-- [ ] 解决普通 ZIP 缺少 `.git` 导致每日备份不可用的问题，并验证来源校验没有弱化。
-- [ ] 将巡检任务、缓存、设置和导出纳入获批备份范围，完成隔离恢复实演。
+- [ ] 在公司验收新版 NapCat 服务安装、开机启动、有限故障恢复与人工接手。
+- [ ] 按发行清单初始化主库备份，核验调度首跑并完成隔离恢复。
+- [ ] 按明确目录执行巡检离线备份，核对全部任务及导出范围，完成隔离恢复。
 - [ ] 完成下述现场检查并明确限制，不宣称所有失效账号可识别或保证全群一次扫完。
 
 ## 接收方现场记录
@@ -53,14 +52,50 @@
 | 主数据库与媒体 | 项目配置所指数据库及 `data/` 资源 | 使用现有一致快照机制；不在运行中裸复制主 DB 文件冒充备份 |
 | 主项目私有配置 | 接收方本机 `.env` 与 NapCat 配置 | 分别保管，不随源码包和普通诊断流转；现有公开恢复模板不包含密钥 |
 | 巡检任务 | `%LOCALAPPDATA%\QQSpaceInspector\tasks` | 群快照、观察、续扫依据；CSV 不能替代 |
-| 巡检历史缓存与设置 | 同目录 `observations.sqlite3`、`export-settings.json` | 当前未被主项目每日备份覆盖 |
+| 巡检历史缓存与设置 | 同目录 `observations.sqlite3`、`export-settings.json` | 独立巡检备份覆盖；原时间保留，旧导出位置只作审计副本，不自动启用 |
 | 巡检导出 | 窗口显示的自定义总目录，默认桌面 | 与任务记录分别保留；更改位置不会搬移旧结果 |
 | 巡检浏览器 | 同目录 `browser/` | 含登录会话，不放进通用备份交付包或发给别人；换机正常重新登录 |
 | 巡检运行环境 | 同目录 `runtime/` | 可重新安装，不作为任务备份替代品 |
 
-现有 `app.reports.scheduled_backup` 初始化及运行检查要求真实 Git 仓库、干净工作区和可追溯提交。因此候选 ZIP 不能直接套用附带的每日备份注册脚本。维护人员须先适配可验证发行包或采用获批 Git 部署，再核验调度、首次执行与隔离恢复；不伪造仓库或跳过锁、完整性检查。
+### 主项目备份（ZIP 部署）
 
-在自动配套备份完成前，巡检可由维护人员在**正常关闭巡检后**复制获批的任务目录、历史缓存及其 SQLite 辅助文件、导出设置和各导出目录到私有备份位置；不只复制仍在运行的数据库主文件。不要夹带 `browser/` 或整个运行环境。备份和恢复清单均须核对来源、目标、可恢复性，删除原任务须另有明确授权。
+由维护人员在解压项目目录执行下列命令。示例路径须换成公司批准的位置，备份库与配置目录都必须是**全新目录**，与项目互不包含。先核对构建收据与 ZIP/清单哈希，`<清单SHA256>` 使用构建收据中的 `manifest_sha256`。
+
+```powershell
+.\.venv\Scripts\python.exe -m app.reports.scheduled_backup init --repo '<项目目录>' --destination 'E:\QQBackup' --state 'E:\QQBackupState' --source-kind bundle --manifest-sha256 '<清单SHA256>'
+.\.venv\Scripts\python.exe -m app.reports.scheduled_backup run --config 'E:\QQBackupState\config.json'
+.\.venv\Scripts\python.exe -m app.reports.scheduled_backup status --config 'E:\QQBackupState\config.json'
+.\.venv\Scripts\python.exe -m app.reports.scheduled_backup restore --config 'E:\QQBackupState\config.json' --snapshot '<成功收据中的snapshot_id>' --to 'D:\QQRestoreCheck-全新目录'
+```
+
+默认明文备份不收集服务凭据，私有目录权限限制访问；公司应选择受控磁盘并自行保护介质。每次备份验证固定发行清单、运行源码、数据库迁移版本，归档 `recovery-source.zip`；恢复再次核验内层源码和数据库，再生成 `RESTORE_VERIFIED.json`。恢复目录是隔离验收副本，不会覆盖生产、启动程序或自动迁移。
+
+核对首跑后，管理员按已批准的时间注册：
+
+```powershell
+.\scripts\register_backup_task.ps1 -ProjectRoot '<项目目录>' -ConfigPath 'E:\QQBackupState\config.json' -At '04:30'
+```
+
+计划任务以 SYSTEM 运行；若配置由维护人员创建，私有目录保留该人员和 SYSTEM 的访问权限。已有同名计划任务拒绝替换。注册后必须核验实际执行结果及失败处理，不能把注册成功当作备份成功。主库备份成功不代表巡检数据已备份。
+
+受控 Git 部署继续使用默认 `git` 来源，要求仓库干净；不能伪造 `.git` 或通过失败自动切换到 bundle。修改已固定的程序或公开规则文件后备份会拒绝，升级必须重新核对完整发行包及来源配置、迁移版本、备份目录配对，不能自动接受新哈希。原有历史备份保留，用与该快照配对的恢复配置核验。
+
+### 巡检独立离线备份
+
+正常关闭巡检窗口（仅暂停不够）。维护人员显式填写操作员的巡检数据根和所有需要保留的当前/历史导出总目录；工具不猜测 SYSTEM 的 AppData，也不会扫描整个电脑寻找旧导出。
+
+```powershell
+.\.venv\Scripts\python.exe -m app.space_inspector.backup create --root '<操作员LOCALAPPDATA>\QQSpaceInspector' --export-root '<当前导出总目录>' --export-root '<另一个历史导出总目录>' --to 'E:\InspectorBackup-全新目录'
+.\.venv\Scripts\python.exe -m app.space_inspector.backup restore --source 'E:\InspectorBackup-全新目录' --to 'D:\InspectorRestoreCheck-全新目录'
+```
+
+没有其他历史位置时省去第二个 `--export-root`。命令也可使用巡检独立运行环境的 Python；不需要登录 QQ，不访问 NapCat 或主数据库。若由 SYSTEM 执行，另加 `--owner-sid <获批操作员SID>` 并使用该操作员的完整路径；不能使用 SYSTEM 自己的 `%LOCALAPPDATA%`。本版不自动注册巡检备份计划，由公司确定关闭窗口后的备份频率和负责人。
+
+工具取得窗口/任务锁，覆盖全部任务（不限于界面最近历史条数），通过 SQLite 快照保存已提交的 WAL 数据，并验证可载入性、文件哈希、容量和超时。任务内旧 `exports` 自动检查，当前和其他历史导出位置必须显式登记。只复制能关联到本次任务集合且有完成标记的导出，不夹带总目录中的其他文件；收据报告排除的目录项。旧导出可能只有总表，备份保留当时实际文件，不承诺自动补齐新版分群表；若需新版分群结果，应载入原任务重新导出。
+
+备份成功有 `COMPLETE.json`，恢复全部核验成功才有 `RESTORE_VERIFIED.json`。失败残留不算成功，选择全新目标重试，不删除原任务。单次默认上限 20 GiB、预留 1 GiB、30 分钟；任务库上限 2 GiB，缓存遵循运行器的 256 MiB 上限。达到限制或遇损坏文件时交维护人员处理，不放宽检查硬复制。
+
+隔离恢复后的 `inspector/tasks` 与缓存保留账号、任务 ID、群关系和观察时间；不会把旧观察变成今天的新检查。`settings/export-settings.json` 只是审计副本，不自动指向旧电脑磁盘；导出位于恢复目录的 `exports`。`browser`、运行环境、锁、项目/NapCat 凭据均不收集。恢复到实际 AppData、合并任务或覆盖已有内容须另行核对备份和目标；本命令不会自动执行。
 
 异机恢复先在隔离位置验证；重新配置同一来源账号、使用原空间观察账号正常登录，再核对任务是否能载入与继续。不能承诺当前工具脱离项目/NapCat 配置仍可离线使用；导出虽不访问 QQ，启动服务对象仍需这些本机配置存在且可解析。
 

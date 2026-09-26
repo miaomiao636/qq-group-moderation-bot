@@ -132,7 +132,7 @@ def build(repo: Path, ref: str, output: Path) -> dict[str, object]:
         f"来源提交：`{sha}`。本包尚未完成接收方现场验收。\n\n"
         "请先阅读 [配套交付说明](DELIVERY.md)，再按对应手册安装。\n\n"
         "包内不含 QQ/NapCat、Python、uv、Edge 安装程序或任何登录会话。\n"
-        "本包不含 Git 元数据，现有依赖 Git 的每日备份流程不能直接用于此目录。\n"
+        "本包不含 Git 元数据；备份请按维护清单选择 bundle 来源并固定构建收据中的清单哈希。\n"
     ).encode()
     manifest = {
         "format": 1,
@@ -141,10 +141,7 @@ def build(repo: Path, ref: str, output: Path) -> dict[str, object]:
         "components": ["group_management", "space_inspector"],
         "release_blockers": [
             "recipient_clean_install_and_recovery_not_verified",
-            "napcat_only_service_installer_requires_adaptation",
-            "gitless_scheduled_backup_not_supported",
-            "inspector_data_not_in_main_backup_scope",
-            "license_metadata_requires_owner_confirmation",
+            "recipient_service_fault_recovery_and_account_acceptance_pending",
         ],
         "files": [
             {"path": name, "sha256": hashlib.sha256(content).hexdigest(), "bytes": len(content)}
@@ -174,6 +171,7 @@ def build(repo: Path, ref: str, output: Path) -> dict[str, object]:
         "status": manifest["status"],
         "output": str(output.resolve()),
         "sha256": hashlib.sha256(payload).hexdigest(),
+        "manifest_sha256": hashlib.sha256(files["DELIVERY-MANIFEST.json"]).hexdigest(),
         "file_count": len(files),
     }
 

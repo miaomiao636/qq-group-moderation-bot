@@ -55,6 +55,10 @@ def test_archive_is_reproducible_from_commit_and_excludes_live_data(tmp_path):
     with zipfile.ZipFile(first) as archive:
         prefix = f"qqbot-companion-{sha[:12]}/"
         manifest = json.loads(archive.read(prefix + "DELIVERY-MANIFEST.json"))
+        assert (
+            receipt["manifest_sha256"]
+            == hashlib.sha256(archive.read(prefix + "DELIVERY-MANIFEST.json")).hexdigest()
+        )
         assert manifest["status"] == "candidate_not_accepted"
         assert manifest["source_sha"] == sha
         assert archive.read(prefix + "app/__init__.py") == b'NAME = "committed"\n'

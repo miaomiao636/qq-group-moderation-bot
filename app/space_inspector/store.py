@@ -130,6 +130,19 @@ class Store:
             raise InspectionError("任务已关闭。")
         return self._db
 
+    @classmethod
+    def validate_connection(cls, db: sqlite3.Connection) -> None:
+        """Validate an offline snapshot without opening a writable task store."""
+        reader = cls.__new__(cls)
+        reader._db = db
+        old_factory = db.row_factory
+        db.row_factory = sqlite3.Row
+        try:
+            reader._validate()
+        finally:
+            reader._db = None
+            db.row_factory = old_factory
+
     def _create(self) -> None:
         self.db.executescript("""
 CREATE TABLE meta(key TEXT PRIMARY KEY, value TEXT NOT NULL);

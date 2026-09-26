@@ -4,7 +4,7 @@ version = "0.1.0"
 description = "QQ 群多模态智能管理机器人：24×7 识别垃圾广告、诈骗及自定义违规内容，自动撤回与分级禁言，人工批准踢人。"
 readme = "README.md"
 requires-python = ">=3.12"
-license = { text = "Proprietary" }
+license = { text = "MIT" }
 authors = [{ name = "QQ Group Moderation Bot Team" }]
 dependencies = [
     "fastapi>=0.115",

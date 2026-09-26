@@ -53,7 +53,19 @@ uv run --no-sync python -m app
 
 `python -m app.runtime` 是可选 QQ 官方机器人运行器，需要另外配置 `QQ_APP_ID` / `QQ_APP_SECRET`，不是 NapCat-only 部署的必需步骤。
 
-服务化由部署人员在前台验收后安排。**附带 `scripts/install-services-nssm.ps1` 当前会无条件安装/替换并启动 `QQBotWeb` 和 `QQBotRuntime`，不能直接作为 NapCat-only 的自动安装入口。** 必须先适配部署模式或由维护人员单独配置获批服务；这属于本候选版正式交付前待办，不能让缺少官方凭据的进程持续失败重启。已有同名服务时先核对，不能直接覆盖。NapCat 仍需要正常的交互登录会话；按实际 NapCat 版本配置启动方式，附带 BAT 仅是待填写模板。
+服务化由部署人员在前台验收后安排。安装脚本只适用于**新安装**，默认模式 `NapCat`，只安装 `QQBotWeb`。先在 PowerShell 预览（不会创建目录、读取私有配置或操作服务）：
+
+```powershell
+.\scripts\install-services-nssm.ps1 -ProjectDir '<项目目录>' -NssmPath '<NSSM完整路径>'
+```
+
+确认计划后，在管理员 PowerShell 执行同一命令并加 `-Apply`。脚本检查项目配置为 `prod`、管理员口令有效、OneBot 身份/连接已配置，以及 `SHADOW` / 真实动作关闭；检查失败不会安装。已有任何选中的同名服务即拒绝，不自动停止、删除或覆盖。只有确实使用官方机器人并配置官方凭据时才加 `-Mode WithOfficial`，此时另装 `QQBotRuntime`。
+
+`-Apply` 配置开机启动，但默认不立即启动。需要本次启动时追加 `-StartServices`，必须在已批准的安装流程中使用；勿在本机现有生产服务上重跑。可以通过 `-ServicePrefix` 为隔离的新实例选不同名字，但端口、数据和账号隔离仍由部署人员确认。中途失败可能留下部分新服务，应核对安装状态后单独处置；脚本不会自动删除它们。
+
+NSSM 将失败交给 Windows 服务管理器：第一次失败 5 秒后重启，第二次 15 秒，随后停止；连续 24 小时无失败后重置计数。安装器回读配置，异常则停止安装。**这不是故障恢复实演**；非崩溃失败恢复标志按 Windows 文档在下次系统启动生效，须在公司验收重启和故障恢复、监控告警与人工接手。[Windows 恢复机制](https://learn.microsoft.com/en-us/windows/win32/api/winsvc/ns-winsvc-service_failure_actionsw)、[标志生效范围](https://learn.microsoft.com/en-us/windows/win32/api/winsvc/ns-winsvc-service_failure_actions_flag)。脚本不配置公司外部告警，连续失败由维护人员检查服务和日志。
+
+NapCat 仍需要正常的交互登录会话；按实际版本配置启动方式，附带 BAT 仅是待填写模板。
 
 ## 操作人员：日常工作
 
@@ -69,4 +81,4 @@ uv run --no-sync python -m app
 
 巡检发现空间限制时，操作人员先人工复核，再按公司现有处理流程决定是否处置；不能据此自动认定永久封号。主服务的群授权、保护角色、成员白名单及人工审批规则继续独立生效。主服务运行不需要打开巡检窗口；已保存的巡检结果也不会改变主服务历史判定。
 
-数据保存与恢复见 [维护清单](acceptance-maintenance.md)，尤其注意普通 ZIP 目录尚不能直接沿用依赖 Git 的每日备份流程。
+数据保存与恢复见 [维护清单](acceptance-maintenance.md)：普通 ZIP 使用固定清单哈希的 `bundle` 模式；Git 部署使用 `git` 模式，两者不自动降级。

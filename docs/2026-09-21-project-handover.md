@@ -98,6 +98,8 @@ QQ 群多模态智能管理机器人：**双通道**（OneBot/NapCat + QQ 官方
 
 ## 2. 状态快照（本轮与历史分开）
 
+**COMPANION-READY-20260926**：配套安装与两类备份恢复已实现，许可按 D-035 统一 MIT；仅公司 ZIP，不公开 Release。完整验证与候选包来源见 [交付整改](2026-09-25-companion-delivery.md#companion-ready-20260926)，新现场验收仍未完成。以下前轮技术阻塞为历史。
+
 **COMPANION-DELIVERY-20260925**：负责人选定同仓库方案 A，群管理与巡检的接收方手册互相引用，固定提交允许清单打出候选包。主服务/扫描逻辑/生产配置未改；新机验收、服务安装模式、无 Git 备份、巡检备份、许可及正式发布仍未闭环。来源 SHA、命令、包核验与 CI 入口见 [本轮记录](2026-09-25-companion-delivery.md)。
 
 **SPACE-EXPORT-PATH-20260925**：巡检可选择并记住导出总目录，只影响后续导出；设置失败保留旧值，目录不可用明确提示。代码 `74fa8c9`，回归与冻结执行 SHA `bbc403d8dedbf567cb07a287978857498b4286b8`，精确命令、结果和最终 HEAD CI 核验入口见 [自定义导出位置](2026-09-21-space-inspector.md#自定义导出位置space-export-path-20260925)。未改生产服务或巡检判据。
@@ -335,7 +337,7 @@ Start-Sleep -Seconds 600        # Windows job 约 10-13 分钟；循环检查直
 
 ## 7. 未关闭项与待办（含前置条件）
 
-- **COMPANION-DELIVERY-20260925**：先按 [接收方验收维护清单](delivery/acceptance-maintenance.md) 处理 NapCat-only 服务安装和备份覆盖，再做公司机器验收；当前是候选源码 ZIP，不能称一键生产交付完成。仓库为公开，Release 发布须确认公司接收范围；许可元数据不一致待负责人统一。不存在已创建的新仓库或已发布的附件。
+- **COMPANION-READY-20260926**：安装/备份技术整改及 MIT 统一见 [本轮记录](2026-09-25-companion-delivery.md#companion-ready-20260926)。后续按 [接收方验收维护清单](delivery/acceptance-maintenance.md) 完成公司机器安装、账号登录、实际故障恢复/备份调度和持续巡检。现为候选源码 ZIP，不能称现场交付完成；D-035 已确认单公司 ZIP，本轮不创建新仓库或公开附件。
 
 - **SPACE-EXPORT-PATH-20260925**：本机桌面入口重开即可加载目录选择；真人选择 D/E 盘、关闭重开后导出仍待用户反馈。既有导出和任务数据保留，不代替用户选择或迁移。使用方法及本轮验证见 [巡检记录](2026-09-21-space-inspector.md#自定义导出位置space-export-path-20260925)。
 
@@ -428,6 +430,8 @@ A09 前 6 秒、历史授权快照、Windows 回滚全链实机演练、
 ---
 
 ## 9. 已知"登记式适配"清单（改测试前先读）
+
+**COMPANION-READY-20260926**：新增内部 `test_bundle_backup_source.py`、`test_space_inspector_backup.py`、`test_service_installer.py`、`test_service_recovery.py`，补充既有内部打包收据断言。使用合成数据、假的 NSSM/Windows API 与隔离目录；主审探针未修改。CLI/干净发行包验收另留证，不冒充入库探针。精确 SHA、命令与计数见交付整改记录。
 
 **COMPANION-DELIVERY-20260925**：新增内部 `tests/test_companion_bundle.py`，仅使用临时合成 Git 仓库。验证固定提交字节、排除现场/历史资料、拒绝符号链接和不明运行资源、必备文件、覆盖保护及配置模板非空凭据拦截；原主审探针未适配或修改。私有验包脚本不计入库测试，真实新机安装仍未执行。
 

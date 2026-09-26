@@ -35,7 +35,14 @@ def read_config(path: Path) -> BackupConfig:
 
 
 def initialize(
-    repo: Path, destination: Path, state: Path, owner_sid: str | None, *, mode: str = "plain"
+    repo: Path,
+    destination: Path,
+    state: Path,
+    owner_sid: str | None,
+    *,
+    mode: str = "plain",
+    source_kind: str = "git",
+    manifest_sha256: str = "",
 ) -> Path:
     if mode not in {"plain", "encrypted"}:
         raise BackupError("UNKNOWN_BACKUP_MODE")
@@ -58,7 +65,16 @@ def initialize(
         not owner_sid or not re.fullmatch(r"S-1-\d+(?:-\d+)+", owner_sid)
     ):
         raise BackupError("INVALID_OWNER_SID")
-    checked(repo / ".git")
+    if source_kind == "git":
+        checked(repo / ".git")
+        if manifest_sha256:
+            raise BackupError("UNEXPECTED_DELIVERY_PIN")
+    elif source_kind == "bundle":
+        from app.reports.backup_source import validate_bundle
+
+        validate_bundle(repo, manifest_sha256)
+    else:
+        raise BackupError("UNKNOWN_SOURCE_KIND")
     for a, b in ((repo, destination), (repo, state), (destination, state)):
         a, b = a.absolute(), b.absolute()
         if a == b or a in b.parents or b in a.parents:
@@ -83,6 +99,8 @@ def initialize(
         owner_sid=owner_sid,
         mode=mode,
         expected_revision=_current_revision(),
+        source_kind=source_kind,
+        source_manifest_sha256=manifest_sha256,
     )
     payload = {
         key: str(value) if isinstance(value, Path) else value
@@ -122,8 +140,16 @@ def _git(repo: Path, *args: str) -> str:
 def validate_source(config: BackupConfig) -> str:
     if config.repo.absolute() != Path(__file__).absolute().parents[2]:
         raise BackupError("WRONG_SOURCE_CHECKOUT")
-    if _git(config.repo, "status", "--porcelain"):
-        raise BackupError("SOURCE_NOT_CLEAN")
+    if config.source_kind == "git":
+        if _git(config.repo, "status", "--porcelain"):
+            raise BackupError("SOURCE_NOT_CLEAN")
+        source_sha = _git(config.repo, "rev-parse", "HEAD")
+    elif config.source_kind == "bundle":
+        from app.reports.backup_source import validate_bundle
+
+        source_sha = validate_bundle(config.repo, config.source_manifest_sha256).sha
+    else:
+        raise BackupError("UNKNOWN_SOURCE_KIND")
     # Settings parsing does not import the DB engine or start the application.
     from app.config import Settings
 
@@ -145,7 +171,7 @@ def validate_source(config: BackupConfig) -> str:
             raise BackupError("PROMPT_OUTSIDE_PUBLIC_CONFIG_SCOPE")
     if _current_revision() != config.expected_revision:
         raise BackupError("SOURCE_SCHEMA_MISMATCH")
-    return _git(config.repo, "rev-parse", "HEAD")
+    return source_sha
 
 
 def cleanup_running() -> bool:
@@ -181,6 +207,8 @@ def main(argv: list[str] | None = None) -> int:
         init.add_argument("--" + name, type=Path, required=True)
     init.add_argument("--owner-sid")
     init.add_argument("--mode", choices=("plain", "encrypted"), default="plain")
+    init.add_argument("--source-kind", choices=("git", "bundle"), default="git")
+    init.add_argument("--manifest-sha256", default="")
     for name in ("run", "status", "restore"):
         command = sub.add_parser(name)
         command.add_argument("--config", type=Path, required=True)
@@ -192,7 +220,15 @@ def main(argv: list[str] | None = None) -> int:
     result: dict[str, Any]
     try:
         if args.command == "init":
-            initialize(args.repo, args.destination, args.state, args.owner_sid, mode=args.mode)
+            initialize(
+                args.repo,
+                args.destination,
+                args.state,
+                args.owner_sid,
+                mode=args.mode,
+                source_kind=args.source_kind,
+                manifest_sha256=args.manifest_sha256,
+            )
             result = {"status": "initialized"}
         else:
             config = read_config(args.config)
