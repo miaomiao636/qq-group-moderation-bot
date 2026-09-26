@@ -113,10 +113,10 @@ def test_action_result_parity_between_core_and_adapter_reexport() -> None:
     assert result.is_permission_error is False
 
 
-def test_neutral_action_protocol_has_no_kick() -> None:
-    """动作 seam 永不包含踢人。"""
+def test_neutral_automatic_action_protocol_is_recall_only() -> None:
+    """自动审核的动作 seam 仅包含撤回。"""
     protocol_methods = {name for name in ModerationActionClient.__protocol_attrs__}
-    assert protocol_methods == {"recall", "mute", "warn"}
+    assert protocol_methods == {"recall"}
 
 
 def test_neutral_message_has_transport_agnostic_segments() -> None:

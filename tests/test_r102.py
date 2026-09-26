@@ -1,5 +1,5 @@
 """R-102 整改回归测试：extra_blacklist、复核门软信号拦截、GIF多帧缓存键、
-媒体缺失=record_only、流水线按类型分发、案件审计from/to、并发幂等立案。"""
+媒体缺失=record_only、流水线按类型分发、历史案件审计、停止自动立案。"""
 
 from __future__ import annotations
 
@@ -64,7 +64,7 @@ def test_review_gate_blocks_soft_only_primary() -> None:
                 evidence_masked="x",
             )
         ],
-        recommended_actions=["recall", "mute", "warn"],
+        recommended_actions=["recall"],
     )
     decision = ReviewGate().review(_msg("仅弱信号"), primary)
     assert decision.verdict == "record_only"
@@ -95,7 +95,7 @@ def test_review_gate_passes_when_hard_evidence_present() -> None:
                 evidence_masked="刷单",
             ),
         ],
-        recommended_actions=["recall", "mute", "warn"],
+        recommended_actions=["recall"],
     )
     decision = ReviewGate().review(_msg("有黑名单"), primary)
     assert decision.verdict == "violation_high"
@@ -268,7 +268,7 @@ async def test_pipeline_dispatches_file_to_text_rules(tmp_path: Path, monkeypatc
         txt.unlink(missing_ok=True)
 
 
-# ---------- R-102-8 案件审计 from/to + 并发幂等立案 ----------
+# ---------- 案件审计 from/to + 新违规不再自动立案 ----------
 
 
 @pytest.mark.asyncio
@@ -286,24 +286,32 @@ async def test_case_audit_records_correct_from_to() -> None:
 
 
 @pytest.mark.asyncio
-async def test_concurrent_violations_produce_one_case() -> None:
-    """同群同成员多次违规只产生一个 PENDING_REVIEW 案件（幂等）。"""
-    from app.cases.models import Case
+async def test_repeated_violations_share_pending_case_without_extra_actions() -> None:
+    """同群同成员多次违规只保留一件待审案及逐条证据。"""
+    from app.cases.models import Case, ViolationRecord
     from sqlalchemy import select
 
     group, member = f"G_CONC_{uuid.uuid4().hex[:6]}", f"M_CONC_{uuid.uuid4().hex[:6]}"
-    # 第1次违规（strike1）
     await _record(group, member, f"MSG_C1_{uuid.uuid4().hex[:6]}")
-    # 第2次违规（strike2 → 立案）
     await _record(group, member, f"MSG_C2_{uuid.uuid4().hex[:6]}")
-    # 第3次违规（strike3 → _create_case 幂等返回已有案件）
     await _record(group, member, f"MSG_C3_{uuid.uuid4().hex[:6]}")
 
     async with SessionLocal() as session:
         cases = (
             (await session.execute(select(Case).where(Case.group_openid == group))).scalars().all()
         )
-    assert len(cases) == 1
+        violations = (
+            (
+                await session.execute(
+                    select(ViolationRecord).where(ViolationRecord.group_openid == group)
+                )
+            )
+            .scalars()
+            .all()
+        )
+    assert len(cases) == 1 and cases[0].status == "PENDING_REVIEW"
+    assert len(violations) == 3
+    assert {record.case_id for record in violations} == {cases[0].id}
 
 
 async def _record(group: str, member: str, message_id: str) -> None:
@@ -339,7 +347,7 @@ async def _record(group: str, member: str, message_id: str) -> None:
 
 
 async def _make_case(group: str, member: str) -> int:
-    await _record(group, member, f"MSG_M1_{uuid.uuid4().hex[:6]}")
+    await _record_outcome(group, member, f"MSG_M1_{uuid.uuid4().hex[:6]}")
     outcome = await _record_outcome(group, member, f"MSG_M2_{uuid.uuid4().hex[:6]}")
     assert outcome.case is not None
     return outcome.case.id

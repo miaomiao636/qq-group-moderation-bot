@@ -14,6 +14,7 @@
 
 from __future__ import annotations
 
+from collections import OrderedDict
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Literal
@@ -31,7 +32,7 @@ MediaVerdict = Literal["allow", "record_only", "violation_high"]
 _CAMPUS_WALL_MARKERS = ("长按识别小程序码", "一起看吧")
 
 # 与文字规则一致的处置动作（永无 kick）
-_HIGH_ACTIONS: tuple[str, ...] = ("recall", "mute", "warn")
+_HIGH_ACTIONS: tuple[str, ...] = ("recall",)
 
 
 @dataclass
@@ -70,11 +71,22 @@ class ImageModerationEngine:
         violation_hashes: set[str] | None = None,
         allowed_hashes: set[str] | None = None,
         qr_whitelist: set[str] | None = None,
+        *,
+        cache_capacity: int = 1024,
     ) -> None:
+        if cache_capacity < 1:
+            raise ValueError("cache_capacity must be positive")
         self._violation_hashes = violation_hashes or set()
         self._allowed_hashes = allowed_hashes or set()
         self._qr_whitelist = qr_whitelist or set()
-        self._cache: dict[str, MediaAnalysis] = {}
+        self._cache_capacity = cache_capacity
+        self._cache: OrderedDict[str, MediaAnalysis] = OrderedDict()
+
+    def _remember(self, cache_key: str, analysis: MediaAnalysis) -> None:
+        self._cache[cache_key] = analysis
+        self._cache.move_to_end(cache_key)
+        while len(self._cache) > self._cache_capacity:
+            self._cache.popitem(last=False)
 
     @property
     def violation_hashes(self) -> set[str]:
@@ -115,6 +127,7 @@ class ImageModerationEngine:
         cache_key = hashlib.sha256("|".join(hashes).encode("utf-8")).hexdigest()
         if cache_key in self._cache:
             cached = self._cache[cache_key]
+            self._cache.move_to_end(cache_key)
             return MediaAnalysis(
                 verdict=cached.verdict,
                 confidence=cached.confidence,
@@ -142,7 +155,7 @@ class ImageModerationEngine:
                 ["黑名单图哈希命中"],
                 reason="命中负责人确认的违规图黑名单",
             )
-            self._cache[cache_key] = analysis
+            self._remember(cache_key, analysis)
             return analysis
         if hashes and all(v == "allow" for v in hash_verdicts):
             analysis = MediaAnalysis(
@@ -153,7 +166,7 @@ class ImageModerationEngine:
                 ["白名单图哈希命中"],
                 reason="命中负责人确认的允许图白名单",
             )
-            self._cache[cache_key] = analysis
+            self._remember(cache_key, analysis)
             return analysis
 
         # 二维码信号
@@ -170,7 +183,7 @@ class ImageModerationEngine:
         confidence = 0.30 if signals else 0.10
         reason = "；".join(signals) if signals else "未命中黑/白名单，证据不足，转人工"
         analysis = MediaAnalysis(verdict, confidence, hashes, qr_payloads, signals, reason=reason)
-        self._cache[cache_key] = analysis
+        self._remember(cache_key, analysis)
         return analysis
 
 
@@ -178,7 +191,7 @@ def merge_decisions(text_decision: Any, media: MediaAnalysis | None) -> Any:
     """合并文字决策与媒体判定（T-201 聚合层）。
 
     规则：
-    - 任一层 violation_high => violation_high（建议 recall/mute/warn）；
+    - 任一层 violation_high => violation_high（仅建议 recall）；
     - 媒体 allow 且文字无信号 => allow；
     - 其余 => record_only（分析失败或证据不足绝不触发处罚）。
     """

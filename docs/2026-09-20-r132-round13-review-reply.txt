@@ -1,0 +1,39 @@
+r132 第十一批复验整改回评（基线 6505a79）
+
+一、先认 T01，再谈其余
+- 您说得对，我上一批写的"31 项先原样入库"与"累计入库 227（196+31）"不成立：`git diff --name-status 194eb0b 6505a79` 只改了 2 个既有测试文件，仓库 reviewer 实为 196；我当时是在外部目录跑出 31 passed，却写成"已入库并被同 SHA CI 覆盖"。这是证据边界错误。第十二批材料里那两行已原地加【更正】。
+- 本批真正入库：previous31 三个原文件 + 本轮 23 项业务反例/正控，共 54 项新增，仓库 reviewer 196 -> 250；6 个新文件与您的原件 AST 逐节点一致（ruff format 只规范空白/引号风格）；唯一功能差异是按您的要求未入库 `test_existing_boundary_business_test_asts_are_unchanged`（它只作本 SHA 审计，且依赖 `git show 194eb0b:`，depth-1 CI 取不到）。逐处登记见材料第三节。
+
+二、证据
+- 原 31 项：31 passed（现已入库）。
+- 本轮 24 项：入库时本机复现 13 failed / 11 passed -> 整改后 24 passed（其中 23 项业务探针入库）。【校准】该"24 passed"的执行版本是 228f276（仅代码修复阶段）；最终 HEAD 上的正确口径是 23 项业务项通过 + 1 项历史 AST 审计"不适用"（stale-true 修正后不再相等，按您的意见登记、不入永久套件）。
+- 仓库全量：1882 用例 / 0 failed / 0 error / 15 skipped；ruff check + format --check（298 文件）、mypy app（89 文件）通过。
+- C03 子包：您 C03 新 4 项 4 passed（含 2 个原失败反例 + 2 个正控）。
+- 生产身份链（修复后只读复跑）：IDENTITY_OK allowed=68 (mismatch 0) rejected=1 (mismatch 0) snapshot_state=ok。报告：docs/evidence/image-review/identity-20260920T053215Z.{md,json}。
+- 提交拆分：代码修复 228f276（只动 scripts/ 四个文件）；测试入库 2f69fdf（只动 tests/）；文档与证据为本提交。
+
+三、C03-R 修法（在现有补偿方案内，未新增表/迁移）
+- R1 归属凭据：import_seeds 在同一个写事务内回填每个哈希写入后的完整行状态（id/enabled/note），补偿改比这份凭据，不再比较提交后另起只读连接读到的 after。反例 A（外部 DELETE + INSERT 9001 为 'independent-row'）现在判为不属于本操作 -> 不撤销、保留外部行并报 COMPENSATION_CONFLICT。
+- R2 提交前乐观校验：补偿在 BEGIN IMMEDIATE 内先记录每个哈希的决策依据（恢复前的快照态），执行恢复后再读一次快照态，只要有漂移就 ROLLBACK 本次恢复并报冲突、保留后续结果。反例 B（B 已提交 DB、只剩 JSON 写盘）在补偿读快照时完成写盘 -> A 的第二次读取发现 approved -> rejected 漂移 -> 放弃恢复 -> 最终 DB 与 JSON 一致（均为撤回）。您指出的"BEGIN IMMEDIATE 挡不住只剩 JSON 的写者"我确认成立，所以判定边界放在提交前比对快照态，而不是依赖 SQL 锁。
+- 已接受的部分恢复正控保持通过（第二张快照失败 -> 第一张保持启用 + COMPENSATION_CONFLICT/conflicts=1、无 IMPORT_OK），未改成全量原子回滚。
+- 您答复第 1 条建议的"决定/source/操作版本/enabled 同库权威事务 + JSON 仅作可重试导出"，本批按您允许的结果验收口径在现方案内修（关闭标准也写明不要求指定迁移或整体架构）。若您要该架构，我按独立提案单独交（含备份/兼容/回滚方案），本批不新增迁移、不动生产。
+
+四、C04-R 修法（dHash 只作候选索引）
+- provenance 的批次就是被核对批次时，必须核对 (batch,no) 那一行；该行缺失或 dHash 不符 -> 报错且不得改绑（覆盖 note 指 #2 与 #999 两例）。
+- 来源批次与 provenance 不同（合法重编号/重新批准链）时先建候选集合（该批次内同 dHash 全部行），候选含相反决定即报歧义，不再按行顺序取第一个；全候选一致才算明确，多候选全放行记 multiple_approved_identities（多个批准身份，不宣称唯一原图）。
+- state 改枚举契约：只认 approved/rejected；缺省键沿用历史默认 rejected（与您"历史缺省可有既定兼容契约"一致）；null/true/7/空串一律拒绝，不再出现同一条目同时给放行与撤回开出 mismatch=0、exit 0。
+- source 用 findall 取全部批次，出现多个即报歧义，不取第一段。
+- 真实数据不受影响：68/68 放行 + 1/1 撤回、mismatch=0（生产快照那 1 条无 state 键 -> 走兼容默认）；新增 candidate_identities/multiple_approved_identities 仅作诊断，不改批准集合。
+
+五、C05-R 修法（保留受支持精度）
+- _parse_utc 保留非零小数秒，整秒与空格写法不变：[00:00:00.500000, 00:00:01.500000) 现在选中 .500000/.750000/01.000000（原实现静默截断后选前三条，计数同为 3 但集合错）；Z 与 +08:00 都对。按您答复第 3 条保留 ISO 支持，不新增无关日期限制。
+- 非阻塞文案按您的提示同步：窗口模式下那段无条件"不同范围、请用 since/until"改为按 windowed 分支。
+
+六、T01 附属（stale-true 输入，按您的建议小修）
+- test_stale_survey_enabled_flag_does_not_override_actual_db_state 改为真实 seam：读夹具 groups-synthetic.json，把 groups[0].action_enabled 写 true 后 UTF-8 回写，并断言解析器确实读到 True；原结果断言逐字保留。您本包的正控 test_stale_true_flag_reaches_actual_snapshot_parser_and_db_still_controls 转为正式回归。不恢复生产 load_survey 兼容分支。登记为第 5 处适配（既有差异文件内的输入 seam 适配）。
+
+七、仍未证明
+A09 前 6 秒、历史授权快照 NOT_PROVEN、导出多查询一致性读事务、Windows 回滚全链实机演练、一次未复现失败、enforce 最终批准与阈值校准、B 的实际动作效果。stage_runtime_proven=false 只是如实标注。
+
+八、边界
+未启用 enforce、未执行回滚、未改判定逻辑、未扩大授权、未动生产开关；生产仍 67 群可路由 / recall_only / IMAGE_HASH_MODE=shadow。

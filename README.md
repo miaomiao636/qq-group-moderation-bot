@@ -1,25 +1,23 @@
 # QQ 群多模态智能管理机器人
 
 面向 QQ 群的多模态内容审核与自动管理：24×7 识别广告、诈骗及自定义违规内容（文字 / 图片 /
-GIF / 表情 / 视频 / 语音 / 文件 / 卡片），自动执行高置信消息的撤回与分级禁言，整理两次违规
-证据并交由人工决定是否踢人；全部判定与动作可审计、可急停、可回退。
+GIF / 表情 / 视频 / 语音 / 文件 / 卡片），对高置信违规仅自动撤回消息；判定与动作可审计、可急停，历史案件和人工处理入口保留。
 
 > **交付说明**：本项目面向单一接收方交付（文件包）。使用**自己的 QQ 账号、自己的群、自己的
 > 密钥**从零部署，即为独立安装。**新部署 = 新现场验收**：代码行为一致，生效证据由各部署方
 > 自行采集（见 §7）。
-> 交付包中的历史文档用 `<BOT_QQ>` / `<OLD_BOT_QQ>` / `<OWNER_EMAIL>` 占位符代替了原部署的
-> 真实账号与邮箱；`.env`、`data/`、日志等运行数据不在包内。
+> **配套交付入口：[DELIVERY.md](DELIVERY.md)**。群管理与 QQ 空间限制巡检同仓库维护，按固定提交制作候选包；两份操作手册相互引用。当前候选包排除历史评审文档、现场数据和登录会话，正式发布仍需通过接收方验收及发布清单。
 
 ## 能力概览
 
 - **多模态审核**：文本 / 图片 / GIF / 表情 / 视频 / 语音 / 文件 / 卡片
-- **分级处置**：记录 → 撤回 → 1 小时禁言 + 警告 → 24 小时禁言（高置信自动执行）；
-  两次违规合并为案件，由人工决定是否踢出
-- **策略保护**：全局白名单（仅免广告）、办证/学历内容放行、群主/管理员卡片放行
-  （均可在代码策略与后台配置，详见 `DECISIONS.md` 中的 D-031/D-032/D-033）
+- **自动处置**：高置信违规仅撤回该消息；不自动禁言、发送群内警告或踢人。近 30 天第二次有效违规或人工结案后再犯会建立待审案件，由管理员人工决定成员处理；逐条证据和历史案件保留
+- **策略保护**：群主/管理员保护、成员白名单与关键词白名单按各自范围生效
+  （成员白名单按 D-037，关键词白名单按 D-033；详见 `DECISIONS.md`）
 - **管理后台**：群管理、案件处理、影子记录、白名单、动态规则、通知中心、审计
 - **安全底线**：急停开关（只记录不动手）、按群动作开关、动作结果未知不盲目重放、全链路审计
 - **主通道**：NapCat + OneBot 11（反向 WebSocket）；可选 QQ 官方机器人通道
+- **配套巡检**：独立桌面 QQ 空间限制巡检，通过同机 NapCat HTTP 读取群成员，使用专用 Edge 登录查看空间并导出；不自动向主服务导入案件或触发处罚，见 [巡检操作手册](docs/delivery/space-inspector.md)。
 
 ## 架构
 
@@ -32,8 +30,8 @@ QQ 客户端 + NapCat（同机运行，反向 WebSocket 客户端）
    ▼
 审核服务（本仓库，Python 3.12）
    ├─ 消息解析 → 规则引擎（本地/动态）→ AI 复核（可选）→ 判定与分级
-   ├─ 动作编排（撤回 / 禁言 / 警告：按群授权 + 急停 + 结果未知保护）
-   ├─ 案件与证据、违规累计、审计
+   ├─ 动作编排（仅自动撤回：按群授权 + 急停 + 结果未知保护）
+   ├─ 逐条证据、历史案件与违规记录、审计
    ├─ 通知（QQ 群 / 邮件，可选，默认全关）
    └─ 管理后台（HTTP，默认仅本机）
    │
@@ -81,7 +79,7 @@ Copy-Item .env.example .env
 | `ONEBOT_ACCESS_TOKEN` | 强随机令牌（NapCat 与系统共用，建议 ≥32 字符） |
 | `ONEBOT_SELF_ID` | **你的机器人 QQ 号** |
 | `ONEBOT_ACTIONS_ENABLED` | 真实动作总开关；**首次部署保持 `false`**（先影子观察） |
-| `ONEBOT_ACTION_STAGE` | 先 `recall_only`（只撤回）；确认稳定后按需 `full` |
+| `ONEBOT_ACTION_STAGE` | 仅支持 `recall_only`；旧 `full` 档位已取消 |
 | `ACTION_MODE` | `SHADOW`（默认，只记录）/ `OFFICIAL`（允许真实动作，另需 prod、口令、非急停） |
 | `AI_*` / `NOTIFICATION_*` | 可选；通知详见 `docs/proactive-notifications.md` |
 
@@ -98,12 +96,13 @@ uv run alembic upgrade head
 ### 2.4 前台试运行与验证
 
 ```powershell
-uv run python -m app           # 终端 A：Web + OneBot WS + 通知工作器
-uv run python -m app.runtime   # 终端 B：常驻运行器
+uv run python -m app           # NapCat 主通道：Web + OneBot WS + 通知工作器
 ```
 
 - 健康检查：`http://127.0.0.1:<WEB_PORT>/healthz` → `"status":"ok"`
 - 管理后台：`http://127.0.0.1:<WEB_PORT>/admin` → 用 `ADMIN_*` 登录
+
+`uv run python -m app.runtime` 仅用于另外配置 `QQ_APP_ID` / `QQ_APP_SECRET` 的官方机器人接入，不是 NapCat-only 环境必需进程。
 
 ### 2.5 接入 NapCat（反向 WebSocket）
 
@@ -124,6 +123,8 @@ uv run python -m app.runtime   # 终端 B：常驻运行器
    校验拦截可关闭"SSL 证书验证"；令牌仅经 `Authorization` 头传递，**不要**拼接进 URL。
 
 ### 2.6 服务化（开机自启）
+
+**以下既有脚本无条件安装并启动两项服务，不能直接用于缺少官方机器人凭据的 NapCat-only 新部署。** 公司配套交付须由维护人员先适配部署模式并验收；不要以缺少凭据的运行器循环重启代替安装成功。已有同名服务也不可未经核对直接覆盖，见 [新接收方说明](docs/delivery/group-management.md)。
 
 ```powershell
 # 管理员 PowerShell：
@@ -149,7 +150,7 @@ NapCat 自启：把 `scripts\napcat-autostart-template.bat` 复制到「启动�
 
 | # | 检查 | 通过标准 |
 | --- | --- | --- |
-| 1 | 服务 | `sc query QQBotWeb` / `QQBotRuntime` = RUNNING；`/healthz` = ok |
+| 1 | 服务 | 已批准的主服务运行、`/healthz` 就绪；仅启用官方接入时另验 `QQBotRuntime` |
 | 2 | NapCat | `/onebot/status` = online；`/healthz` napcat = ready |
 | 3 | 后台 | `/admin` 登录正常 |
 | 4 | 影子链路 | 在机器人所在任意群发一条消息 → 后台「影子记录」出现该消息判定（只记录，不动手） |
@@ -162,18 +163,17 @@ NapCat 自启：把 `scripts\napcat-autostart-template.bat` 复制到「启动�
 - **判定与记录**：机器人所在群收到的消息默认**全部判定入库**（无记录群默认审核开启，
   可在群设置中调整）——这是影子观察的基础。
 - **真实动作**：仅发生在**显式授权**（群管理里动作开关打开）的群；未授权群只记录不动手。
-- **首次上手建议**：先全量影子观察 1–2 天 → 逐步给群开动作（先 `recall_only`）→ 稳定后再考虑
-  禁言/警告档位。
+- **首次上手建议**：先全量影子观察 1–2 天，再逐群启用仅撤回；不启用旧版禁言/警告档位。
 
 ## 5. 日常运营（管理后台）
 
 - **群管理**：按群开关审核 / 动作
-- **案件**：两次违规合并 → 人工决定（踢出 / 误报 / 保留观察）
-- **白名单**：仅免广告；诈骗/色情/暴力证据照常处理
+- **案件**：近 30 天第二次有效高置信违规生成待审案；人工结案后同群再犯生成新待审案。批量“人工已处理”仅结案，不踢人；结案满 30 天自动归档，归档仍可查询
+- **白名单**：成员 QQ 白名单按 D-037 完全放行；关键词白名单仅豁免广告/无信号，严重类别照常审核。
 - **动态规则**：后台发布（全局或按群）
 - **急停**：一键切换"只记录不动手"（跨进程立即生效，无需重启）
-- **备份**：整备 `data/` 目录（含 `moderation.db` 与媒体）；恢复 = 放回并重启服务
-- **升级**：`git pull` → `uv sync --all-groups` → `alembic upgrade head` → 重启两个服务
+- **备份**：使用在线 SQLite 一致快照和排除服务凭据的明文媒体/配置模板备份，见 [每日备份操作](docs/2026-09-22-daily-backup.md)。不可运行中裸复制主 DB 代替 WAL 一致备份；恢复仅到隔离目录，实际切换须维护窗口与未知动作复核。
+- **升级**：先核对源码、CI、迁移兼容与可恢复备份，再按已批准的维护方案部署。数据库迁移、恢复覆盖与服务重启不能作为例行 `git pull` 的隐含步骤；A2 数据库必须使用兼容源码。
 
 ## 6. 质量门禁（开发 / 验收）
 
@@ -188,6 +188,9 @@ uv run mypy app
 
 | 主题 | 文档 |
 | --- | --- |
+| 公司配套交付入口与版本边界 | [DELIVERY.md](DELIVERY.md) |
+| 群管理 / 巡检搭配使用 | [群管理手册](docs/delivery/group-management.md) / [巡检手册](docs/delivery/space-inspector.md) |
+| 接收方验收与配套维护 | [验收维护清单](docs/delivery/acceptance-maintenance.md) |
 | Windows 运行要求与恢复模型 | `docs/windows-operations.md` |
 | 交付与实测清单 | `docs/windows-delivery-checklist.md` |
 | 部署配置对照表（复刻同款效果） | `docs/deploy-config-reference.md` |
@@ -198,4 +201,4 @@ uv run mypy app
 
 ## 8. 许可
 
-MIT License，见 [`LICENSE`](LICENSE)。
+现有 [`LICENSE`](LICENSE) 为 MIT，但 `pyproject.toml` 元数据仍标注 Proprietary。当前配套候选包保留现状，正式发布前由负责人统一确认，见 [交付说明](DELIVERY.md)。

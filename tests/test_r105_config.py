@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import pytest
 from app.config import Settings
+from app.moderation.ai import PROMPT_VERSION
 
 
 @pytest.mark.parametrize("value", ["", "0", "-1", "abc", "１２３", "12 34"])
@@ -47,7 +48,9 @@ def test_safe_agent_defaults_and_call_limit() -> None:
     settings = Settings(_env_file=None)
     assert settings.agent_api_write_scopes == "project:read"
     assert settings.ai_daily_call_limit == 1000
-    assert settings.ai_prompt_version == "t204-v6"
+    # 主审 F09b：默认值必须与内置 PROMPT_VERSION 同步（历史上曾漂移成 v4/v6）。
+    # 断言"两者相等"而非写死版本号——以后升级提示词不会再产生同类漂移。
+    assert settings.ai_prompt_version == PROMPT_VERSION
     assert settings.admin_session_ttl_seconds == 3600
 
 

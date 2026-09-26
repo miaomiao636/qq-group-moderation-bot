@@ -17,7 +17,7 @@ from __future__ import annotations
 import asyncio
 import json
 from collections.abc import AsyncIterator
-from contextlib import asynccontextmanager
+from contextlib import AsyncExitStack, asynccontextmanager
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from hashlib import sha256
@@ -27,6 +27,7 @@ from sqlalchemy import DateTime, Integer, String, Text, and_, or_, select, updat
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import Mapped, mapped_column
 
+from app.actions.recall_confirmation import arm_confirmation
 from app.cases.service import record_violation
 from app.config import Settings, get_settings
 from app.core.contracts import ActionResult, ModerationActionClient, Provider, StandardMessage
@@ -143,7 +144,7 @@ async def orchestrate_actions(
     settings: Settings | None = None,
     actor: str = "system",
 ) -> list[ActionIntent]:
-    """Persist and execute recall/mute/warn in guarded OFFICIAL mode.
+    """Persist and execute recall only in guarded OFFICIAL mode.
 
     T-305：先按消息来源+群解析动作出口。``ACTION_MODE=OFFICIAL`` 下
     QQ官方与OneBot Adapter 各自需要显式客户端配置；OneBot 真实动作
@@ -179,15 +180,17 @@ async def orchestrate_actions(
             )
             await session.commit()
             return [intent]
-        return await _orchestrate_member_actions(
-            session,
-            msg,
-            decision,
-            official_client=official_client,
-            onebot_client=onebot_client,
-            settings=settings,
-            actor=actor,
-        )
+        async with AsyncExitStack() as resources:
+            return await _orchestrate_member_actions(
+                session,
+                msg,
+                decision,
+                official_client=official_client,
+                onebot_client=onebot_client,
+                settings=settings,
+                actor=actor,
+                resources=resources,
+            )
 
 
 async def _orchestrate_member_actions(
@@ -199,6 +202,7 @@ async def _orchestrate_member_actions(
     onebot_client: ModerationActionClient | None,
     settings: Settings,
     actor: str,
+    resources: AsyncExitStack,
 ) -> list[ActionIntent]:
     """Hold one member's chain lock from strike allocation through external actions."""
     existing = await _existing_message_intents(session, msg)
@@ -249,7 +253,9 @@ async def _orchestrate_member_actions(
     client: ModerationActionClient | None
     if provider == "qq_official":
         client = (
-            official_client if official_client is not None else _default_official_client(settings)
+            official_client
+            if official_client is not None
+            else await resources.enter_async_context(_default_official_client(settings))
         )
         if client is None:
             return [
@@ -285,11 +291,8 @@ async def _orchestrate_member_actions(
     outcome = await record_violation(session, msg, decision)
     intents: list[ActionIntent] = []
     for planned in outcome.planned_actions:
-        if (
-            provider == "onebot"
-            and settings.onebot_action_stage == "recall_only"
-            and planned.action != "recall"
-        ):
+        # Also reject legacy plans supplied by old callers or unvalidated settings.
+        if planned.action != "recall":
             continue
         intent = await _create_intent(
             session, msg, planned.action, planned.params, actor, provider=provider
@@ -297,10 +300,9 @@ async def _orchestrate_member_actions(
         intents.append(intent)
         if intent.status != "PENDING":
             continue
-        result = await _execute_intent(session, client, intent)
+        result = await _execute_intent(session, client, intent, message=msg, settings=settings)
         if result is None:
-            # Another worker owns this intent. Do not overwrite it or advance
-            # this competing chain to a stronger action.
+            # Another worker owns this intent. Do not overwrite it or replay it.
             break
         await _log_action_result(session, intent, result, actor=actor)
         if intent.status in ("UNKNOWN", "FAILED", "SKIPPED"):
@@ -395,7 +397,7 @@ async def _create_intent(
     *,
     provider: str = "qq_official",
 ) -> ActionIntent:
-    if action not in ("recall", "mute", "warn"):
+    if action != "recall":
         raise ValueError(f"非法动作: {action}")
     key = _intent_key(msg, action, params)
     existing = await session.scalar(select(ActionIntent).where(ActionIntent.idempotency_key == key))
@@ -477,7 +479,21 @@ async def _execute_intent(
     session: AsyncSession,
     client: ModerationActionClient,
     intent: ActionIntent,
+    *,
+    message: StandardMessage | None = None,
+    settings: Settings | None = None,
 ) -> ActionResult | None:
+    # A persisted legacy intent must never reach the old mute/warn adapters,
+    # including when this internal function is called outside orchestration.
+    if intent.action != "recall":
+        if intent.status != "PENDING":
+            return None
+        intent.status = "SKIPPED"
+        intent.reason = "历史禁言或警告动作已停用，仅允许自动撤回"
+        result = ActionResult(action=intent.action, ok=False, err_message=intent.reason, attempts=0)
+        intent.result_json = result.model_dump_json()
+        await session.commit()
+        return result
     claimed = await session.execute(
         update(ActionIntent)
         .where(
@@ -491,7 +507,6 @@ async def _execute_intent(
         await session.refresh(intent)
         return None
     await session.commit()
-    params = json.loads(intent.params_json)
     from app.core.group_settings import is_action_enabled
 
     reason = ""
@@ -515,6 +530,14 @@ async def _execute_intent(
             )
     if is_runtime_emergency_stop() or await emergency_stop_active(session):
         reason = "运行时急停，未发送外部动作"
+    if (
+        intent.provider == "onebot"
+        and message is not None
+        and settings is not None
+        and message.external_self_id
+        and message.external_self_id != settings.onebot_self_id
+    ):
+        reason = "消息接收账号与固定动作账号不一致，未发送外部动作"
     if reason:
         intent.status = "SKIPPED"
         intent.reason = reason
@@ -524,40 +547,37 @@ async def _execute_intent(
         return result
     try:
         if intent.action == "recall":
+            if intent.provider == "onebot" and message is not None and settings is not None:
+                await arm_confirmation(session, intent.id, message, settings.onebot_self_id)
             result = await client.recall(
                 intent.external_group_id or intent.group_openid,
                 intent.external_message_id or intent.message_id,
                 actor=intent.actor,
             )
-        elif intent.action == "mute":
-            result = await client.mute(
-                intent.external_group_id or intent.group_openid,
-                intent.external_user_id or intent.target_member_openid,
-                int(params.get("seconds") or 0),
-                actor=intent.actor,
-            )
-        elif intent.action == "warn":
-            result = await client.warn(
-                intent.external_group_id or intent.group_openid,
-                str(
-                    params.get("reply_to_external_message_id")
-                    or intent.external_message_id
-                    or intent.message_id
-                ),
-                str(params.get("text") or ""),
-                actor=intent.actor,
-            )
         else:
             raise ValueError(f"不支持的动作: {intent.action}")
     except Exception as exc:  # noqa: BLE001 - 外部动作状态不确定，必须冻结等待人工
+        # Only a locally assigned diagnostic key may cross this audit boundary;
+        # arbitrary exception text can contain upstream payloads or credentials.
+        callback_timeout = (
+            intent.provider == "onebot"
+            and intent.action == "recall"
+            and getattr(exc, "diagnostic_key", None) == "onebot_recall_callback_timeout"
+        )
+        reason = (
+            "撤回请求已发送，平台回执超时，结果未知；请人工核对，禁止自动重放"
+            if callback_timeout
+            else "外部动作结果未知，禁止自动重放"
+        )
         result = ActionResult(
             action=intent.action,
             ok=False,
-            err_message=f"动作结果未知: {type(exc).__name__}",
+            err_code=1200 if callback_timeout else None,
+            err_message=reason if callback_timeout else f"动作结果未知: {type(exc).__name__}",
             attempts=1,
         )
         intent.status = "UNKNOWN"
-        intent.reason = "外部动作结果未知，禁止自动重放"
+        intent.reason = reason
     else:
         intent.status = "SUCCEEDED" if result.ok else "FAILED"
         intent.reason = "" if result.ok else result.err_message[:255]
@@ -611,7 +631,10 @@ def _intent_key(msg: StandardMessage, action: str, params: dict[str, Any]) -> st
     return sha256(raw.encode("utf-8")).hexdigest()
 
 
-def _default_official_client(settings: Settings) -> ModerationActionClient | None:
+@asynccontextmanager
+async def _default_official_client(
+    settings: Settings,
+) -> AsyncIterator[ModerationActionClient | None]:
     """惰性构建官方动作客户端（组合根 seam，见模块 docstring）。
 
     未配置官方凭据时返回 None，由调用方记录 SKIPPED 意图（不抛异常、
@@ -623,8 +646,13 @@ def _default_official_client(settings: Settings) -> ModerationActionClient | Non
     )
 
     if not official_client_configured(settings):
-        return None
-    return build_official_action_client(settings)
+        yield None
+        return
+    client = build_official_action_client(settings)
+    try:
+        yield client
+    finally:
+        await client.aclose()
 
 
 def _default_onebot_client(settings: Settings) -> ModerationActionClient | None:

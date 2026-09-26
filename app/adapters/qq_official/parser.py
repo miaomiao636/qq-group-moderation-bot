@@ -117,6 +117,11 @@ def _parse_share_card(raw: dict[str, Any], content: str) -> ShareCardInfo | None
             tag=str(fields_dict.get("tag") or ""),
             preview_url=str(fields_dict.get("preview") or ""),
             source_logo_url=str(fields_dict.get("source_logo") or ""),
+            is_wechat_miniprogram=(
+                ark.get("ark_type") == "miniapp"
+                and fields_dict.get("tag") == "微信小程序"
+                and fields_dict.get("tag_icon") == "https://miniapp.gtimg.cn/public/miniwx.png"
+            ),
         )
     if content.startswith(_CARD_PREFIX):
         # 无 ark_data 时从文本骨架粗提取 source

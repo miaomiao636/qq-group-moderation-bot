@@ -1,0 +1,77 @@
+{
+  "execution_sha": "cda90d7206385f8d494b88b20519ce394d4d0203",
+  "command": "uv run python C:/Users/81596/AppData/Local/Temp/qqbot-core-closeout-20260922/export-core-evidence.py",
+  "at_utc": "2026-09-21T16:03:02.141362+00:00",
+  "window": {
+    "start_utc": "2026-09-21 12:00:00",
+    "end_utc": "2026-09-21 15:30:00",
+    "semantics": "[start, end)"
+  },
+  "shadow": {
+    "observations": 348,
+    "matched": 18,
+    "would_allow": 0,
+    "modes": {
+      "shadow": 348
+    },
+    "scope": "window"
+  },
+  "verdicts": [
+    [
+      "violation_high",
+      149
+    ],
+    [
+      "allow",
+      146
+    ],
+    [
+      "record_only",
+      53
+    ]
+  ],
+  "intents_global": [
+    [
+      "SUCCEEDED",
+      136
+    ],
+    [
+      "SKIPPED",
+      10
+    ],
+    [
+      "FAILED",
+      3
+    ]
+  ],
+  "actions_global": [
+    [
+      "recall",
+      1,
+      null,
+      1,
+      136
+    ],
+    [
+      "recall",
+      0,
+      1200,
+      1,
+      3
+    ]
+  ],
+  "outside_current_authorization_count": 0,
+  "read_only": true,
+  "production_loaded_baseline": "d7ceaf320a22599595ff0aca0200fb7b8f2afc77",
+  "report_hashes": {
+    "shadow-20260921T160255Z.md": "2ee1aa7cbdce5a9bf31149d59f4bb10ac142f3fbaf982200cd356b77404fa464",
+    "window-private.json": "e5f0b0b9164f230ce613a5648436ac3938939e5ed6a8dcc3b10ca2d47089fea8"
+  },
+  "limits": [
+    "Historical authorization at action time is NOT_PROVEN",
+    "action_scope=global_all_providers_retained",
+    "retcode 1200 does not prove whether QQ eventually recalled",
+    "shadow signal is not enforce approval",
+    "separate reports each hold their own consistent read snapshot"
+  ]
+}

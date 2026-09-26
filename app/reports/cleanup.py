@@ -140,6 +140,8 @@ def _case_audit_metadata(audit: dict[str, Any], now: datetime) -> str:
     cleaned: dict[str, Any] = {"lifecycle_purged_at": now.replace(tzinfo=UTC).isoformat()}
     if type(audit.get("evidence_count")) is int:
         cleaned["evidence_count"] = audit["evidence_count"]
+    if type(audit.get("prior_case_id")) is int and audit["prior_case_id"] > 0:
+        cleaned["prior_case_id"] = audit["prior_case_id"]
     if isinstance(audit.get("revoked_by"), str):
         cleaned["revoked_by"] = audit["revoked_by"][:64]
     if audit.get("revoke_reason"):
@@ -153,21 +155,21 @@ def _case_audit_metadata(audit: dict[str, Any], now: datetime) -> str:
 async def _purge_case_lifecycle(
     session: AsyncSession, *, now: datetime, raw_cutoff: datetime
 ) -> dict[str, int]:
-    """Hide completed cases after 15d; clear eligible content after 90d archived.
+    """Hide completed cases after 30d; clear eligible content after 90d archived.
 
     Case and violation IDs remain durable: both are referenced by audit/feedback,
     and SQLite may reuse a physically deleted maximum ID. Neither archive age
     nor a case's JSON list proves that a violation has no other live consumers.
     Raw-source redaction has its own TTL above and is never deferred here.
     """
-    archive_cutoff = now - timedelta(days=15)
+    archive_cutoff = now - timedelta(days=30)
     result = await session.execute(
         update(Case)
         .where(
             Case.archived.is_(False),
             Case.status == "CLOSED",
             Case.closed_at.is_not(None),
-            Case.closed_at < archive_cutoff,
+            Case.closed_at <= archive_cutoff,
         )
         .values(archived=True, archived_at=now)
         .execution_options(synchronize_session=False)
@@ -207,7 +209,7 @@ async def _purge_case_lifecycle(
             case.status != "CLOSED"
             or case.closed_at is None
             or case.archived_at is None
-            or case.closed_at.replace(tzinfo=None) >= archive_cutoff
+            or case.closed_at.replace(tzinfo=None) > archive_cutoff
             or case.archived_at.replace(tzinfo=None) < case.closed_at.replace(tzinfo=None)
             or ids is None
             or not isinstance(audit, dict)
@@ -516,25 +518,50 @@ def _managed_entry_files(target: Path) -> list[Path]:
 def _managed_keep_set(target: Path, entry: _ManagedCopy) -> set[Path]:
     """保底条目（最新 N 个顶层条目）内的全部文件。
 
-    条目新鲜度按**条目内最新文件的 mtime** 排序——目录自身的 mtime 只反映
-    创建/改名时间，不能代表备份内容时间。
+    backups 只用已知 DB 文件的 mtime 排序；未知/伴随文件保留且不参与保底。
+    其他登记项沿用文件 mtime。此处不把命名识别冒充数据库完整性验收。
     """
     if entry.keep_min_entries <= 0 or not target.is_dir():
         return set()
     try:
-        pairs = [(item, _managed_entry_files(item)) for item in target.iterdir()]
+        pairs = []
+        preserved: set[Path] = set()
+        for item in target.iterdir():
+            files = _managed_entry_files(item)
+            # A crash residue or empty placeholder cannot displace the last
+            # completed backup. Preserve every companion of a retained set.
+            # Current online backups are *.db; legacy directory sets use db.bak.
+            # Naming is only a preservation boundary, not an integrity claim.
+            # Unknown/companion files cannot displace the last database artifact.
+            database_files = (
+                [f for f in files if f.suffix.lower() == ".db" or f.name.lower() == "db.bak"]
+                if entry.pattern == "backups"
+                else files
+            )
+            if entry.pattern == "backups":
+                preserved.update(
+                    f
+                    for f in set(files) - set(database_files)
+                    if not (f.name.startswith("moderation-") and f.suffix.lower() == ".partial")
+                )
+            completed = [
+                f for f in database_files if f.suffix.lower() != ".partial" and f.stat().st_size > 0
+            ]
+            if completed:
+                pairs.append((files, completed))
     except OSError:
-        return set()
+        # Fail closed: an unreadable candidate cannot authorize deleting others.
+        return set(_managed_entry_files(target))
 
-    def _freshness(pair: tuple[Path, list[Path]]) -> float:
-        item, files = pair
+    def _freshness(pair: tuple[list[Path], list[Path]]) -> float:
+        _files, completed = pair
         try:
-            return max((f.stat().st_mtime for f in files), default=item.stat().st_mtime)
+            return max(f.stat().st_mtime for f in completed)
         except OSError:
             return 0.0
 
-    kept: set[Path] = set()
-    for _item, files in sorted(pairs, key=_freshness, reverse=True)[: entry.keep_min_entries]:
+    kept: set[Path] = preserved
+    for files, _completed in sorted(pairs, key=_freshness, reverse=True)[: entry.keep_min_entries]:
         kept.update(files)
     return kept
 
@@ -681,6 +708,14 @@ async def purge_expired(session: AsyncSession, now: datetime | None = None) -> d
     # 3) 动作日志：超判断期删除
     r3 = await session.execute(delete(ActionLog).where(ActionLog.created_at < decision_cutoff))
     deleted_logs = int(getattr(r3, "rowcount", 0) or 0)
+    from app.actions.recall_confirmation import RecallConfirmation, confirmation_table_available
+
+    deleted_confirmations = 0
+    if await confirmation_table_available(session):
+        confirmations = await session.execute(
+            delete(RecallConfirmation).where(RecallConfirmation.requested_at < decision_cutoff)
+        )
+        deleted_confirmations = int(getattr(confirmations, "rowcount", 0) or 0)
 
     # 4) 媒体文件清理（R-102-4）：与原始期一致，超保留期删除
     from app.adapters.qq_official.media import purge_media
@@ -744,6 +779,7 @@ async def purge_expired(session: AsyncSession, now: datetime | None = None) -> d
         "violation_evidence_purged": purged_violation_evidence,
         "case_reasons_purged": purged_case_reasons,
         "action_logs_deleted": deleted_logs,
+        "recall_confirmations_deleted": deleted_confirmations,
         "media_files_deleted": deleted_media,
         **managed_copy_counts,
         **case_counts,

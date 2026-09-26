@@ -33,8 +33,9 @@ def _decision(
     confidence: float,
     reason: str,
     category: str | None = None,
+    rule_hits: list[RuleHit] | None = None,
 ) -> ModerationDecision:
-    actions: list[str] = ["recall", "mute", "warn"] if verdict == "violation_high" else []
+    actions: list[str] = ["recall"] if verdict == "violation_high" else []
     return ModerationDecision(
         message_id=message_id,
         group_openid=group_openid,
@@ -43,6 +44,7 @@ def _decision(
         category=category,
         confidence=confidence,
         reason=reason,
+        rule_hits=list(rule_hits or ()),
         recommended_actions=actions,
     )
 
@@ -72,7 +74,14 @@ def evaluate_voice(
     verdict = "violation_high" if confidence >= 0.90 else "record_only"
     reason = f"语音官方转写判定（转写{len(transcribed)}字）"
     return _decision(
-        msg_message_id, group_openid, member_openid, verdict, round(confidence, 2), reason, category
+        msg_message_id,
+        group_openid,
+        member_openid,
+        verdict,
+        round(confidence, 2),
+        reason,
+        category,
+        rule_hits=hits,
     )
 
 
@@ -260,6 +269,7 @@ def evaluate_file(
         round(confidence, 2),
         f"文件文本判定（提取{len(text)}字）",
         category,
+        rule_hits=hits,
     )
 
 

@@ -1,0 +1,184 @@
+{
+  "base_sha": "b3ee1b0df4fdafa7a7561624ebc1a7748b26249d",
+  "loaded_sha": "246fdb518e69e12a87fa8f9f9fb05c752d94437f",
+  "private_directory": "%LOCALAPPDATA%/QQBotDeploy/campus-template-deploy-20260922-01",
+  "commands": [
+    "<production .venv Python> -B <private deployment directory>/deploy.py preflight",
+    "pwsh -NoProfile -File <private deployment directory>/deploy-services.ps1",
+    "<production .venv Python> -B <private deployment directory>/deploy.py verify"
+  ],
+  "script_sha256": "85d1f5d222d8f07007014d42381dd7ceb7af13ae35c9a0aa39a207036ef57bfa",
+  "powershell_sha256": "8ff8c5016bc6f0c0ddd88cdcecf1ef21de2b8e474a1e4c070dfa8b63c26061c0",
+  "backup": {
+    "at": "2026-09-22T08:32:05.160504+00:00",
+    "execution_sha": "b3ee1b0df4fdafa7a7561624ebc1a7748b26249d",
+    "sha256": "cd8bd0f7bc69b406855730843fa3fbb57e3483f6a593b7b824e167c64d577008",
+    "integrity": "ok",
+    "revision": "e1c7d4b8a902"
+  },
+  "configured": {
+    "at": "2026-09-22T08:32:06.637930+00:00",
+    "execution_sha": "246fdb518e69e12a87fa8f9f9fb05c752d94437f",
+    "prompt_version": "t204-v18",
+    "builtin_version": "t204-v18",
+    "policy_unchanged": true,
+    "rules_sha256": "de18a0c4c092d33844c656333044d2c7a6cdfb4414265a6a15916fe9ecb3123f",
+    "revision": "e1c7d4b8a902"
+  },
+  "service_state": {
+    "Stage": "services-running-await-health",
+    "Time": "2026-09-22T08:32:10.2594638Z",
+    "Failure": "",
+    "Trace": [
+      {
+        "Stage": "quiet",
+        "Time": "2026-09-22T08:32:01.6355728Z"
+      },
+      {
+        "Stage": "stopped QQBotRuntime",
+        "Time": "2026-09-22T08:32:02.0215012Z"
+      },
+      {
+        "Stage": "stopped QQBotWeb",
+        "Time": "2026-09-22T08:32:03.6697253Z"
+      },
+      {
+        "Stage": "backup",
+        "Time": "2026-09-22T08:32:05.3607800Z"
+      },
+      {
+        "Stage": "configure",
+        "Time": "2026-09-22T08:32:06.7187999Z"
+      },
+      {
+        "Stage": "started QQBotWeb",
+        "Time": "2026-09-22T08:32:08.4033796Z"
+      },
+      {
+        "Stage": "started QQBotRuntime",
+        "Time": "2026-09-22T08:32:10.0617240Z"
+      }
+    ],
+    "Services": [
+      {
+        "Name": "QQBotRuntime",
+        "State": "Running",
+        "ProcessId": 32516
+      },
+      {
+        "Name": "QQBotWeb",
+        "State": "Running",
+        "ProcessId": 33280
+      }
+    ]
+  },
+  "live": {
+    "at": "2026-09-22T08:34:26.700659+00:00",
+    "execution_sha": "246fdb518e69e12a87fa8f9f9fb05c752d94437f",
+    "health_status": 200,
+    "health": {
+      "status": "ok",
+      "env": "prod",
+      "mode": "SAFE",
+      "media_storage": {
+        "state": "ok",
+        "used_bytes": 2612807118,
+        "quota_bytes": 21474836480,
+        "remaining_bytes": 18862029362,
+        "disk_free_bytes": 746255896576,
+        "warning_percent": 80
+      },
+      "onebot": {
+        "state": "ready",
+        "connected": true,
+        "login_state": "online",
+        "connect_count": 1,
+        "disconnect_count": 0,
+        "last_connect_at": "2026-09-22T08:32:32.288142+00:00",
+        "last_disconnect_at": null,
+        "last_heartbeat_at": "2026-09-22T08:34:14.712511+00:00",
+        "heartbeat_age_seconds": 11.5,
+        "heartbeat_timeout_seconds": 90.0,
+        "last_event_at": "2026-09-22T08:34:13.467322+00:00",
+        "queue_backlog": 0,
+        "queue_max": 500,
+        "storage_available": true,
+        "processed_total": 4,
+        "skipped_total": 0,
+        "failed_total": 0,
+        "invalid_total": 0,
+        "ignored_total": 2
+      }
+    },
+    "new": {
+      "onebot_inbox": 4,
+      "onebot_inbox_states": {
+        "DONE": 4
+      },
+      "shadow_decisions": 4,
+      "action_intents": 4,
+      "action_intents_states": {
+        "SKIPPED": 4
+      }
+    },
+    "vision_observations": [
+      {
+        "prompt_version": "t204-v18",
+        "new_source_field_present": true,
+        "template_observation_present": true,
+        "template_status": "matched",
+        "campus_confirmed": true,
+        "local_campus_policy_present": false
+      },
+      {
+        "prompt_version": "t204-v18",
+        "new_source_field_present": true,
+        "template_observation_present": false,
+        "template_status": null,
+        "campus_confirmed": false,
+        "local_campus_policy_present": false
+      }
+    ],
+    "policy_unchanged": true,
+    "prompt_version": "t204-v18",
+    "test_message_sent": false,
+    "historical_replay": false
+  },
+  "emergency_stop_preserved": true,
+  "migration": false,
+  "configuration_change": "prompt version v17 to v18 only",
+  "private_receipt_sha256": {
+    "preflight.json": "f97b70c96b0489aa4577aeff15870d398539d1f0218f155fdbc5b724ad713215",
+    "backup.json": "49cc5e3026499519fed3d358084ba8f57fcd7a23cf0de2a9572c0bbb50c581ee",
+    "configured.json": "b48037c5e05239fa8f0b13cb287d28d41483268c40e814365ec92c8476f31d62",
+    "service-state.json": "0a03313c41e66388cabc50421190ff42f795cc6603f20b4b90bc17aadb21bf78",
+    "live-verified.json": "c7a0e8e8f7a6a29fe5dd9d1099436adb95d90d56dfdee3465b10de4bfd5e8668"
+  },
+  "discovered_mixed_gap": {
+    "execution_sha": "246fdb518e69e12a87fa8f9f9fb05c752d94437f",
+    "at": "2026-09-22T08:44:05.106249+00:00",
+    "command": "<production .venv Python> -B C:\\Users\\81596\\AppData\\Local\\QQBotDeploy\\campus-template-deploy-20260922-01\\inspect-natural.py 3",
+    "private_receipt_sha256": "5ac9be26801b1e49cebd763e12a52bd633c1245607fdeb76a89529fc0548b0f5",
+    "observation": {
+      "id": 30584,
+      "kind": "mixed",
+      "verdict": "allow",
+      "has_campus_source_policy": false,
+      "segments": [
+        {
+          "kind": "text",
+          "attachment_index": null
+        },
+        {
+          "kind": "image",
+          "attachment_index": 0
+        }
+      ],
+      "media_kinds": [
+        "image/jpeg"
+      ],
+      "actions": []
+    },
+    "explanation": "Recognized approved template and picture allow, but plain caption+image kind=mixed lacked local source receipt; fixed by 06324fe. Historical row unchanged."
+  }
+}

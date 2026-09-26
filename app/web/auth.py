@@ -27,8 +27,10 @@ def login(username: str, password: str) -> str:
     settings = get_settings()
     if not settings.admin_password.strip():
         raise AuthError("管理后台未设置 ADMIN_PASSWORD，拒绝登录（请在 .env 配置后重启）")
-    if not secrets.compare_digest(username, settings.admin_username) or not secrets.compare_digest(
-        password, settings.admin_password
+    if not secrets.compare_digest(
+        username.encode("utf-8"), settings.admin_username.encode("utf-8")
+    ) or not secrets.compare_digest(
+        password.encode("utf-8"), settings.admin_password.encode("utf-8")
     ):
         raise AuthError("用户名或密码错误")
     token = secrets.token_urlsafe(32)
@@ -73,4 +75,4 @@ def validate_csrf(session_token: str | None, submitted: str | None) -> bool:
     expected = _CSRF_TOKENS.get(session_token)
     if expected is None:
         return False
-    return secrets.compare_digest(expected, submitted)
+    return secrets.compare_digest(expected.encode("utf-8"), submitted.encode("utf-8"))

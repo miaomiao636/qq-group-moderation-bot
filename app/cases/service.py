@@ -1,8 +1,9 @@
-"""违规阶梯服务（T-104）。
+"""违规记录与人工案件服务（T-104）。
 
-阶梯（PROJECT_CONTEXT 既定，同群+同成员+30天有效违规窗口）：
-- 第1次高置信违规：证据保存 + 建议撤回 + 禁言1小时 + 一次警告；
-- 第2次高置信违规：证据保存 + 建议撤回 + 禁言24小时 + 不警告 + 生成 PENDING_REVIEW 案件（合并证据）；
+同群+同成员+30天有效违规窗口用于首次待审立案：
+- 每次高置信违规只建议撤回并保存证据；
+- 30天内两次有效违规新建待审案件；人工结案后再犯新建案件；
+- 案件只供人工处理，不按累计次数升级自动处罚；
 - 任何情况下**不自动创建踢人任务**；踢人只能来自人工审批（T-301）。
 
 误判撤销：revoke_violation 将记录标记 revoked 并从窗口剔除；案件内全部违规被撤销时，
@@ -15,7 +16,8 @@ import json
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
-from sqlalchemy import and_, func, or_, select, text
+from sqlalchemy import and_, exists, func, or_, select, text
+from sqlalchemy import case as sql_case
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -25,16 +27,24 @@ from app.core.contracts import Provider, StandardMessage
 from app.moderation.decision import ModerationDecision
 
 WINDOW_DAYS = 30
-STRIKE1_MUTE_SECONDS = 3600
-STRIKE2_MUTE_SECONDS = 24 * 3600
+
+
+async def _generate_case_no(session: AsyncSession) -> str:
+    prefix = f"R{datetime.now(UTC):%Y%m%d}"
+    numbers = await session.scalars(select(Case.case_no).where(Case.case_no.like(f"{prefix}-%")))
+    suffixes = (number.removeprefix(f"{prefix}-") for number in numbers)
+    highest = max(
+        (int(value) for value in suffixes if value.isascii() and value.isdecimal()), default=0
+    )
+    return f"{prefix}-{highest + 1:02d}"
 
 
 class PlannedAction:
     """建议动作（结构中永不存在 kick）。"""
 
     def __init__(self, action: str, **params: Any) -> None:
-        if action not in ("recall", "mute", "warn"):
-            raise ValueError(f"非法动作类型: {action}（踢人必须人工审批，禁止出现在计划中）")
+        if action != "recall":
+            raise ValueError(f"非法自动动作类型: {action}（仅允许撤回）")
         self.action = action
         self.params = params
 
@@ -76,20 +86,6 @@ def _snapshot(msg: StandardMessage, decision: ModerationDecision) -> dict[str, A
         "confidence": decision.confidence,
         "category": decision.category,
     }
-
-
-async def _count_cases_today(session: AsyncSession, prefix: str) -> int:
-    result = await session.execute(
-        select(func.count()).select_from(Case).where(Case.case_no.like(f"{prefix}-%"))
-    )
-    return int(result.scalar_one())
-
-
-async def _generate_case_no(session: AsyncSession) -> str:
-    today = datetime.now(UTC).date()
-    prefix = f"R{today:%Y%m%d}"
-    count = await _count_cases_today(session, prefix)
-    return f"{prefix}-{count + 1:02d}"
 
 
 def _group_filter(
@@ -152,27 +148,137 @@ async def count_active_violations(
     return int(result.scalar_one())
 
 
+async def _case_for_violation(
+    session: AsyncSession, msg: StandardMessage, violation: ViolationRecord
+) -> Case | None:
+    identity = (
+        _group_filter(Case, msg.provider, msg.external_group_id),
+        _member_filter(Case, msg.provider, msg.external_user_id),
+    )
+    pending = (
+        await session.scalars(
+            select(Case)
+            .where(*identity, Case.status == "PENDING_REVIEW", Case.archived.is_(False))
+            .order_by(Case.id.desc())
+            .limit(1)
+        )
+    ).first()
+    if pending is not None:
+        ids = json.loads(pending.violation_ids_json)
+        if not isinstance(ids, list) or any(type(value) is not int for value in ids):
+            raise ValueError("待审案件证据索引异常")
+        if violation.id not in ids:
+            pending.violation_ids_json = json.dumps([*ids, violation.id])
+        violation.case_id = pending.id
+        return pending
+
+    last_closed = (
+        await session.scalars(
+            select(Case)
+            .where(*identity, Case.status == "CLOSED")
+            .order_by(Case.closed_at.desc(), Case.id.desc())
+            .limit(1)
+        )
+    ).first()
+    # Read only the most recent confirmed disposition. JSON guards prevent a
+    # damaged legacy audit from aborting intake; cleanup retains transitions.
+    safe_audit = sql_case((func.json_valid(Case.audit_json) == 1, Case.audit_json), else_="{}")
+    transitions = sql_case(
+        (
+            func.json_type(safe_audit, "$.transitions") == "array",
+            func.json_extract(safe_audit, "$.transitions"),
+        ),
+        else_="[]",
+    )
+    item = func.json_each(transitions).table_valued("value").alias("transition_item")
+    safe_item = sql_case((func.json_valid(item.c.value) == 1, item.c.value), else_="{}")
+    confirmed = exists(
+        select(1)
+        .select_from(item)
+        .where(func.json_extract(safe_item, "$.to").in_(("KEEP", "KICKED")))
+    )
+    prior_confirmed = (
+        await session.scalars(
+            select(Case)
+            .where(*identity, Case.status == "CLOSED", confirmed)
+            .order_by(Case.closed_at.desc(), Case.id.desc())
+            .limit(1)
+        )
+    ).first()
+    if prior_confirmed is not None:
+        # A repeat case starts with the new event, even if the prior case has
+        # been archived; the old evidence remains attached to that prior case.
+        related = [violation]
+    else:
+        window_start = datetime.now(UTC) - timedelta(days=WINDOW_DAYS)
+        if last_closed is not None and last_closed.closed_at is not None:
+            window_start = max(window_start, last_closed.closed_at.replace(tzinfo=UTC))
+        related = list(
+            await session.scalars(
+                select(ViolationRecord)
+                .where(
+                    _group_filter(ViolationRecord, msg.provider, msg.external_group_id),
+                    _member_filter(ViolationRecord, msg.provider, msg.external_user_id),
+                    ViolationRecord.revoked.is_(False),
+                    ViolationRecord.case_id.is_(None),
+                    ViolationRecord.created_at >= window_start,
+                )
+                .order_by(ViolationRecord.id)
+            )
+        )
+        if len(related) < 2:
+            return None
+    for _attempt in range(5):
+        case = Case(
+            case_no=await _generate_case_no(session),
+            group_openid=msg.external_group_id,
+            member_openid=msg.external_user_id,
+            provider=msg.provider,
+            external_group_id=msg.external_group_id,
+            external_user_id=msg.external_user_id,
+            status="PENDING_REVIEW",
+            violation_ids_json=json.dumps([record.id for record in related]),
+            audit_json=json.dumps(
+                {
+                    "evidence_count": len(related),
+                    **({"prior_case_id": prior_confirmed.id} if prior_confirmed else {}),
+                },
+                ensure_ascii=False,
+            ),
+        )
+        try:
+            async with session.begin_nested():
+                session.add(case)
+                await session.flush()
+        except IntegrityError:
+            continue
+        for record in related:
+            record.case_id = case.id
+        return case
+    raise RuntimeError("案件编号冲突，5次重试均失败")
+
+
 async def record_violation(
     session: AsyncSession,
     msg: StandardMessage,
     decision: ModerationDecision,
 ) -> ViolationOutcome:
-    """记录一次高置信违规并返回阶梯结果（含建议动作与可能的案件）。
+    """记录高置信违规；自动动作仅撤回，待审案件不执行处罚。
 
     调用方负责：执行 planned_actions 中的动作并回写 action_result_json。
-    SQLite 的计数、违规写入和案件生成共享写事务；不要在取得写锁前计数。
+    SQLite 的计数、违规写入和立案共享写事务；不要在取得写锁前计数。
     """
     if decision.verdict != "violation_high":
-        raise ValueError("只有 violation_high 决策才能进入违规阶梯")
+        raise ValueError("只有 violation_high 决策才能记录有效违规")
     if decision.is_protected_sender or msg.sender.role in ("owner", "admin"):
-        raise ValueError("保护角色（群主/管理员）不得进入处罚阶梯")
+        raise ValueError("保护角色（群主/管理员）不得进入自动撤回流程")
 
     if session.get_bind().dialect.name != "sqlite":
-        raise RuntimeError("违规阶梯事务目前仅支持 SQLite")
+        raise RuntimeError("违规记录事务目前仅支持 SQLite")
     # A zero-row UPDATE acquires SQLite's database-wide writer reservation without
     # modifying evidence. It also works inside the caller's existing transaction,
     # unlike issuing another BEGIN IMMEDIATE or committing the caller's work.
-    # Keep the lock through count + insert + case creation until the commit below.
+    # Keep the lock through count + insert until the commit below.
     await session.execute(text("UPDATE violation_records SET revoked = revoked WHERE 0"))
 
     existing = await count_active_violations(
@@ -198,92 +304,14 @@ async def record_violation(
     session.add(violation)
     await session.flush()  # 取得 violation.id
 
+    case = await _case_for_violation(session, msg, violation)
     planned: list[PlannedAction] = [
         PlannedAction("recall", external_message_id=msg.external_message_id)
     ]
-    case: Case | None = None
-    if strike_no == 1:
-        planned.append(
-            PlannedAction(
-                "mute", external_user_id=msg.external_user_id, seconds=STRIKE1_MUTE_SECONDS
-            )
-        )
-        planned.append(
-            PlannedAction(
-                "warn",
-                reply_to_external_message_id=msg.external_message_id,
-                text="警告：您发布的内容违反群规，请立即停止。再次违规将被禁言24小时并立案审核。",
-            )
-        )
-    else:
-        planned.append(
-            PlannedAction(
-                "mute", external_user_id=msg.external_user_id, seconds=STRIKE2_MUTE_SECONDS
-            )
-        )
-        case = await _create_case(session, msg, violation)
-
-    violation.case_id = case.id if case else None
     await session.commit()
     return ViolationOutcome(
         strike_no=strike_no, violation=violation, planned_actions=planned, case=case
     )
-
-
-async def _create_case(
-    session: AsyncSession, msg: StandardMessage, violation: ViolationRecord
-) -> Case:
-    """第二次违规：合并证据生成 PENDING_REVIEW 案件。
-
-    R-102-8：
-    - 幂等：若同群同成员已有 PENDING_REVIEW 案件则复用之，避免并发违规产生重复案件；
-    - 案件编号冲突重试：case_no 唯一约束冲突时重新生成。
-    """
-    # 幂等：已有 PENDING_REVIEW 案件则直接返回，不重复立案
-    existing_stmt = select(Case).where(
-        _group_filter(Case, msg.provider, msg.external_group_id),
-        _member_filter(Case, msg.provider, msg.external_user_id),
-        Case.status == "PENDING_REVIEW",
-    )
-    existing = (await session.execute(existing_stmt)).scalar_one_or_none()
-    if existing is not None:
-        return existing
-
-    # 合并窗口内全部有效违规证据
-    window_start = datetime.now(UTC) - timedelta(days=WINDOW_DAYS)
-    stmt = select(ViolationRecord).where(
-        _group_filter(ViolationRecord, msg.provider, msg.external_group_id),
-        _member_filter(ViolationRecord, msg.provider, msg.external_user_id),
-        ViolationRecord.revoked.is_(False),
-        ViolationRecord.created_at >= window_start,
-    )
-    result = await session.execute(stmt)
-    related = list(result.scalars())
-
-    # case_no 冲突重试（最多5次，防止并发同日编号碰撞）
-    for _attempt in range(5):
-        case_no = await _generate_case_no(session)
-        case = Case(
-            case_no=case_no,
-            group_openid=msg.external_group_id,
-            member_openid=msg.external_user_id,
-            provider=msg.provider,
-            external_group_id=msg.external_group_id,
-            external_user_id=msg.external_user_id,
-            status="PENDING_REVIEW",
-            violation_ids_json=json.dumps([v.id for v in related]),
-            audit_json=json.dumps({"evidence_count": len(related)}, ensure_ascii=False),
-        )
-        try:
-            # Retry only this case insert. Rolling back the outer transaction
-            # would discard the just-recorded violation and release the strike lock.
-            async with session.begin_nested():
-                session.add(case)
-                await session.flush()
-            return case
-        except IntegrityError:
-            continue
-    raise RuntimeError("案件编号冲突，5次重试均失败（并发异常）")
 
 
 async def revoke_violation(
@@ -299,17 +327,31 @@ async def revoke_violation(
     if violation.case_id:
         case = await session.get(Case, violation.case_id)
         if case and case.status in ("PENDING_REVIEW",):
-            validate_transition(case.status, "FALSE_POSITIVE")
-            case.status = "FALSE_POSITIVE"
-            validate_transition("FALSE_POSITIVE", "STRIKE_REVOKED")
-            case.status = "STRIKE_REVOKED"
-            validate_transition("STRIKE_REVOKED", "CLOSED")
-            case.status = "CLOSED"
-            case.closed_at = datetime.now(UTC)
-            case.audit_json = json.dumps(
-                {**json.loads(case.audit_json), "revoked_by": operator, "revoke_reason": reason},
-                ensure_ascii=False,
+            ids = json.loads(case.violation_ids_json)
+            remaining = await session.scalar(
+                select(ViolationRecord.id)
+                .where(
+                    or_(ViolationRecord.id.in_(ids), ViolationRecord.case_id == case.id),
+                    ViolationRecord.revoked.is_(False),
+                )
+                .limit(1)
             )
+            if remaining is None:
+                validate_transition(case.status, "FALSE_POSITIVE")
+                case.status = "FALSE_POSITIVE"
+                validate_transition("FALSE_POSITIVE", "STRIKE_REVOKED")
+                case.status = "STRIKE_REVOKED"
+                validate_transition("STRIKE_REVOKED", "CLOSED")
+                case.status = "CLOSED"
+                case.closed_at = datetime.now(UTC)
+                case.audit_json = json.dumps(
+                    {
+                        **json.loads(case.audit_json),
+                        "revoked_by": operator,
+                        "revoke_reason": reason,
+                    },
+                    ensure_ascii=False,
+                )
     await session.commit()
     return violation
 
@@ -320,10 +362,14 @@ async def transition_case(
     target: str,
     operator: str,
     extra: dict[str, Any] | None = None,
+    *,
+    commit: bool = True,
+    flush: bool = True,
 ) -> Case:
     """案件状态转换（供 T-301 审批界面调用），校验合法性并记录审计。
 
     R-102-8：审计记录的 `from` 必须在赋值前捕获（原实现赋值后读取，from=to，错误）。
+    批量事务可用 commit=False, flush=False 延迟刷新，由调用方统一刷新和提交。
     """
     case = await session.get(Case, case_id)
     if case is None:
@@ -345,5 +391,8 @@ async def transition_case(
         }
     )
     case.audit_json = json.dumps(audit, ensure_ascii=False)
-    await session.commit()
+    if commit:
+        await session.commit()
+    elif flush:
+        await session.flush()
     return case

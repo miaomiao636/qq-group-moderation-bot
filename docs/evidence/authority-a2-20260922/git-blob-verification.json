@@ -1,0 +1,158 @@
+{
+  "candidate_sha": "90c1c9e5d7ccc35c434b032ebd14aae1a79ea45b",
+  "explanation": "adaptation-ast current_sha256 records original Windows CRLF working-tree bytes. This supplement records immutable Git blob bytes after LF normalization; registered before/after ASTs were independently verified. Module import/header changes remain in legacy-adaptations.diff.",
+  "files": [
+    {
+      "file": "tests/test_r132_review_candidate_collection.py",
+      "baseline_git_blob_sha256": "1effb87b2d069546ddac245149eab1b1789061d49121a0aab0d4d4e64bb42828",
+      "candidate_git_blob_sha256": "cbc78b5595beecacdf69164f65bb034a6219609b5a3766079bc59141ed74c913",
+      "original_manifest_worktree_sha256": "13753fdf0516f3fec9e8ca3b18421f203430ef7994093d37f671a4dfa41733ef",
+      "registered_nodes": [
+        "test_candidate_collection_preserves_explicit_rejection"
+      ],
+      "ast_matches": true
+    },
+    {
+      "file": "tests/test_r132_review_compensation_ownership.py",
+      "baseline_git_blob_sha256": "17482b6010faa802eb481fbff3ce01cac04d592952d1c07cc0b15a1e191d4427",
+      "candidate_git_blob_sha256": "2a764540681684c5b1a27ba72f3872409ddb7a048f3896c3596fd70375f22e1c",
+      "original_manifest_worktree_sha256": "a10d52040e9139704792f5d0ca20a04e8ef40b3b66f4037a6f5e8ad6f745b75d",
+      "registered_nodes": [
+        "test_compensation_does_not_modify_recreated_external_row",
+        "test_failed_new_row_approval_cannot_delete_later_successful_approval",
+        "test_failed_old_rejection_cannot_reenable_later_successful_rejection",
+        "test_failed_reapproval_restores_prior_note_without_erasing_old_history"
+      ],
+      "ast_matches": true
+    },
+    {
+      "file": "tests/test_r132_review_identity_and_window.py",
+      "baseline_git_blob_sha256": "55b97ad4f6fd275ee2209bb8d17a26751a960ac163e723a287ee8e5e1caa5393",
+      "candidate_git_blob_sha256": "c56581e296bf912ee506bcc04e2c6c7e50a157e01f429d6ad602c38cb8ef9e59",
+      "original_manifest_worktree_sha256": "6bdf904a12e72c26c0a8aa2e00ce2afb22cc17500e39771c79ec5fce10bfd32f",
+      "registered_nodes": [
+        "make_db",
+        "test_latest_reapproval_source_must_be_verified",
+        "test_rejection_must_bind_current_snapshot_source_not_any_old_batch",
+        "test_valid_identity_control_is_read_only"
+      ],
+      "ast_matches": true
+    },
+    {
+      "file": "tests/test_r132_review_identity_remaining_and_utc.py",
+      "baseline_git_blob_sha256": "82325f3347bf4d25e07ca769ce73f4bacdec0e480c46fc3633f527cfab5d3812",
+      "candidate_git_blob_sha256": "e53f2081bc1ecd04ba517de76f54812ded06915212cf3faa7d64f5999e6f4388",
+      "original_manifest_worktree_sha256": "8a2f1727fabd7ac823b43213ba8b6ca24671c2e2592601707f198c9de912213a",
+      "registered_nodes": [
+        "snapshot"
+      ],
+      "ast_matches": true
+    },
+    {
+      "file": "tests/test_r132_review_image_hash_core.py",
+      "baseline_git_blob_sha256": "a7053942d9002b80ae0889c46ffa7808ecaf247f4800ead988abdea68117ed95",
+      "candidate_git_blob_sha256": "94d4957848388958767798d937f3d551376fb67779ec7ad909edef7ee580738b",
+      "original_manifest_worktree_sha256": "414cfbb2cb3ae8440c619bf81f07021e7a150fc63ea9409c31a5c671031b0184",
+      "registered_nodes": [
+        "test_real_migration_constraints_check_and_roundtrip"
+      ],
+      "ast_matches": true
+    },
+    {
+      "file": "tests/test_r132_review_image_tool_set_consistency.py",
+      "baseline_git_blob_sha256": "fc56c7e133c826ef455d23cbdb52b1f903c8e9aff76d56c344e959962b54938b",
+      "candidate_git_blob_sha256": "87bfd9fd5add18d58e4e964f709e9e4f7e3eee7d7210f38bf316a7218796f3da",
+      "original_manifest_worktree_sha256": "40b2b4dde8fd89e45ad1071839a544cdbf7ae2c9fab533d04317b32d53a12f7e",
+      "registered_nodes": [
+        "sandbox",
+        "test_manual_disable_is_respected_by_offline_active_set"
+      ],
+      "ast_matches": true
+    },
+    {
+      "file": "tests/test_r132_review_image_tools_contract.py",
+      "baseline_git_blob_sha256": "0b40d1654303d71ad399691967f856a13784c1b02ec66f5179073b7df865b9ee",
+      "candidate_git_blob_sha256": "3236e45d67c3b7ee5af379056b2f01d1818a392665ad02ee3c437bc83ada01af",
+      "original_manifest_worktree_sha256": "d408297528252ff3ebc0ddcd06087e3a21874f6ed169952e59d055e87451ea5f",
+      "registered_nodes": [
+        "sandbox",
+        "test_seed_excludes_first_insert_control"
+      ],
+      "ast_matches": true
+    },
+    {
+      "file": "tests/test_r132_review_online_offline_pair_consistency.py",
+      "baseline_git_blob_sha256": "6fcae06a3cf44f187951fd8507506d6b1f7a8fb7e7c49e4efaa780dc5e45ed53",
+      "candidate_git_blob_sha256": "a0014be1ed147ab0a9200b7cce65c35cbd07b5fa21196f9ccd0710c381c53797",
+      "original_manifest_worktree_sha256": "4a9d78d354c4d158baf5d71743f5948475ba42ff971c3dc27f4ad811fd38718a",
+      "registered_nodes": [
+        "seed"
+      ],
+      "ast_matches": true
+    },
+    {
+      "file": "tests/test_r132_review_r9_write_residuals.py",
+      "baseline_git_blob_sha256": "05e42b148e1ad87ed1578343c8f359016ebbff51155f61183c7457f273f7e053",
+      "candidate_git_blob_sha256": "060ee6b079cbf6dce476399cc5289d3acd9e9a43b6c01b8d23ff53fd6b7d3dd8",
+      "original_manifest_worktree_sha256": "e43d53945cad6d0730c89c1e9ef0a7f46245e1032650b2cd7ac617d572852d17",
+      "registered_nodes": [
+        "test_concurrent_reject_and_reapprove_share_one_authoritative_state",
+        "test_corrupt_snapshot_blocks_generic_import",
+        "test_snapshot_failure_cannot_leave_committed_approval"
+      ],
+      "ast_matches": true
+    },
+    {
+      "file": "tests/test_r132_review_review_write_contract.py",
+      "baseline_git_blob_sha256": "cfa43fea771176c8c2f9fed09d955a0b6e04b36692dfb21aa6ebd1f77c4f71be",
+      "candidate_git_blob_sha256": "253f27a7362506188a109fe70fd2bbacc928d1e5b107937d0f86e61f7e5f4a51",
+      "original_manifest_worktree_sha256": "bfdecf1ee76140d22d3b054375f2cd965898841671472eeade5c1bb0beee6c12",
+      "registered_nodes": [
+        "test_corrupt_rejection_snapshot_not_silently_replaced"
+      ],
+      "ast_matches": true
+    },
+    {
+      "file": "tests/test_r132_review_round11_c03_operation_identity.py",
+      "baseline_git_blob_sha256": "996230dd906a15726b50a8388a6d8b7df842205085d59ab762ab8a70402db22d",
+      "candidate_git_blob_sha256": "e90bd5f025b85706765b02b7e781c026cafde821ceabcb4fe2530dd070532095",
+      "original_manifest_worktree_sha256": "1105facef5c919fc0d180da6b17eaae121e0c4b563d8fc41f6205cebbc8959f4",
+      "registered_nodes": [
+        "test_after_snapshot_cannot_adopt_an_external_row_as_its_own",
+        "test_late_json_commit_of_successful_rejection_cannot_be_overwritten",
+        "test_partial_snapshot_reports_accepted_manual_recovery_state"
+      ],
+      "ast_matches": true
+    },
+    {
+      "file": "tests/test_r132_review_round11_identity_collisions.py",
+      "baseline_git_blob_sha256": "77a079a7c3444e82d60591b593d7385bbcc1c8f78dbf8e3780691fb5e3557cdf",
+      "candidate_git_blob_sha256": "53c723de7b1f5943ee45a59f49b0b12d86ddf6cc40a482cf7068df2a6cd094df",
+      "original_manifest_worktree_sha256": "cb4cc627b2159ceef6cf5f19705533aeb55c91570908f3252d55d4a7ae700896",
+      "registered_nodes": [
+        "write_snapshot"
+      ],
+      "ast_matches": true
+    },
+    {
+      "file": "tests/test_r132_review_round12_c03_second_snapshot_commit.py",
+      "baseline_git_blob_sha256": "3f7e29777e0af08997f9f830fb62bae9e252ffd3ec49dd8e7fcbed35f6cbb890",
+      "candidate_git_blob_sha256": "06fa919cb50cae43842a5938b9e36b33523adf9dbaa309c742d5ad14c8be2c10",
+      "original_manifest_worktree_sha256": "459f9cece61bc3c5be347261485d1c7e1fad52d414bd2b025f9b272c379e5e14",
+      "registered_nodes": [
+        "test_blocked_later_rejection_serializes_and_final_state_is_consistent"
+      ],
+      "ast_matches": true
+    },
+    {
+      "file": "tests/test_r132_review_unmigrated_startup_boundary.py",
+      "baseline_git_blob_sha256": "2efa0ce5f7f764328190d13657e19d2f8af0f57113da93b0b9d27f57507ba5a8",
+      "candidate_git_blob_sha256": "a245c49e2ae8c222532ecc86641b078ba491e92cbb16ff411401cd2a89a9503d",
+      "original_manifest_worktree_sha256": "081b815d5e7d60437a6e4e9fd36068735c89d10273a9c5279e8c5923c57edd71",
+      "registered_nodes": [
+        "test_new_code_old_schema_blocks_startup_and_daily_cleanup_even_when_hash_off"
+      ],
+      "ast_matches": true
+    }
+  ]
+}

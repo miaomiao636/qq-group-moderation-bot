@@ -1,0 +1,18 @@
+{
+  "execution_sha": "e41368d0bac5469497ad187354683beda0b5d429",
+  "full_command": "uv run pytest --junitxml=C:/Users/81596/AppData/Local/Temp/qqbot-core-closeout-20260922/full.xml",
+  "total": 2214,
+  "passed": 2197,
+  "skipped": 17,
+  "failures": 0,
+  "errors": 0,
+  "review_count": 262,
+  "review_files": 31,
+  "review_failures": 0,
+  "gates": {
+    "uv run ruff check app tests alembic scripts": "passed",
+    "uv run ruff format --check app tests alembic scripts": "passed (348 files)",
+    "uv run mypy app": "passed (111 files)"
+  },
+  "logs_directory": "C:/Users/81596/AppData/Local/Temp/qqbot-core-closeout-20260922"
+}

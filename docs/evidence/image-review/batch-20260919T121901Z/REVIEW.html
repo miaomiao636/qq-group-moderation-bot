@@ -1,0 +1,1473 @@
+<!doctype html>
+<html lang="zh-CN"><head><meta charset="utf-8">
+<title>图片审核表 · batch-20260919T121901Z</title>
+<style>
+ :root { color-scheme: light dark; }
+ body { font: 15px/1.5 system-ui, "Segoe UI", sans-serif; margin: 0 auto; max-width: 1200px; padding: 16px; }
+ h1 { font-size: 20px; margin: 8px 0 4px; }
+ .meta { color: #777; font-size: 13px; margin-bottom: 12px; }
+ .stat { background: #f6f6f6; border-radius: 8px; padding: 10px 12px; margin-bottom: 14px; font-size: 14px; }
+ @media (prefers-color-scheme: dark) { .stat { background: #232323; } }
+ form { display: grid; gap: 12px; }
+ .card { display: grid; grid-template-columns: 220px 1fr; gap: 14px; border: 1px solid #ddd;
+          border-radius: 10px; padding: 10px; align-items: start; }
+ @media (prefers-color-scheme: dark) { .card { border-color: #3a3a3a; } }
+ .card img { width: 100%; height: auto; border-radius: 8px; background: #fafafa; cursor: zoom-in; }
+ .no { font-weight: 700; font-size: 16px; }
+ .status { display: inline-block; padding: 1px 8px; border-radius: 999px; font-size: 12px; border: 1px solid #999; }
+ .s0 { background: #ffe3e3; border-color: #e25555; color: #b10000; }
+ .s1 { background: #fff4d6; border-color: #d9a300; color: #7a5a00; }
+ .s2 { background: #e8f0ff; border-color: #6b93d6; color: #23456b; }
+ .s3 { background: #eee; }
+ .kv { color: #666; font-size: 13px; } .kv b { color: inherit; }
+ .pick { margin-top: 8px; font-size: 14px; }
+ .pick label { margin-right: 14px; }
+ #out { width: 100%; height: 90px; font-family: ui-monospace, monospace; font-size: 13px; }
+ button { padding: 6px 12px; border-radius: 8px; border: 1px solid #888; background: #f2f2f2; cursor: pointer; }
+ #lightbox { position: fixed; inset: 0; background: rgba(0,0,0,.85); display: none; align-items: center; justify-content: center; }
+ #lightbox img { max-width: 96vw; max-height: 96vh; }
+</style></head><body>
+<h1>图片审核表 · batch-20260919T121901Z</h1>
+<div class="meta">逐张选「放行 / 撤回」，然后点底部按钮生成结论文本，粘回给我即可。图片在原目录内，点图可放大。</div>
+<div class="stat">**集合模式**：`candidate` —— 生效名单不可读（`missing_table`）→ 本清单是**候选**，不是生效评估<br>待审核图片：**95 张**（唯一图片；同图的多条消息已折叠）<br>**动图范围**：0 张为多帧图（**仅按首帧参与哈希**——命中不代表整段动图等价，请据此判断是否可放行）</div>
+<form id="f"><div class="card" data-no="01">
+  <div><img src="img-01_84c400400000ac8c_f159f124.jpg" alt="01" onclick="zoom(this.src)"></div>
+  <div>
+    <div><span class="no">#01</span> <span class="status s0">**会改变判定**</span></div>
+    <div class="kv">来源：<b>candidate:sample:0605a15a11701d27756ce66b5ae37870（无法判定:证据不足）</b></div>
+    <div class="kv">距离 1~1 ｜ 命中 2 次 ｜ 其中会改变判定 <b>1</b></div>
+    <div class="kv">原判定：record_only:1, violation_high:1 ｜ 类别：:1, fraud:1</div>
+    <div class="kv">样例：onebot:530297362:1180657000 @2026-09-18 07:01:00.177787 (17598122)</div>
+    <div class="pick">
+      <label><input type="radio" name="01" value="放行"> 放行</label>
+      <label><input type="radio" name="01" value="撤回"> 撤回</label>
+      <label><input type="radio" name="01" value="再看看"> 再看看</label>
+    </div>
+  </div>
+</div>
+<div class="card" data-no="02">
+  <div><img src="img-02_84c400400000ac8c_ae161dc3.jpg" alt="02" onclick="zoom(this.src)"></div>
+  <div>
+    <div><span class="no">#02</span> <span class="status s0">**会改变判定**</span></div>
+    <div class="kv">来源：<b>candidate:sample:0605a15a11701d27756ce66b5ae37870</b></div>
+    <div class="kv">距离 1~1 ｜ 命中 1 次 ｜ 其中会改变判定 <b>1</b></div>
+    <div class="kv">原判定：record_only:1 ｜ 类别：:1</div>
+    <div class="kv">样例：-</div>
+    <div class="pick">
+      <label><input type="radio" name="02" value="放行"> 放行</label>
+      <label><input type="radio" name="02" value="撤回"> 撤回</label>
+      <label><input type="radio" name="02" value="再看看"> 再看看</label>
+    </div>
+  </div>
+</div>
+<div class="card" data-no="03">
+  <div><img src="img-03_86a284ac8c40ac8c_16f3a8d2.jpg" alt="03" onclick="zoom(this.src)"></div>
+  <div>
+    <div><span class="no">#03</span> <span class="status s1">无法判定</span></div>
+    <div class="kv">来源：<b>candidate:history:9e3cbd42acf5c16d5e2a62b06f31123dc8638b15c3fd74ac2eb8cdb8e41e3fb5（无法判定:证据不足）</b></div>
+    <div class="kv">距离 0~0 ｜ 命中 42 次 ｜ 其中会改变判定 <b>0</b></div>
+    <div class="kv">原判定：record_only:30, allow:12 ｜ 类别：:33, fraud:6, other:3</div>
+    <div class="kv">样例：onebot:530297362:1638849756 @2026-09-19 11:11:46.619719 (983434859)&lt;br&gt;onebot:530297362:969396799 @2026-09-19 11:11:45.602564 (470794920)&lt;br&gt;onebot:530297362:1439982534 @2026-09-19 11:11:4</div>
+    <div class="pick">
+      <label><input type="radio" name="03" value="放行"> 放行</label>
+      <label><input type="radio" name="03" value="撤回"> 撤回</label>
+      <label><input type="radio" name="03" value="再看看"> 再看看</label>
+    </div>
+  </div>
+</div>
+<div class="card" data-no="04">
+  <div><img src="img-04_808286909040acac_bf4e74cb.png" alt="04" onclick="zoom(this.src)"></div>
+  <div>
+    <div><span class="no">#04</span> <span class="status s1">无法判定</span></div>
+    <div class="kv">来源：<b>candidate:history:cae3f6f651b88a60c245c9d5588d497074a54423ba333d753558bc4a1b08881f（无法判定:证据不足）</b></div>
+    <div class="kv">距离 0~0 ｜ 命中 36 次 ｜ 其中会改变判定 <b>0</b></div>
+    <div class="kv">原判定：record_only:32, allow:4 ｜ 类别：:36</div>
+    <div class="kv">样例：onebot:530297362:1452718543 @2026-09-18 11:35:12.453683 (330380007)&lt;br&gt;onebot:530297362:2141156988 @2026-09-18 11:34:15.267960 (463447589)&lt;br&gt;onebot:530297362:1180271681 @2026-09-18 11:34:</div>
+    <div class="pick">
+      <label><input type="radio" name="04" value="放行"> 放行</label>
+      <label><input type="radio" name="04" value="撤回"> 撤回</label>
+      <label><input type="radio" name="04" value="再看看"> 再看看</label>
+    </div>
+  </div>
+</div>
+<div class="card" data-no="05">
+  <div><img src="img-05_808080804000ac8c_30da0d85.jpg" alt="05" onclick="zoom(this.src)"></div>
+  <div>
+    <div><span class="no">#05</span> <span class="status s1">无法判定</span></div>
+    <div class="kv">来源：<b>candidate:history:d747ae17576a0ec21341e5f43c481063d1353e6b1b34c117668293b75b403d4d（无法判定:证据不足）</b></div>
+    <div class="kv">距离 0~0 ｜ 命中 32 次 ｜ 其中会改变判定 <b>0</b></div>
+    <div class="kv">原判定：record_only:28, allow:4 ｜ 类别：:32</div>
+    <div class="kv">样例：onebot:530297362:1107712955 @2026-09-18 08:58:00.394834 (17598122)&lt;br&gt;onebot:530297362:178152177 @2026-09-18 08:56:23.932195 (17598122)&lt;br&gt;onebot:530297362:21505348 @2026-09-18 08:35:19.15</div>
+    <div class="pick">
+      <label><input type="radio" name="05" value="放行"> 放行</label>
+      <label><input type="radio" name="05" value="撤回"> 撤回</label>
+      <label><input type="radio" name="05" value="再看看"> 再看看</label>
+    </div>
+  </div>
+</div>
+<div class="card" data-no="06">
+  <div><img src="img-06_0ab4b4b600b4ac8c_e185498d.jpg" alt="06" onclick="zoom(this.src)"></div>
+  <div>
+    <div><span class="no">#06</span> <span class="status s1">无法判定</span></div>
+    <div class="kv">来源：<b>candidate:history:f204d6534cfb2a3860196fb21370f0f04dc90e9784141e4d8231051fe4f55f65（无法判定:证据不足）</b></div>
+    <div class="kv">距离 0~0 ｜ 命中 23 次 ｜ 其中会改变判定 <b>0</b></div>
+    <div class="kv">原判定：record_only:16, allow:7 ｜ 类别：:23</div>
+    <div class="kv">样例：onebot:530297362:959893415 @2026-09-19 08:41:14.470071 (6638171)&lt;br&gt;onebot:530297362:272056449 @2026-09-19 07:41:03.750390 (6638171)&lt;br&gt;onebot:530297362:1291113717 @2026-09-18 14:09:23.609</div>
+    <div class="pick">
+      <label><input type="radio" name="06" value="放行"> 放行</label>
+      <label><input type="radio" name="06" value="撤回"> 撤回</label>
+      <label><input type="radio" name="06" value="再看看"> 再看看</label>
+    </div>
+  </div>
+</div>
+<div class="card" data-no="07">
+  <div><img src="img-07_8ca890808040ac8c_51119518.jpg" alt="07" onclick="zoom(this.src)"></div>
+  <div>
+    <div><span class="no">#07</span> <span class="status s1">无法判定</span></div>
+    <div class="kv">来源：<b>candidate:history:7c65d5c552cb3d0adab6672eb0c1f5730dc954f9fd7c208f22a3f57ac1cca39e（无法判定:证据不足）</b></div>
+    <div class="kv">距离 0~0 ｜ 命中 23 次 ｜ 其中会改变判定 <b>0</b></div>
+    <div class="kv">原判定：record_only:20, allow:3 ｜ 类别：:18, other:4, fraud:1</div>
+    <div class="kv">样例：onebot:530297362:1517131915 @2026-09-18 14:49:41.405579 (219441644)&lt;br&gt;onebot:530297362:114954600 @2026-09-18 14:49:20.183072 (983434859)&lt;br&gt;onebot:530297362:2044003423 @2026-09-18 14:49:1</div>
+    <div class="pick">
+      <label><input type="radio" name="07" value="放行"> 放行</label>
+      <label><input type="radio" name="07" value="撤回"> 撤回</label>
+      <label><input type="radio" name="07" value="再看看"> 再看看</label>
+    </div>
+  </div>
+</div>
+<div class="card" data-no="08">
+  <div><img src="img-08_809090800400acac_39192ad2.png" alt="08" onclick="zoom(this.src)"></div>
+  <div>
+    <div><span class="no">#08</span> <span class="status s1">无法判定</span></div>
+    <div class="kv">来源：<b>candidate:history:8067148960cc5222d0e76c4f8cb5d3d83a42d24231ba7f1349f1f18eae182d6f（无法判定:证据不足）</b></div>
+    <div class="kv">距离 0~0 ｜ 命中 22 次 ｜ 其中会改变判定 <b>0</b></div>
+    <div class="kv">原判定：allow:19, record_only:3 ｜ 类别：:22</div>
+    <div class="kv">样例：onebot:530297362:67305263 @2026-09-19 10:54:14.137993 (469164994)&lt;br&gt;onebot:530297362:2115124905 @2026-09-19 10:26:06.321754 (469164994)&lt;br&gt;onebot:530297362:1638664771 @2026-09-19 09:53:00</div>
+    <div class="pick">
+      <label><input type="radio" name="08" value="放行"> 放行</label>
+      <label><input type="radio" name="08" value="撤回"> 撤回</label>
+      <label><input type="radio" name="08" value="再看看"> 再看看</label>
+    </div>
+  </div>
+</div>
+<div class="card" data-no="09">
+  <div><img src="img-09_808080804000ac8c_6ef1b000.png" alt="09" onclick="zoom(this.src)"></div>
+  <div>
+    <div><span class="no">#09</span> <span class="status s1">无法判定</span></div>
+    <div class="kv">来源：<b>candidate:history:d747ae17576a0ec21341e5f43c481063d1353e6b1b34c117668293b75b403d4d（无法判定:证据不足）</b></div>
+    <div class="kv">距离 0~0 ｜ 命中 21 次 ｜ 其中会改变判定 <b>0</b></div>
+    <div class="kv">原判定：record_only:21 ｜ 类别：:21</div>
+    <div class="kv">样例：onebot:530297362:1028840613 @2026-09-18 05:36:59.098213 (17598122)&lt;br&gt;onebot:530297362:1834729552 @2026-09-18 05:36:50.943025 (470794920)&lt;br&gt;onebot:530297362:1516479606 @2026-09-18 05:10:5</div>
+    <div class="pick">
+      <label><input type="radio" name="09" value="放行"> 放行</label>
+      <label><input type="radio" name="09" value="撤回"> 撤回</label>
+      <label><input type="radio" name="09" value="再看看"> 再看看</label>
+    </div>
+  </div>
+</div>
+<div class="card" data-no="10">
+  <div><img src="img-10_988080804000acac_f6c91c0f.jpg" alt="10" onclick="zoom(this.src)"></div>
+  <div>
+    <div><span class="no">#10</span> <span class="status s1">无法判定</span></div>
+    <div class="kv">来源：<b>candidate:history:0ba5107213acdd1f41fd2a571261d254a19879534306ea52776233689a82c139（无法判定:证据不足）</b></div>
+    <div class="kv">距离 0~0 ｜ 命中 20 次 ｜ 其中会改变判定 <b>0</b></div>
+    <div class="kv">原判定：record_only:17, allow:3 ｜ 类别：:19, fraud:1</div>
+    <div class="kv">样例：onebot:530297362:1802526052 @2026-09-19 10:11:51.046268 (470794920)&lt;br&gt;onebot:530297362:1851763061 @2026-09-18 19:03:14.336548 (470794920)&lt;br&gt;onebot:530297362:1708129869 @2026-09-18 12:10:</div>
+    <div class="pick">
+      <label><input type="radio" name="10" value="放行"> 放行</label>
+      <label><input type="radio" name="10" value="撤回"> 撤回</label>
+      <label><input type="radio" name="10" value="再看看"> 再看看</label>
+    </div>
+  </div>
+</div>
+<div class="card" data-no="11">
+  <div><img src="img-11_8aa2e0a47400acac_5cef046d.jpg" alt="11" onclick="zoom(this.src)"></div>
+  <div>
+    <div><span class="no">#11</span> <span class="status s1">无法判定</span></div>
+    <div class="kv">来源：<b>candidate:history:0d2d9cd1a52a5e0f67578bec54e038d0d52b3d39e47b1513d6965e401245abcc（无法判定:证据不足）</b></div>
+    <div class="kv">距离 0~0 ｜ 命中 20 次 ｜ 其中会改变判定 <b>0</b></div>
+    <div class="kv">原判定：record_only:17, allow:3 ｜ 类别：:16, fraud:3, ad:1</div>
+    <div class="kv">样例：onebot:530297362:546624389 @2026-09-19 06:47:23.703424 (544140282)&lt;br&gt;onebot:530297362:877363586 @2026-09-19 06:29:23.711332 (544140282)&lt;br&gt;onebot:530297362:941526960 @2026-09-18 15:17:11.</div>
+    <div class="pick">
+      <label><input type="radio" name="11" value="放行"> 放行</label>
+      <label><input type="radio" name="11" value="撤回"> 撤回</label>
+      <label><input type="radio" name="11" value="再看看"> 再看看</label>
+    </div>
+  </div>
+</div>
+<div class="card" data-no="12">
+  <div><img src="img-12_84a400040000ac8c_523bae7b.png" alt="12" onclick="zoom(this.src)"></div>
+  <div>
+    <div><span class="no">#12</span> <span class="status s1">无法判定</span></div>
+    <div class="kv">来源：<b>candidate:history:790dc0d3cacc49d65b81f4a9e42292172748928026ef839ce901b6942aeeae31（无法判定:证据不足）</b></div>
+    <div class="kv">距离 0~0 ｜ 命中 19 次 ｜ 其中会改变判定 <b>0</b></div>
+    <div class="kv">原判定：record_only:13, allow:6 ｜ 类别：:19</div>
+    <div class="kv">样例：onebot:530297362:238266628 @2026-09-19 11:03:30.054105 (470794920)&lt;br&gt;onebot:530297362:1838799863 @2026-09-19 11:03:21.004909 (868995385)&lt;br&gt;onebot:530297362:918611610 @2026-09-19 04:27:38</div>
+    <div class="pick">
+      <label><input type="radio" name="12" value="放行"> 放行</label>
+      <label><input type="radio" name="12" value="撤回"> 撤回</label>
+      <label><input type="radio" name="12" value="再看看"> 再看看</label>
+    </div>
+  </div>
+</div>
+<div class="card" data-no="13">
+  <div><img src="img-13_8aa2e0a47400acac_a8793d5c.jpg" alt="13" onclick="zoom(this.src)"></div>
+  <div>
+    <div><span class="no">#13</span> <span class="status s1">无法判定</span></div>
+    <div class="kv">来源：<b>candidate:history:0d2d9cd1a52a5e0f67578bec54e038d0d52b3d39e47b1513d6965e401245abcc（无法判定:证据不足）</b></div>
+    <div class="kv">距离 0~0 ｜ 命中 18 次 ｜ 其中会改变判定 <b>0</b></div>
+    <div class="kv">原判定：record_only:18 ｜ 类别：other:10, :8</div>
+    <div class="kv">样例：onebot:3573002001:1060683026 @2026-09-14 12:30:08.212522 (544140282)&lt;br&gt;onebot:3573002001:1698191797 @2026-09-14 12:06:34.887197 (544140282)&lt;br&gt;onebot:3573002001:230597997 @2026-09-14 09:1</div>
+    <div class="pick">
+      <label><input type="radio" name="13" value="放行"> 放行</label>
+      <label><input type="radio" name="13" value="撤回"> 撤回</label>
+      <label><input type="radio" name="13" value="再看看"> 再看看</label>
+    </div>
+  </div>
+</div>
+<div class="card" data-no="14">
+  <div><img src="img-14_b09080200000ac8c_496fd29b.png" alt="14" onclick="zoom(this.src)"></div>
+  <div>
+    <div><span class="no">#14</span> <span class="status s1">无法判定</span></div>
+    <div class="kv">来源：<b>candidate:history:cf1b2059b5ea781b355d3af1907a43e84b8463c9e15612cefa9f2d9412c91549（无法判定:证据不足）</b></div>
+    <div class="kv">距离 0~0 ｜ 命中 16 次 ｜ 其中会改变判定 <b>0</b></div>
+    <div class="kv">原判定：record_only:13, allow:3 ｜ 类别：:8, other:8</div>
+    <div class="kv">样例：onebot:530297362:1485128957 @2026-09-18 09:35:04.137475 (17598122)&lt;br&gt;onebot:530297362:792990480 @2026-09-18 09:04:32.691112 (469164994)&lt;br&gt;onebot:530297362:1281864064 @2026-09-18 09:04:10</div>
+    <div class="pick">
+      <label><input type="radio" name="14" value="放行"> 放行</label>
+      <label><input type="radio" name="14" value="撤回"> 撤回</label>
+      <label><input type="radio" name="14" value="再看看"> 再看看</label>
+    </div>
+  </div>
+</div>
+<div class="card" data-no="15">
+  <div><img src="img-15_ca9494940080ac84_19ff5989.jpg" alt="15" onclick="zoom(this.src)"></div>
+  <div>
+    <div><span class="no">#15</span> <span class="status s1">无法判定</span></div>
+    <div class="kv">来源：<b>candidate:history:ea037b5d896f7951201bac9a406e5ac72e7f5eddf26a3bbf5ea0f397d91bfc50（无法判定:证据不足）</b></div>
+    <div class="kv">距离 0~0 ｜ 命中 15 次 ｜ 其中会改变判定 <b>0</b></div>
+    <div class="kv">原判定：record_only:12, allow:3 ｜ 类别：:14, other:1</div>
+    <div class="kv">样例：onebot:530297362:1879414897 @2026-09-19 10:21:51.486297 (544140282)&lt;br&gt;onebot:530297362:258233886 @2026-09-19 07:27:27.926029 (544140282)&lt;br&gt;onebot:530297362:1533197113 @2026-09-18 10:27:3</div>
+    <div class="pick">
+      <label><input type="radio" name="15" value="放行"> 放行</label>
+      <label><input type="radio" name="15" value="撤回"> 撤回</label>
+      <label><input type="radio" name="15" value="再看看"> 再看看</label>
+    </div>
+  </div>
+</div>
+<div class="card" data-no="16">
+  <div><img src="img-16_b09080200000ac8c_66339654.png" alt="16" onclick="zoom(this.src)"></div>
+  <div>
+    <div><span class="no">#16</span> <span class="status s1">无法判定</span></div>
+    <div class="kv">来源：<b>candidate:history:cf1b2059b5ea781b355d3af1907a43e84b8463c9e15612cefa9f2d9412c91549（无法判定:证据不足）</b></div>
+    <div class="kv">距离 0~0 ｜ 命中 14 次 ｜ 其中会改变判定 <b>0</b></div>
+    <div class="kv">原判定：allow:14 ｜ 类别：:14</div>
+    <div class="kv">样例：onebot:530297362:803015427 @2026-09-18 15:30:17.601883 (469164994)&lt;br&gt;onebot:530297362:304661650 @2026-09-18 15:29:52.700154 (17598122)&lt;br&gt;onebot:530297362:1721268124 @2026-09-18 14:19:12.</div>
+    <div class="pick">
+      <label><input type="radio" name="16" value="放行"> 放行</label>
+      <label><input type="radio" name="16" value="撤回"> 撤回</label>
+      <label><input type="radio" name="16" value="再看看"> 再看看</label>
+    </div>
+  </div>
+</div>
+<div class="card" data-no="17">
+  <div><img src="img-17_909820ac9c4cacac_c46d98ed.jpg" alt="17" onclick="zoom(this.src)"></div>
+  <div>
+    <div><span class="no">#17</span> <span class="status s1">无法判定</span></div>
+    <div class="kv">来源：<b>candidate:history:bc1c7e31bbdcab79ad4a26e253d5ffd2527289fa6f14295a6a1b4633b681b9f3（无法判定:证据不足）</b></div>
+    <div class="kv">距离 0~0 ｜ 命中 13 次 ｜ 其中会改变判定 <b>0</b></div>
+    <div class="kv">原判定：record_only:12, allow:1 ｜ 类别：:13</div>
+    <div class="kv">样例：onebot:530297362:1966542967 @2026-09-18 08:27:36.575304 (470794920)&lt;br&gt;onebot:530297362:1370862023 @2026-09-18 05:15:59.006677 (470794920)&lt;br&gt;onebot:530297362:512651633 @2026-09-18 02:03:3</div>
+    <div class="pick">
+      <label><input type="radio" name="17" value="放行"> 放行</label>
+      <label><input type="radio" name="17" value="撤回"> 撤回</label>
+      <label><input type="radio" name="17" value="再看看"> 再看看</label>
+    </div>
+  </div>
+</div>
+<div class="card" data-no="18">
+  <div><img src="img-18_8084b8b4b486acac_83e8deae.jpg" alt="18" onclick="zoom(this.src)"></div>
+  <div>
+    <div><span class="no">#18</span> <span class="status s1">无法判定</span></div>
+    <div class="kv">来源：<b>candidate:history:d8357808f890401731b8493993cc05fa8dd815045974d80f7a70c4870c471366（无法判定:证据不足）</b></div>
+    <div class="kv">距离 0~0 ｜ 命中 12 次 ｜ 其中会改变判定 <b>0</b></div>
+    <div class="kv">原判定：record_only:10, allow:2 ｜ 类别：other:7, :5</div>
+    <div class="kv">样例：onebot:530297362:1665444998 @2026-09-19 11:46:38.280345 (868995385)&lt;br&gt;onebot:530297362:1855577657 @2026-09-19 11:46:27.569263 (219441644)&lt;br&gt;onebot:530297362:400593229 @2026-09-19 11:45:5</div>
+    <div class="pick">
+      <label><input type="radio" name="18" value="放行"> 放行</label>
+      <label><input type="radio" name="18" value="撤回"> 撤回</label>
+      <label><input type="radio" name="18" value="再看看"> 再看看</label>
+    </div>
+  </div>
+</div>
+<div class="card" data-no="19">
+  <div><img src="img-19_808080f4b040ac8c_cebb7641.png" alt="19" onclick="zoom(this.src)"></div>
+  <div>
+    <div><span class="no">#19</span> <span class="status s1">无法判定</span></div>
+    <div class="kv">来源：<b>candidate:history:0bb5e1d1ad9ae5bc26e54bc79e8ebc39131057d5d208f7d4bdc6227e67a44327（无法判定:证据不足）</b></div>
+    <div class="kv">距离 0~0 ｜ 命中 11 次 ｜ 其中会改变判定 <b>0</b></div>
+    <div class="kv">原判定：allow:10, record_only:1 ｜ 类别：:11</div>
+    <div class="kv">样例：onebot:530297362:1374056648 @2026-09-19 09:15:41.171133 (470794920)&lt;br&gt;onebot:530297362:2107002384 @2026-09-19 09:15:40.023667 (470794920)&lt;br&gt;onebot:530297362:1582930477 @2026-09-19 09:15:</div>
+    <div class="pick">
+      <label><input type="radio" name="19" value="放行"> 放行</label>
+      <label><input type="radio" name="19" value="撤回"> 撤回</label>
+      <label><input type="radio" name="19" value="再看看"> 再看看</label>
+    </div>
+  </div>
+</div>
+<div class="card" data-no="20">
+  <div><img src="img-20_80a080400000acac_ee55826a.jpg" alt="20" onclick="zoom(this.src)"></div>
+  <div>
+    <div><span class="no">#20</span> <span class="status s1">无法判定</span></div>
+    <div class="kv">来源：<b>candidate:history:93ea716c406ec436065993921678f3b52d7f14437d4b34e32fde040caed9f196（无法判定:证据不足）</b></div>
+    <div class="kv">距离 2~2 ｜ 命中 11 次 ｜ 其中会改变判定 <b>0</b></div>
+    <div class="kv">原判定：record_only:11 ｜ 类别：other:7, :4</div>
+    <div class="kv">样例：onebot:530297362:1795543221 @2026-09-16 09:42:45.132916 (544140282)&lt;br&gt;onebot:530297362:1429432003 @2026-09-16 09:41:08.534904 (544140282)&lt;br&gt;onebot:3573002001:959067582 @2026-09-15 12:01:</div>
+    <div class="pick">
+      <label><input type="radio" name="20" value="放行"> 放行</label>
+      <label><input type="radio" name="20" value="撤回"> 撤回</label>
+      <label><input type="radio" name="20" value="再看看"> 再看看</label>
+    </div>
+  </div>
+</div>
+<div class="card" data-no="21">
+  <div><img src="img-21_808298b0b070acac_3b5625ad.png" alt="21" onclick="zoom(this.src)"></div>
+  <div>
+    <div><span class="no">#21</span> <span class="status s1">无法判定</span></div>
+    <div class="kv">来源：<b>candidate:history:50525c8170983a3ab1800e70cef9aa62239a533d6283de5ea83802f2b9068eed（无法判定:证据不足）</b></div>
+    <div class="kv">距离 0~0 ｜ 命中 10 次 ｜ 其中会改变判定 <b>0</b></div>
+    <div class="kv">原判定：record_only:9, allow:1 ｜ 类别：:10</div>
+    <div class="kv">样例：onebot:530297362:1557286300 @2026-09-18 10:57:25.486461 (470794920)&lt;br&gt;onebot:530297362:176475399 @2026-09-18 06:12:51.238479 (470794920)&lt;br&gt;onebot:530297362:1973267221 @2026-09-18 05:04:0</div>
+    <div class="pick">
+      <label><input type="radio" name="21" value="放行"> 放行</label>
+      <label><input type="radio" name="21" value="撤回"> 撤回</label>
+      <label><input type="radio" name="21" value="再看看"> 再看看</label>
+    </div>
+  </div>
+</div>
+<div class="card" data-no="22">
+  <div><img src="img-22_84c400400000ac8c_8cd5a11c.jpg" alt="22" onclick="zoom(this.src)"></div>
+  <div>
+    <div><span class="no">#22</span> <span class="status s1">无法判定</span></div>
+    <div class="kv">来源：<b>candidate:sample:0605a15a11701d27756ce66b5ae37870（无法判定:证据不足）</b></div>
+    <div class="kv">距离 1~1 ｜ 命中 10 次 ｜ 其中会改变判定 <b>0</b></div>
+    <div class="kv">原判定：violation_high:10 ｜ 类别：fraud:10</div>
+    <div class="kv">样例：onebot:530297362:396691484 @2026-09-18 07:02:22.583193 (17598122)&lt;br&gt;onebot:530297362:1418371002 @2026-09-18 07:00:22.226907 (17598122)&lt;br&gt;onebot:530297362:547923589 @2026-09-18 06:58:48.3</div>
+    <div class="pick">
+      <label><input type="radio" name="22" value="放行"> 放行</label>
+      <label><input type="radio" name="22" value="撤回"> 撤回</label>
+      <label><input type="radio" name="22" value="再看看"> 再看看</label>
+    </div>
+  </div>
+</div>
+<div class="card" data-no="23">
+  <div><img src="img-23_8ab4b4b600b4ac8c_0534b42e.jpg" alt="23" onclick="zoom(this.src)"></div>
+  <div>
+    <div><span class="no">#23</span> <span class="status s1">无法判定</span></div>
+    <div class="kv">来源：<b>candidate:history:f204d6534cfb2a3860196fb21370f0f04dc90e9784141e4d8231051fe4f55f65（无法判定:证据不足）</b></div>
+    <div class="kv">距离 1~1 ｜ 命中 10 次 ｜ 其中会改变判定 <b>0</b></div>
+    <div class="kv">原判定：record_only:10 ｜ 类别：:7, other:3</div>
+    <div class="kv">样例：onebot:3573002001:1393351726 @2026-09-14 07:21:55.924144 (6638171)&lt;br&gt;onebot:3573002001:208796081 @2026-09-13 23:14:58.033153 (6638171)&lt;br&gt;onebot:3573002001:726533965 @2026-09-13 13:45:26.</div>
+    <div class="pick">
+      <label><input type="radio" name="23" value="放行"> 放行</label>
+      <label><input type="radio" name="23" value="撤回"> 撤回</label>
+      <label><input type="radio" name="23" value="再看看"> 再看看</label>
+    </div>
+  </div>
+</div>
+<div class="card" data-no="24">
+  <div><img src="img-24_8acac0b6ac44ac8c_45f486bf.jpg" alt="24" onclick="zoom(this.src)"></div>
+  <div>
+    <div><span class="no">#24</span> <span class="status s1">无法判定</span></div>
+    <div class="kv">来源：<b>candidate:history:3cc891d9a2c58e9ee64616a7de14dda921ac716d50422326cac7f60515c5595f（无法判定:证据不足）</b></div>
+    <div class="kv">距离 0~0 ｜ 命中 9 次 ｜ 其中会改变判定 <b>0</b></div>
+    <div class="kv">原判定：record_only:7, allow:2 ｜ 类别：:9</div>
+    <div class="kv">样例：onebot:530297362:1713659786 @2026-09-18 13:47:49.636691 (470794920)&lt;br&gt;onebot:530297362:1612889360 @2026-09-18 10:11:01.428305 (470794920)&lt;br&gt;onebot:530297362:660911366 @2026-09-17 11:05:2</div>
+    <div class="pick">
+      <label><input type="radio" name="24" value="放行"> 放行</label>
+      <label><input type="radio" name="24" value="撤回"> 撤回</label>
+      <label><input type="radio" name="24" value="再看看"> 再看看</label>
+    </div>
+  </div>
+</div>
+<div class="card" data-no="25">
+  <div><img src="img-25_84a29c8c8c00acac_f75b1260.jpg" alt="25" onclick="zoom(this.src)"></div>
+  <div>
+    <div><span class="no">#25</span> <span class="status s1">无法判定</span></div>
+    <div class="kv">来源：<b>candidate:history:9ed9e41a6e8d463b96585f455d1421f67a130d1e56d566d4bdef6e60aecc3d02（无法判定:证据不足）</b></div>
+    <div class="kv">距离 0~0 ｜ 命中 8 次 ｜ 其中会改变判定 <b>0</b></div>
+    <div class="kv">原判定：record_only:8 ｜ 类别：:4, porn:4</div>
+    <div class="kv">样例：onebot:530297362:1076986595 @2026-09-18 03:30:43.230538 (544140282)&lt;br&gt;onebot:530297362:1478057675 @2026-09-18 00:03:13.265998 (544140282)&lt;br&gt;onebot:530297362:1012731530 @2026-09-17 10:50:</div>
+    <div class="pick">
+      <label><input type="radio" name="25" value="放行"> 放行</label>
+      <label><input type="radio" name="25" value="撤回"> 撤回</label>
+      <label><input type="radio" name="25" value="再看看"> 再看看</label>
+    </div>
+  </div>
+</div>
+<div class="card" data-no="26">
+  <div><img src="img-26_84a29c8c8c00acac_9458012e.jpg" alt="26" onclick="zoom(this.src)"></div>
+  <div>
+    <div><span class="no">#26</span> <span class="status s1">无法判定</span></div>
+    <div class="kv">来源：<b>candidate:history:9ed9e41a6e8d463b96585f455d1421f67a130d1e56d566d4bdef6e60aecc3d02（无法判定:证据不足）</b></div>
+    <div class="kv">距离 0~0 ｜ 命中 7 次 ｜ 其中会改变判定 <b>0</b></div>
+    <div class="kv">原判定：allow:6, record_only:1 ｜ 类别：:7</div>
+    <div class="kv">样例：onebot:530297362:1872415535 @2026-09-19 11:36:01.036289 (544140282)&lt;br&gt;onebot:530297362:370261937 @2026-09-19 03:53:54.931908 (544140282)&lt;br&gt;onebot:530297362:216157013 @2026-09-18 23:37:40</div>
+    <div class="pick">
+      <label><input type="radio" name="26" value="放行"> 放行</label>
+      <label><input type="radio" name="26" value="撤回"> 撤回</label>
+      <label><input type="radio" name="26" value="再看看"> 再看看</label>
+    </div>
+  </div>
+</div>
+<div class="card" data-no="27">
+  <div><img src="img-27_b09080208000ac8c_902da199.png" alt="27" onclick="zoom(this.src)"></div>
+  <div>
+    <div><span class="no">#27</span> <span class="status s1">无法判定</span></div>
+    <div class="kv">来源：<b>candidate:history:cf1b2059b5ea781b355d3af1907a43e84b8463c9e15612cefa9f2d9412c91549（无法判定:证据不足）</b></div>
+    <div class="kv">距离 1~1 ｜ 命中 7 次 ｜ 其中会改变判定 <b>0</b></div>
+    <div class="kv">原判定：record_only:7 ｜ 类别：:5, other:2</div>
+    <div class="kv">样例：onebot:530297362:48916871 @2026-09-18 03:35:06.241196 (469164994)&lt;br&gt;onebot:530297362:1573144185 @2026-09-18 03:29:27.234821 (17598122)&lt;br&gt;onebot:530297362:598981518 @2026-09-18 02:25:04.7</div>
+    <div class="pick">
+      <label><input type="radio" name="27" value="放行"> 放行</label>
+      <label><input type="radio" name="27" value="撤回"> 撤回</label>
+      <label><input type="radio" name="27" value="再看看"> 再看看</label>
+    </div>
+  </div>
+</div>
+<div class="card" data-no="28">
+  <div><img src="img-28_82c484804000acac_0fb411e3.jpg" alt="28" onclick="zoom(this.src)"></div>
+  <div>
+    <div><span class="no">#28</span> <span class="status s1">无法判定</span></div>
+    <div class="kv">来源：<b>candidate:history:b43bab9e06c63091b7dab80e78bf018deb203dd3d1bb5456f4cb17f0917e29a2（无法判定:证据不足）</b></div>
+    <div class="kv">距离 0~0 ｜ 命中 6 次 ｜ 其中会改变判定 <b>0</b></div>
+    <div class="kv">原判定：allow:4, record_only:2 ｜ 类别：:6</div>
+    <div class="kv">样例：onebot:530297362:590801454 @2026-09-19 11:41:09.060686 (544140282)&lt;br&gt;onebot:530297362:1734217230 @2026-09-19 11:41:02.949327 (17598122)&lt;br&gt;onebot:530297362:674818593 @2026-09-19 11:34:16.</div>
+    <div class="pick">
+      <label><input type="radio" name="28" value="放行"> 放行</label>
+      <label><input type="radio" name="28" value="撤回"> 撤回</label>
+      <label><input type="radio" name="28" value="再看看"> 再看看</label>
+    </div>
+  </div>
+</div>
+<div class="card" data-no="29">
+  <div><img src="img-29_8494b0b44000ac8c_829b21a0.jpg" alt="29" onclick="zoom(this.src)"></div>
+  <div>
+    <div><span class="no">#29</span> <span class="status s1">无法判定</span></div>
+    <div class="kv">来源：<b>candidate:history:31e5229d7c92ddeba2de17d2644f73ab57cf096cfd70a80b22a58b4738921a4b（无法判定:证据不足）</b></div>
+    <div class="kv">距离 0~0 ｜ 命中 6 次 ｜ 其中会改变判定 <b>0</b></div>
+    <div class="kv">原判定：allow:3, record_only:3 ｜ 类别：:6</div>
+    <div class="kv">样例：onebot:530297362:1516906641 @2026-09-19 07:16:48.342592 (470794920)&lt;br&gt;onebot:530297362:2064212202 @2026-09-18 20:03:54.319188 (470794920)&lt;br&gt;onebot:530297362:2062858494 @2026-09-18 14:07:</div>
+    <div class="pick">
+      <label><input type="radio" name="29" value="放行"> 放行</label>
+      <label><input type="radio" name="29" value="撤回"> 撤回</label>
+      <label><input type="radio" name="29" value="再看看"> 再看看</label>
+    </div>
+  </div>
+</div>
+<div class="card" data-no="30">
+  <div><img src="img-30_84c400000000ac8c_fdbbff06.jpg" alt="30" onclick="zoom(this.src)"></div>
+  <div>
+    <div><span class="no">#30</span> <span class="status s1">无法判定</span></div>
+    <div class="kv">来源：<b>candidate:sample:0605a15a11701d27756ce66b5ae37870（无法判定:证据不足）</b></div>
+    <div class="kv">距离 0~0 ｜ 命中 6 次 ｜ 其中会改变判定 <b>0</b></div>
+    <div class="kv">原判定：allow:3, record_only:3 ｜ 类别：:3, fraud:3</div>
+    <div class="kv">样例：onebot:530297362:1752288311 @2026-09-19 06:08:40.342597 (17598122)&lt;br&gt;onebot:530297362:1959958403 @2026-09-18 14:38:38.816803 (17598122)&lt;br&gt;onebot:530297362:266986247 @2026-09-18 10:19:30.</div>
+    <div class="pick">
+      <label><input type="radio" name="30" value="放行"> 放行</label>
+      <label><input type="radio" name="30" value="撤回"> 撤回</label>
+      <label><input type="radio" name="30" value="再看看"> 再看看</label>
+    </div>
+  </div>
+</div>
+<div class="card" data-no="31">
+  <div><img src="img-31_9080e0808800acac_162a506b.jpg" alt="31" onclick="zoom(this.src)"></div>
+  <div>
+    <div><span class="no">#31</span> <span class="status s1">无法判定</span></div>
+    <div class="kv">来源：<b>candidate:history:19c66f9b0b24678ebc16510436040c63f4cc7047b6f8fa849b913bcec2dc1e08（无法判定:证据不足）</b></div>
+    <div class="kv">距离 0~0 ｜ 命中 6 次 ｜ 其中会改变判定 <b>0</b></div>
+    <div class="kv">原判定：record_only:5, allow:1 ｜ 类别：fraud:5, :1</div>
+    <div class="kv">样例：onebot:530297362:1121640899 @2026-09-18 09:11:40.035698 (470794920)&lt;br&gt;onebot:530297362:157520510 @2026-09-18 07:17:58.323047 (470794920)&lt;br&gt;onebot:530297362:231873949 @2026-09-18 04:20:43</div>
+    <div class="pick">
+      <label><input type="radio" name="31" value="放行"> 放行</label>
+      <label><input type="radio" name="31" value="撤回"> 撤回</label>
+      <label><input type="radio" name="31" value="再看看"> 再看看</label>
+    </div>
+  </div>
+</div>
+<div class="card" data-no="32">
+  <div><img src="img-32_b6a2b1b14101acac_f62563df.jpg" alt="32" onclick="zoom(this.src)"></div>
+  <div>
+    <div><span class="no">#32</span> <span class="status s1">无法判定</span></div>
+    <div class="kv">来源：<b>candidate:history:d9902c8f5caabaddc68eddc7315f0f619e5a8a8efc16b41ca71af4c57a72366a（无法判定:证据不足）</b></div>
+    <div class="kv">距离 0~0 ｜ 命中 6 次 ｜ 其中会改变判定 <b>0</b></div>
+    <div class="kv">原判定：record_only:5, allow:1 ｜ 类别：:4, other:2</div>
+    <div class="kv">样例：onebot:530297362:880785576 @2026-09-18 08:51:51.208866 (67602330)&lt;br&gt;onebot:530297362:1135246683 @2026-09-18 06:54:21.978052 (67602330)&lt;br&gt;onebot:3573002001:1476257490 @2026-09-16 06:56:51</div>
+    <div class="pick">
+      <label><input type="radio" name="32" value="放行"> 放行</label>
+      <label><input type="radio" name="32" value="撤回"> 撤回</label>
+      <label><input type="radio" name="32" value="再看看"> 再看看</label>
+    </div>
+  </div>
+</div>
+<div class="card" data-no="33">
+  <div><img src="img-33_84a400040000ac8c_2462ce6a.jpg" alt="33" onclick="zoom(this.src)"></div>
+  <div>
+    <div><span class="no">#33</span> <span class="status s1">无法判定</span></div>
+    <div class="kv">来源：<b>candidate:history:790dc0d3cacc49d65b81f4a9e42292172748928026ef839ce901b6942aeeae31（无法判定:证据不足）</b></div>
+    <div class="kv">距离 0~0 ｜ 命中 6 次 ｜ 其中会改变判定 <b>0</b></div>
+    <div class="kv">原判定：record_only:6 ｜ 类别：:6</div>
+    <div class="kv">样例：onebot:530297362:1341754394 @2026-09-18 04:12:01.856286 (470794920)&lt;br&gt;onebot:530297362:913003272 @2026-09-18 04:11:51.407441 (868995385)&lt;br&gt;onebot:3573002001:1402455807 @2026-09-14 11:51:</div>
+    <div class="pick">
+      <label><input type="radio" name="33" value="放行"> 放行</label>
+      <label><input type="radio" name="33" value="撤回"> 撤回</label>
+      <label><input type="radio" name="33" value="再看看"> 再看看</label>
+    </div>
+  </div>
+</div>
+<div class="card" data-no="34">
+  <div><img src="img-34_94c8b2b0b000acac_b4e8e772.jpg" alt="34" onclick="zoom(this.src)"></div>
+  <div>
+    <div><span class="no">#34</span> <span class="status s1">无法判定</span></div>
+    <div class="kv">来源：<b>candidate:history:07fca782aaea34753abde7ee29a017e4ff4d106ea874ba10e9f01dfea95d9a20（无法判定:证据不足）</b></div>
+    <div class="kv">距离 0~0 ｜ 命中 5 次 ｜ 其中会改变判定 <b>0</b></div>
+    <div class="kv">原判定：allow:5 ｜ 类别：:5</div>
+    <div class="kv">样例：onebot:530297362:1793135246 @2026-09-19 08:01:20.309696 (17598122)&lt;br&gt;onebot:530297362:1062686628 @2026-09-19 07:40:09.763410 (17598122)&lt;br&gt;onebot:530297362:644995415 @2026-09-19 06:45:44.</div>
+    <div class="pick">
+      <label><input type="radio" name="34" value="放行"> 放行</label>
+      <label><input type="radio" name="34" value="撤回"> 撤回</label>
+      <label><input type="radio" name="34" value="再看看"> 再看看</label>
+    </div>
+  </div>
+</div>
+<div class="card" data-no="35">
+  <div><img src="img-35_94c8b2b0b000acac_7629ec82.jpg" alt="35" onclick="zoom(this.src)"></div>
+  <div>
+    <div><span class="no">#35</span> <span class="status s1">无法判定</span></div>
+    <div class="kv">来源：<b>candidate:history:07fca782aaea34753abde7ee29a017e4ff4d106ea874ba10e9f01dfea95d9a20（无法判定:证据不足）</b></div>
+    <div class="kv">距离 0~0 ｜ 命中 5 次 ｜ 其中会改变判定 <b>0</b></div>
+    <div class="kv">原判定：allow:5 ｜ 类别：:5</div>
+    <div class="kv">样例：onebot:530297362:1573880355 @2026-09-18 12:23:03.098990 (17598122)&lt;br&gt;onebot:530297362:1881967897 @2026-09-18 11:38:29.007705 (17598122)&lt;br&gt;onebot:530297362:542402744 @2026-09-18 11:20:24.</div>
+    <div class="pick">
+      <label><input type="radio" name="35" value="放行"> 放行</label>
+      <label><input type="radio" name="35" value="撤回"> 撤回</label>
+      <label><input type="radio" name="35" value="再看看"> 再看看</label>
+    </div>
+  </div>
+</div>
+<div class="card" data-no="36">
+  <div><img src="img-36_9a88c8868040ac8c_3af9e99c.png" alt="36" onclick="zoom(this.src)"></div>
+  <div>
+    <div><span class="no">#36</span> <span class="status s1">无法判定</span></div>
+    <div class="kv">来源：<b>candidate:history:fce2f6a3cdaa6b48e71dea982b3a598bf104336094c3bf4c7442bb0b2d5161be（无法判定:证据不足）</b></div>
+    <div class="kv">距离 0~0 ｜ 命中 5 次 ｜ 其中会改变判定 <b>0</b></div>
+    <div class="kv">原判定：record_only:4, allow:1 ｜ 类别：fraud:4, :1</div>
+    <div class="kv">样例：onebot:530297362:2043771673 @2026-09-18 08:29:16.203472 (868995385)&lt;br&gt;onebot:530297362:1759633055 @2026-09-18 07:50:27.757656 (868995385)&lt;br&gt;onebot:530297362:57479344 @2026-09-17 13:21:01</div>
+    <div class="pick">
+      <label><input type="radio" name="36" value="放行"> 放行</label>
+      <label><input type="radio" name="36" value="撤回"> 撤回</label>
+      <label><input type="radio" name="36" value="再看看"> 再看看</label>
+    </div>
+  </div>
+</div>
+<div class="card" data-no="37">
+  <div><img src="img-37_809080000000ac8c_16fafe87.jpg" alt="37" onclick="zoom(this.src)"></div>
+  <div>
+    <div><span class="no">#37</span> <span class="status s1">无法判定</span></div>
+    <div class="kv">来源：<b>candidate:history:14fa27b9f601707cdfb1054f83741bdccbc3f22b0d92129eb7a53f49fbb179d6（无法判定:证据不足）</b></div>
+    <div class="kv">距离 2~2 ｜ 命中 5 次 ｜ 其中会改变判定 <b>0</b></div>
+    <div class="kv">原判定：record_only:5 ｜ 类别：:5</div>
+    <div class="kv">样例：onebot:530297362:50280771 @2026-09-18 07:48:22.379267 (868995385)&lt;br&gt;onebot:530297362:1341879112 @2026-09-17 09:07:14.875951 (868995385)&lt;br&gt;onebot:530297362:1959555836 @2026-09-17 08:37:58</div>
+    <div class="pick">
+      <label><input type="radio" name="37" value="放行"> 放行</label>
+      <label><input type="radio" name="37" value="撤回"> 撤回</label>
+      <label><input type="radio" name="37" value="再看看"> 再看看</label>
+    </div>
+  </div>
+</div>
+<div class="card" data-no="38">
+  <div><img src="img-38_808080400000ac8c_e047f65e.png" alt="38" onclick="zoom(this.src)"></div>
+  <div>
+    <div><span class="no">#38</span> <span class="status s1">无法判定</span></div>
+    <div class="kv">来源：<b>candidate:history:93ea716c406ec436065993921678f3b52d7f14437d4b34e32fde040caed9f196（无法判定:证据不足）</b></div>
+    <div class="kv">距离 2~2 ｜ 命中 5 次 ｜ 其中会改变判定 <b>0</b></div>
+    <div class="kv">原判定：record_only:5 ｜ 类别：:5</div>
+    <div class="kv">样例：onebot:530297362:2009284237 @2026-09-18 07:47:22.701628 (470794920)&lt;br&gt;onebot:530297362:778471812 @2026-09-18 07:46:19.133683 (470794920)&lt;br&gt;onebot:3573002001:230900020 @2026-09-15 09:52:4</div>
+    <div class="pick">
+      <label><input type="radio" name="38" value="放行"> 放行</label>
+      <label><input type="radio" name="38" value="撤回"> 撤回</label>
+      <label><input type="radio" name="38" value="再看看"> 再看看</label>
+    </div>
+  </div>
+</div>
+<div class="card" data-no="39">
+  <div><img src="img-39_82c484804000acac_297b7fc6.jpg" alt="39" onclick="zoom(this.src)"></div>
+  <div>
+    <div><span class="no">#39</span> <span class="status s1">无法判定</span></div>
+    <div class="kv">来源：<b>candidate:history:b43bab9e06c63091b7dab80e78bf018deb203dd3d1bb5456f4cb17f0917e29a2（无法判定:证据不足）</b></div>
+    <div class="kv">距离 0~0 ｜ 命中 5 次 ｜ 其中会改变判定 <b>0</b></div>
+    <div class="kv">原判定：record_only:5 ｜ 类别：other:3, :2</div>
+    <div class="kv">样例：onebot:530297362:220306556 @2026-09-18 05:35:09.310407 (17598122)&lt;br&gt;onebot:530297362:1921187495 @2026-09-18 05:35:03.071159 (544140282)&lt;br&gt;onebot:530297362:276388462 @2026-09-18 02:23:49.</div>
+    <div class="pick">
+      <label><input type="radio" name="39" value="放行"> 放行</label>
+      <label><input type="radio" name="39" value="撤回"> 撤回</label>
+      <label><input type="radio" name="39" value="再看看"> 再看看</label>
+    </div>
+  </div>
+</div>
+<div class="card" data-no="40">
+  <div><img src="img-40_80a064809280acac_c19e5287.jpg" alt="40" onclick="zoom(this.src)"></div>
+  <div>
+    <div><span class="no">#40</span> <span class="status s1">无法判定</span></div>
+    <div class="kv">来源：<b>candidate:history:c1ab3e68f0f06a367996ec219cb1b927e8e5ae65f0df1085de45a1e3912ac482（无法判定:证据不足）</b></div>
+    <div class="kv">距离 0~0 ｜ 命中 4 次 ｜ 其中会改变判定 <b>0</b></div>
+    <div class="kv">原判定：allow:4 ｜ 类别：:4</div>
+    <div class="kv">样例：onebot:530297362:193087863 @2026-09-19 11:16:24.116961 (17598122)&lt;br&gt;onebot:530297362:1685474349 @2026-09-19 09:24:40.664472 (17598122)&lt;br&gt;onebot:530297362:884974197 @2026-09-19 08:22:26.8</div>
+    <div class="pick">
+      <label><input type="radio" name="40" value="放行"> 放行</label>
+      <label><input type="radio" name="40" value="撤回"> 撤回</label>
+      <label><input type="radio" name="40" value="再看看"> 再看看</label>
+    </div>
+  </div>
+</div>
+<div class="card" data-no="41">
+  <div><img src="img-41_808000000000ac8c_dc6f021f.jpg" alt="41" onclick="zoom(this.src)"></div>
+  <div>
+    <div><span class="no">#41</span> <span class="status s1">无法判定</span></div>
+    <div class="kv">来源：<b>candidate:history:14fa27b9f601707cdfb1054f83741bdccbc3f22b0d92129eb7a53f49fbb179d6（无法判定:证据不足）</b></div>
+    <div class="kv">距离 0~0 ｜ 命中 4 次 ｜ 其中会改变判定 <b>0</b></div>
+    <div class="kv">原判定：allow:4 ｜ 类别：:4</div>
+    <div class="kv">样例：onebot:530297362:1049244456 @2026-09-19 06:36:13.599003 (469164994)&lt;br&gt;onebot:530297362:1159394350 @2026-09-19 06:08:13.908184 (469164994)&lt;br&gt;onebot:530297362:1026824186 @2026-09-19 05:42:</div>
+    <div class="pick">
+      <label><input type="radio" name="41" value="放行"> 放行</label>
+      <label><input type="radio" name="41" value="撤回"> 撤回</label>
+      <label><input type="radio" name="41" value="再看看"> 再看看</label>
+    </div>
+  </div>
+</div>
+<div class="card" data-no="42">
+  <div><img src="img-42_8080a0804000ac8c_d3c6ffa9.png" alt="42" onclick="zoom(this.src)"></div>
+  <div>
+    <div><span class="no">#42</span> <span class="status s1">无法判定</span></div>
+    <div class="kv">来源：<b>candidate:history:7ba0f37d71986776769afd9eb518a4d520c55bd028fe65f4cae24b6e7b201b7d（无法判定:证据不足）</b></div>
+    <div class="kv">距离 0~0 ｜ 命中 4 次 ｜ 其中会改变判定 <b>0</b></div>
+    <div class="kv">原判定：allow:2, record_only:2 ｜ 类别：:4</div>
+    <div class="kv">样例：onebot:530297362:1630503982 @2026-09-19 06:28:54.644776 (544140282)&lt;br&gt;onebot:530297362:533448926 @2026-09-19 06:28:49.764293 (470794920)&lt;br&gt;onebot:530297362:1922040858 @2026-09-17 09:47:0</div>
+    <div class="pick">
+      <label><input type="radio" name="42" value="放行"> 放行</label>
+      <label><input type="radio" name="42" value="撤回"> 撤回</label>
+      <label><input type="radio" name="42" value="再看看"> 再看看</label>
+    </div>
+  </div>
+</div>
+<div class="card" data-no="43">
+  <div><img src="img-43_8090c4b49640acac_47268905.png" alt="43" onclick="zoom(this.src)"></div>
+  <div>
+    <div><span class="no">#43</span> <span class="status s1">无法判定</span></div>
+    <div class="kv">来源：<b>candidate:history:a03b6e6a260c79b7761a5c1f907edb824ad299479bd82ab9a6cd1cd4d0b07e87（无法判定:证据不足）</b></div>
+    <div class="kv">距离 0~0 ｜ 命中 4 次 ｜ 其中会改变判定 <b>0</b></div>
+    <div class="kv">原判定：allow:2, record_only:2 ｜ 类别：:2, other:2</div>
+    <div class="kv">样例：onebot:530297362:2056582406 @2026-09-19 06:28:54.543601 (544140282)&lt;br&gt;onebot:530297362:1244208248 @2026-09-19 06:28:48.390876 (470794920)&lt;br&gt;onebot:530297362:356125307 @2026-09-17 09:47:3</div>
+    <div class="pick">
+      <label><input type="radio" name="43" value="放行"> 放行</label>
+      <label><input type="radio" name="43" value="撤回"> 撤回</label>
+      <label><input type="radio" name="43" value="再看看"> 再看看</label>
+    </div>
+  </div>
+</div>
+<div class="card" data-no="44">
+  <div><img src="img-44_8a8a80800000ac8c_d05161c1.jpg" alt="44" onclick="zoom(this.src)"></div>
+  <div>
+    <div><span class="no">#44</span> <span class="status s1">无法判定</span></div>
+    <div class="kv">来源：<b>candidate:history:176c2610cf2031fe04266a0c450c059125bdd21bed68110c9169a773e1973956（无法判定:证据不足）</b></div>
+    <div class="kv">距离 0~0 ｜ 命中 4 次 ｜ 其中会改变判定 <b>0</b></div>
+    <div class="kv">原判定：allow:4 ｜ 类别：:4</div>
+    <div class="kv">样例：onebot:530297362:1852848604 @2026-09-19 05:32:24.763958 (469164994)&lt;br&gt;onebot:530297362:1411272016 @2026-09-19 03:54:41.548215 (470794920)&lt;br&gt;onebot:530297362:741068942 @2026-09-19 03:54:3</div>
+    <div class="pick">
+      <label><input type="radio" name="44" value="放行"> 放行</label>
+      <label><input type="radio" name="44" value="撤回"> 撤回</label>
+      <label><input type="radio" name="44" value="再看看"> 再看看</label>
+    </div>
+  </div>
+</div>
+<div class="card" data-no="45">
+  <div><img src="img-45_aa898cbc8c00acac_f9a5c6a6.jpg" alt="45" onclick="zoom(this.src)"></div>
+  <div>
+    <div><span class="no">#45</span> <span class="status s1">无法判定</span></div>
+    <div class="kv">来源：<b>candidate:history:c8b6fc0da9496f630db7da4a898fd8048e00e638c6dbcb6a80ffe41bafc3f860（无法判定:证据不足）</b></div>
+    <div class="kv">距离 0~0 ｜ 命中 4 次 ｜ 其中会改变判定 <b>0</b></div>
+    <div class="kv">原判定：record_only:2, allow:1, violation_high:1 ｜ 类别：:3, fraud:1</div>
+    <div class="kv">样例：onebot:530297362:83572835 @2026-09-18 19:07:34.714535 (470794920)&lt;br&gt;onebot:530297362:488703563 @2026-09-18 05:25:00.521396 (470794920)&lt;br&gt;onebot:3573002001:60299467 @2026-09-15 05:14:05.6</div>
+    <div class="pick">
+      <label><input type="radio" name="45" value="放行"> 放行</label>
+      <label><input type="radio" name="45" value="撤回"> 撤回</label>
+      <label><input type="radio" name="45" value="再看看"> 再看看</label>
+    </div>
+  </div>
+</div>
+<div class="card" data-no="46">
+  <div><img src="img-46_a0a060808000acac_031f1ab4.jpg" alt="46" onclick="zoom(this.src)"></div>
+  <div>
+    <div><span class="no">#46</span> <span class="status s1">无法判定</span></div>
+    <div class="kv">来源：<b>candidate:history:705c908c6130849540ac5feba8afceacb9a4ecd50f33313af675e8525b60500d（无法判定:证据不足）</b></div>
+    <div class="kv">距离 0~0 ｜ 命中 4 次 ｜ 其中会改变判定 <b>0</b></div>
+    <div class="kv">原判定：violation_high:4 ｜ 类别：fraud:4</div>
+    <div class="kv">样例：onebot:530297362:411158413 @2026-09-18 08:05:51.483114 (470794920)&lt;br&gt;onebot:530297362:124532141 @2026-09-18 08:05:40.531970 (470794920)&lt;br&gt;onebot:530297362:16678023 @2026-09-18 07:59:10.3</div>
+    <div class="pick">
+      <label><input type="radio" name="46" value="放行"> 放行</label>
+      <label><input type="radio" name="46" value="撤回"> 撤回</label>
+      <label><input type="radio" name="46" value="再看看"> 再看看</label>
+    </div>
+  </div>
+</div>
+<div class="card" data-no="47">
+  <div><img src="img-47_84c000000000ac8c_8b7c8ea6.jpg" alt="47" onclick="zoom(this.src)"></div>
+  <div>
+    <div><span class="no">#47</span> <span class="status s1">无法判定</span></div>
+    <div class="kv">来源：<b>candidate:sample:0605a15a11701d27756ce66b5ae37870（无法判定:证据不足）</b></div>
+    <div class="kv">距离 1~1 ｜ 命中 4 次 ｜ 其中会改变判定 <b>0</b></div>
+    <div class="kv">原判定：record_only:4 ｜ 类别：:4</div>
+    <div class="kv">样例：onebot:3573002001:1925010555 @2026-09-15 03:17:27.964872 (544140282)&lt;br&gt;onebot:3573002001:354143965 @2026-09-15 03:17:27.926873 (544140282)&lt;br&gt;onebot:3573002001:17492616 @2026-09-14 04:34:</div>
+    <div class="pick">
+      <label><input type="radio" name="47" value="放行"> 放行</label>
+      <label><input type="radio" name="47" value="撤回"> 撤回</label>
+      <label><input type="radio" name="47" value="再看看"> 再看看</label>
+    </div>
+  </div>
+</div>
+<div class="card" data-no="48">
+  <div><img src="img-48_94a480808000ac8c_cd11bb60.jpg" alt="48" onclick="zoom(this.src)"></div>
+  <div>
+    <div><span class="no">#48</span> <span class="status s1">无法判定</span></div>
+    <div class="kv">来源：<b>candidate:history:7544a101b99f47826fa303eaf615a58d572e3adeeeddd2c40f69ce01f0f39abb（无法判定:证据不足）</b></div>
+    <div class="kv">距离 0~0 ｜ 命中 3 次 ｜ 其中会改变判定 <b>0</b></div>
+    <div class="kv">原判定：allow:2, record_only:1 ｜ 类别：:3</div>
+    <div class="kv">样例：onebot:530297362:1257878832 @2026-09-19 10:21:35.856421 (544140282)&lt;br&gt;onebot:530297362:992144354 @2026-09-18 08:33:54.595481 (544140282)&lt;br&gt;onebot:530297362:935314950 @2026-09-18 07:38:21</div>
+    <div class="pick">
+      <label><input type="radio" name="48" value="放行"> 放行</label>
+      <label><input type="radio" name="48" value="撤回"> 撤回</label>
+      <label><input type="radio" name="48" value="再看看"> 再看看</label>
+    </div>
+  </div>
+</div>
+<div class="card" data-no="49">
+  <div><img src="img-49_8a4a80844000acac_c01abd66.jpg" alt="49" onclick="zoom(this.src)"></div>
+  <div>
+    <div><span class="no">#49</span> <span class="status s1">无法判定</span></div>
+    <div class="kv">来源：<b>candidate:history:ac73c9a01efcdb5651901c5a5df5209d9665324805032205989f8f4022fadce9（无法判定:证据不足）</b></div>
+    <div class="kv">距离 0~0 ｜ 命中 3 次 ｜ 其中会改变判定 <b>0</b></div>
+    <div class="kv">原判定：record_only:2, allow:1 ｜ 类别：:3</div>
+    <div class="kv">样例：onebot:530297362:1772061922 @2026-09-19 07:06:01.007658 (868995385)&lt;br&gt;onebot:530297362:1217937071 @2026-09-18 05:42:50.040715 (868995385)&lt;br&gt;onebot:530297362:290720486 @2026-09-18 03:54:3</div>
+    <div class="pick">
+      <label><input type="radio" name="49" value="放行"> 放行</label>
+      <label><input type="radio" name="49" value="撤回"> 撤回</label>
+      <label><input type="radio" name="49" value="再看看"> 再看看</label>
+    </div>
+  </div>
+</div>
+<div class="card" data-no="50">
+  <div><img src="img-50_9880ea8a8040acac_a4bcc724.png" alt="50" onclick="zoom(this.src)"></div>
+  <div>
+    <div><span class="no">#50</span> <span class="status s1">无法判定</span></div>
+    <div class="kv">来源：<b>candidate:history:3cd34f5ef9ec434fe569ef3e0b7170c9bab60f804507fed3c9cd5f18f452d298（无法判定:证据不足）</b></div>
+    <div class="kv">距离 0~0 ｜ 命中 3 次 ｜ 其中会改变判定 <b>0</b></div>
+    <div class="kv">原判定：record_only:2, allow:1 ｜ 类别：fraud:2, :1</div>
+    <div class="kv">样例：onebot:530297362:409636328 @2026-09-18 08:28:44.163706 (470794920)&lt;br&gt;onebot:530297362:396215347 @2026-09-17 14:45:50.793123 (470794920)&lt;br&gt;onebot:530297362:379742208 @2026-09-17 13:20:26.</div>
+    <div class="pick">
+      <label><input type="radio" name="50" value="放行"> 放行</label>
+      <label><input type="radio" name="50" value="撤回"> 撤回</label>
+      <label><input type="radio" name="50" value="再看看"> 再看看</label>
+    </div>
+  </div>
+</div>
+<div class="card" data-no="51">
+  <div><img src="img-51_80a080400000acac_0d0558a4.jpg" alt="51" onclick="zoom(this.src)"></div>
+  <div>
+    <div><span class="no">#51</span> <span class="status s1">无法判定</span></div>
+    <div class="kv">来源：<b>candidate:history:93ea716c406ec436065993921678f3b52d7f14437d4b34e32fde040caed9f196（无法判定:证据不足）</b></div>
+    <div class="kv">距离 2~2 ｜ 命中 3 次 ｜ 其中会改变判定 <b>0</b></div>
+    <div class="kv">原判定：record_only:3 ｜ 类别：:3</div>
+    <div class="kv">样例：onebot:530297362:1827614023 @2026-09-17 12:45:21.048825 (544140282)&lt;br&gt;onebot:530297362:1550375547 @2026-09-17 12:43:16.559693 (544140282)&lt;br&gt;onebot:530297362:453915522 @2026-09-16 09:47:0</div>
+    <div class="pick">
+      <label><input type="radio" name="51" value="放行"> 放行</label>
+      <label><input type="radio" name="51" value="撤回"> 撤回</label>
+      <label><input type="radio" name="51" value="再看看"> 再看看</label>
+    </div>
+  </div>
+</div>
+<div class="card" data-no="52">
+  <div><img src="img-52_8aa2e0a47400acac_38d760b4.jpg" alt="52" onclick="zoom(this.src)"></div>
+  <div>
+    <div><span class="no">#52</span> <span class="status s1">无法判定</span></div>
+    <div class="kv">来源：<b>candidate:history:0d2d9cd1a52a5e0f67578bec54e038d0d52b3d39e47b1513d6965e401245abcc（无法判定:证据不足）</b></div>
+    <div class="kv">距离 0~0 ｜ 命中 3 次 ｜ 其中会改变判定 <b>0</b></div>
+    <div class="kv">原判定：record_only:3 ｜ 类别：:2, fraud:1</div>
+    <div class="kv">样例：onebot:530297362:1184359905 @2026-09-17 06:04:00.478726 (544140282)&lt;br&gt;onebot:3573002001:663877946 @2026-09-16 03:40:05.070089 (544140282)&lt;br&gt;onebot:3573002001:305197378 @2026-09-15 10:35:</div>
+    <div class="pick">
+      <label><input type="radio" name="52" value="放行"> 放行</label>
+      <label><input type="radio" name="52" value="撤回"> 撤回</label>
+      <label><input type="radio" name="52" value="再看看"> 再看看</label>
+    </div>
+  </div>
+</div>
+<div class="card" data-no="53">
+  <div><img src="img-53_8a8a80800000ac8c_0e9b14a6.jpg" alt="53" onclick="zoom(this.src)"></div>
+  <div>
+    <div><span class="no">#53</span> <span class="status s1">无法判定</span></div>
+    <div class="kv">来源：<b>candidate:history:176c2610cf2031fe04266a0c450c059125bdd21bed68110c9169a773e1973956（无法判定:证据不足）</b></div>
+    <div class="kv">距离 0~0 ｜ 命中 3 次 ｜ 其中会改变判定 <b>0</b></div>
+    <div class="kv">原判定：record_only:3 ｜ 类别：ad:2, other:1</div>
+    <div class="kv">样例：onebot:530297362:1439209943 @2026-09-17 05:39:51.543948 (470794920)&lt;br&gt;onebot:530297362:2031629547 @2026-09-17 05:39:31.327307 (17598122)&lt;br&gt;onebot:530297362:332597414 @2026-09-17 05:39:02</div>
+    <div class="pick">
+      <label><input type="radio" name="53" value="放行"> 放行</label>
+      <label><input type="radio" name="53" value="撤回"> 撤回</label>
+      <label><input type="radio" name="53" value="再看看"> 再看看</label>
+    </div>
+  </div>
+</div>
+<div class="card" data-no="54">
+  <div><img src="img-54_84a29c8c8c00acac_280b8501.jpg" alt="54" onclick="zoom(this.src)"></div>
+  <div>
+    <div><span class="no">#54</span> <span class="status s1">无法判定</span></div>
+    <div class="kv">来源：<b>candidate:history:9ed9e41a6e8d463b96585f455d1421f67a130d1e56d566d4bdef6e60aecc3d02（无法判定:证据不足）</b></div>
+    <div class="kv">距离 0~0 ｜ 命中 3 次 ｜ 其中会改变判定 <b>0</b></div>
+    <div class="kv">原判定：record_only:3 ｜ 类别：:3</div>
+    <div class="kv">样例：onebot:530297362:1878548830 @2026-09-17 03:35:43.155742 (544140282)&lt;br&gt;onebot:3573002001:1121297925 @2026-09-16 08:53:08.596899 (544140282)&lt;br&gt;onebot:3573002001:1465372761 @2026-09-16 08:1</div>
+    <div class="pick">
+      <label><input type="radio" name="54" value="放行"> 放行</label>
+      <label><input type="radio" name="54" value="撤回"> 撤回</label>
+      <label><input type="radio" name="54" value="再看看"> 再看看</label>
+    </div>
+  </div>
+</div>
+<div class="card" data-no="55">
+  <div><img src="img-55_9080a0b00000acac_5201e352.jpg" alt="55" onclick="zoom(this.src)"></div>
+  <div>
+    <div><span class="no">#55</span> <span class="status s1">无法判定</span></div>
+    <div class="kv">来源：<b>candidate:sample:c54c30415b2559b3a9be34c9390b78fb（无法判定:证据不足）</b></div>
+    <div class="kv">距离 1~1 ｜ 命中 3 次 ｜ 其中会改变判定 <b>0</b></div>
+    <div class="kv">原判定：record_only:3 ｜ 类别：:3</div>
+    <div class="kv">样例：onebot:530297362:33903672 @2026-09-17 02:49:57.378086 (17598122)&lt;br&gt;onebot:3573002001:1318615248 @2026-09-13 03:39:48.603785 (17598122)&lt;br&gt;onebot:3573002001:120061590 @2026-09-13 03:39:35.</div>
+    <div class="pick">
+      <label><input type="radio" name="55" value="放行"> 放行</label>
+      <label><input type="radio" name="55" value="撤回"> 撤回</label>
+      <label><input type="radio" name="55" value="再看看"> 再看看</label>
+    </div>
+  </div>
+</div>
+<div class="card" data-no="56">
+  <div><img src="img-56_a4a29c8c8c00acac_9b3d69ed.png" alt="56" onclick="zoom(this.src)"></div>
+  <div>
+    <div><span class="no">#56</span> <span class="status s1">无法判定</span></div>
+    <div class="kv">来源：<b>candidate:history:9ed9e41a6e8d463b96585f455d1421f67a130d1e56d566d4bdef6e60aecc3d02（无法判定:证据不足）</b></div>
+    <div class="kv">距离 1~1 ｜ 命中 3 次 ｜ 其中会改变判定 <b>0</b></div>
+    <div class="kv">原判定：record_only:3 ｜ 类别：:3</div>
+    <div class="kv">样例：onebot:3573002001:1315431057 @2026-09-16 06:50:06.394614 (544140282)&lt;br&gt;onebot:3573002001:1068919683 @2026-09-16 05:34:00.062721 (544140282)&lt;br&gt;onebot:3573002001:1307353245 @2026-09-16 04:</div>
+    <div class="pick">
+      <label><input type="radio" name="56" value="放行"> 放行</label>
+      <label><input type="radio" name="56" value="撤回"> 撤回</label>
+      <label><input type="radio" name="56" value="再看看"> 再看看</label>
+    </div>
+  </div>
+</div>
+<div class="card" data-no="57">
+  <div><img src="img-57_8a8a80804000ac8c_6f55a3da.jpg" alt="57" onclick="zoom(this.src)"></div>
+  <div>
+    <div><span class="no">#57</span> <span class="status s1">无法判定</span></div>
+    <div class="kv">来源：<b>candidate:history:176c2610cf2031fe04266a0c450c059125bdd21bed68110c9169a773e1973956（无法判定:证据不足）</b></div>
+    <div class="kv">距离 1~1 ｜ 命中 3 次 ｜ 其中会改变判定 <b>0</b></div>
+    <div class="kv">原判定：record_only:3 ｜ 类别：:3</div>
+    <div class="kv">样例：onebot:3573002001:1737324945 @2026-09-14 04:14:59.317179 (17598122)&lt;br&gt;onebot:3573002001:1860137105 @2026-09-14 04:14:55.821270 (983434859)&lt;br&gt;onebot:3573002001:1897708936 @2026-09-14 04:1</div>
+    <div class="pick">
+      <label><input type="radio" name="57" value="放行"> 放行</label>
+      <label><input type="radio" name="57" value="撤回"> 撤回</label>
+      <label><input type="radio" name="57" value="再看看"> 再看看</label>
+    </div>
+  </div>
+</div>
+<div class="card" data-no="58">
+  <div><img src="img-58_92f280822000acac_7858791c.jpg" alt="58" onclick="zoom(this.src)"></div>
+  <div>
+    <div><span class="no">#58</span> <span class="status s1">无法判定</span></div>
+    <div class="kv">来源：<b>candidate:history:ea3d3308ac9464f55bb16a4b99ede217f92f8b853c9fbb8ea81f726627f34f6c（无法判定:证据不足）</b></div>
+    <div class="kv">距离 0~0 ｜ 命中 2 次 ｜ 其中会改变判定 <b>0</b></div>
+    <div class="kv">原判定：allow:2 ｜ 类别：:2</div>
+    <div class="kv">样例：onebot:530297362:537976127 @2026-09-19 05:19:08.209916 (1084038341)&lt;br&gt;onebot:530297362:1988629088 @2026-09-19 05:19:03.057516 (868995385)</div>
+    <div class="pick">
+      <label><input type="radio" name="58" value="放行"> 放行</label>
+      <label><input type="radio" name="58" value="撤回"> 撤回</label>
+      <label><input type="radio" name="58" value="再看看"> 再看看</label>
+    </div>
+  </div>
+</div>
+<div class="card" data-no="59">
+  <div><img src="img-59_8080a0804000ac8c_1594979f.jpg" alt="59" onclick="zoom(this.src)"></div>
+  <div>
+    <div><span class="no">#59</span> <span class="status s1">无法判定</span></div>
+    <div class="kv">来源：<b>candidate:history:7ba0f37d71986776769afd9eb518a4d520c55bd028fe65f4cae24b6e7b201b7d（无法判定:证据不足）</b></div>
+    <div class="kv">距离 0~0 ｜ 命中 2 次 ｜ 其中会改变判定 <b>0</b></div>
+    <div class="kv">原判定：allow:2 ｜ 类别：:2</div>
+    <div class="kv">样例：onebot:530297362:1674504310 @2026-09-18 18:55:09.321859 (544140282)&lt;br&gt;onebot:530297362:1902277659 @2026-09-18 18:54:58.624851 (470794920)</div>
+    <div class="pick">
+      <label><input type="radio" name="59" value="放行"> 放行</label>
+      <label><input type="radio" name="59" value="撤回"> 撤回</label>
+      <label><input type="radio" name="59" value="再看看"> 再看看</label>
+    </div>
+  </div>
+</div>
+<div class="card" data-no="60">
+  <div><img src="img-60_9484ea928040ac8c_7bdd2b8a.jpg" alt="60" onclick="zoom(this.src)"></div>
+  <div>
+    <div><span class="no">#60</span> <span class="status s1">无法判定</span></div>
+    <div class="kv">来源：<b>candidate:history:87ccdab40694a67a50c0b3d24f316ef0820a91f46965e4506f4d6b3027941a1e（无法判定:证据不足）</b></div>
+    <div class="kv">距离 0~0 ｜ 命中 2 次 ｜ 其中会改变判定 <b>0</b></div>
+    <div class="kv">原判定：allow:1, record_only:1 ｜ 类别：:1, other:1</div>
+    <div class="kv">样例：onebot:530297362:1078440810 @2026-09-18 13:24:33.746892 (470794920)&lt;br&gt;onebot:530297362:1321192408 @2026-09-17 06:37:32.551162 (470794920)</div>
+    <div class="pick">
+      <label><input type="radio" name="60" value="放行"> 放行</label>
+      <label><input type="radio" name="60" value="撤回"> 撤回</label>
+      <label><input type="radio" name="60" value="再看看"> 再看看</label>
+    </div>
+  </div>
+</div>
+<div class="card" data-no="61">
+  <div><img src="img-61_88acc8908400ac8c_3be7c20f.jpg" alt="61" onclick="zoom(this.src)"></div>
+  <div>
+    <div><span class="no">#61</span> <span class="status s1">无法判定</span></div>
+    <div class="kv">来源：<b>candidate:history:41aa71f2288e09b5a3fe5f1d93a9c8c5d3d64a2ca0b05dc175ea6e2d4adc726c（无法判定:证据不足）</b></div>
+    <div class="kv">距离 0~0 ｜ 命中 2 次 ｜ 其中会改变判定 <b>0</b></div>
+    <div class="kv">原判定：allow:2 ｜ 类别：:2</div>
+    <div class="kv">样例：onebot:530297362:1097529488 @2026-09-18 12:17:04.043932 (17598122)&lt;br&gt;onebot:530297362:1591621635 @2026-09-18 12:16:55.834244 (868995385)</div>
+    <div class="pick">
+      <label><input type="radio" name="61" value="放行"> 放行</label>
+      <label><input type="radio" name="61" value="撤回"> 撤回</label>
+      <label><input type="radio" name="61" value="再看看"> 再看看</label>
+    </div>
+  </div>
+</div>
+<div class="card" data-no="62">
+  <div><img src="img-62_80c490909000acac_c7e0d893.jpg" alt="62" onclick="zoom(this.src)"></div>
+  <div>
+    <div><span class="no">#62</span> <span class="status s1">无法判定</span></div>
+    <div class="kv">来源：<b>candidate:history:6716c7f60161d33c6012ca956a660aab8c3cca25171728f892a329f4df36d7ee（无法判定:证据不足）</b></div>
+    <div class="kv">距离 0~0 ｜ 命中 2 次 ｜ 其中会改变判定 <b>0</b></div>
+    <div class="kv">原判定：allow:2 ｜ 类别：:2</div>
+    <div class="kv">样例：onebot:530297362:296203230 @2026-09-18 11:18:49.422531 (476796763)&lt;br&gt;onebot:530297362:83814749 @2026-09-18 11:14:30.631988 (469164994)</div>
+    <div class="pick">
+      <label><input type="radio" name="62" value="放行"> 放行</label>
+      <label><input type="radio" name="62" value="撤回"> 撤回</label>
+      <label><input type="radio" name="62" value="再看看"> 再看看</label>
+    </div>
+  </div>
+</div>
+<div class="card" data-no="63">
+  <div><img src="img-63_8494b0b44000ac8c_2e71e34e.jpg" alt="63" onclick="zoom(this.src)"></div>
+  <div>
+    <div><span class="no">#63</span> <span class="status s1">无法判定</span></div>
+    <div class="kv">来源：<b>candidate:history:31e5229d7c92ddeba2de17d2644f73ab57cf096cfd70a80b22a58b4738921a4b（无法判定:证据不足）</b></div>
+    <div class="kv">距离 0~0 ｜ 命中 2 次 ｜ 其中会改变判定 <b>0</b></div>
+    <div class="kv">原判定：allow:2 ｜ 类别：:2</div>
+    <div class="kv">样例：onebot:530297362:97690987 @2026-09-18 10:39:32.235323 (470794920)&lt;br&gt;onebot:530297362:1051008413 @2026-09-18 09:12:15.384085 (470794920)</div>
+    <div class="pick">
+      <label><input type="radio" name="63" value="放行"> 放行</label>
+      <label><input type="radio" name="63" value="撤回"> 撤回</label>
+      <label><input type="radio" name="63" value="再看看"> 再看看</label>
+    </div>
+  </div>
+</div>
+<div class="card" data-no="64">
+  <div><img src="img-64_84c400000000ac8c_59bf91a7.jpg" alt="64" onclick="zoom(this.src)"></div>
+  <div>
+    <div><span class="no">#64</span> <span class="status s1">无法判定</span></div>
+    <div class="kv">来源：<b>candidate:sample:0605a15a11701d27756ce66b5ae37870（无法判定:证据不足）</b></div>
+    <div class="kv">距离 0~0 ｜ 命中 2 次 ｜ 其中会改变判定 <b>0</b></div>
+    <div class="kv">原判定：record_only:2 ｜ 类别：:2</div>
+    <div class="kv">样例：onebot:530297362:1261295896 @2026-09-18 06:52:36.734607 (17598122)&lt;br&gt;onebot:530297362:1014866955 @2026-09-18 06:20:31.071147 (17598122)</div>
+    <div class="pick">
+      <label><input type="radio" name="64" value="放行"> 放行</label>
+      <label><input type="radio" name="64" value="撤回"> 撤回</label>
+      <label><input type="radio" name="64" value="再看看"> 再看看</label>
+    </div>
+  </div>
+</div>
+<div class="card" data-no="65">
+  <div><img src="img-65_808080408000ac8c_a85e419f.jpg" alt="65" onclick="zoom(this.src)"></div>
+  <div>
+    <div><span class="no">#65</span> <span class="status s1">无法判定</span></div>
+    <div class="kv">来源：<b>candidate:history:93ea716c406ec436065993921678f3b52d7f14437d4b34e32fde040caed9f196（无法判定:证据不足）</b></div>
+    <div class="kv">距离 1~1 ｜ 命中 2 次 ｜ 其中会改变判定 <b>0</b></div>
+    <div class="kv">原判定：record_only:2 ｜ 类别：:2</div>
+    <div class="kv">样例：onebot:530297362:20759201 @2026-09-18 01:34:21.048479 (17598122)&lt;br&gt;onebot:530297362:559666453 @2026-09-17 12:14:11.720435 (17598122)</div>
+    <div class="pick">
+      <label><input type="radio" name="65" value="放行"> 放行</label>
+      <label><input type="radio" name="65" value="撤回"> 撤回</label>
+      <label><input type="radio" name="65" value="再看看"> 再看看</label>
+    </div>
+  </div>
+</div>
+<div class="card" data-no="66">
+  <div><img src="img-66_929824ac9c4cacac_6f31f7d1.jpg" alt="66" onclick="zoom(this.src)"></div>
+  <div>
+    <div><span class="no">#66</span> <span class="status s1">无法判定</span></div>
+    <div class="kv">来源：<b>candidate:history:bc1c7e31bbdcab79ad4a26e253d5ffd2527289fa6f14295a6a1b4633b681b9f3（无法判定:证据不足）</b></div>
+    <div class="kv">距离 2~2 ｜ 命中 2 次 ｜ 其中会改变判定 <b>0</b></div>
+    <div class="kv">原判定：record_only:2 ｜ 类别：:2</div>
+    <div class="kv">样例：onebot:3573002001:26374535 @2026-09-16 02:02:11.125201 (330380007)&lt;br&gt;onebot:3573002001:2078891236 @2026-09-14 07:37:59.522686 (330380007)</div>
+    <div class="pick">
+      <label><input type="radio" name="66" value="放行"> 放行</label>
+      <label><input type="radio" name="66" value="撤回"> 撤回</label>
+      <label><input type="radio" name="66" value="再看看"> 再看看</label>
+    </div>
+  </div>
+</div>
+<div class="card" data-no="67">
+  <div><img src="img-67_929820ac9c4cacac_69e1ad1c.jpg" alt="67" onclick="zoom(this.src)"></div>
+  <div>
+    <div><span class="no">#67</span> <span class="status s1">无法判定</span></div>
+    <div class="kv">来源：<b>candidate:history:bc1c7e31bbdcab79ad4a26e253d5ffd2527289fa6f14295a6a1b4633b681b9f3（无法判定:证据不足）</b></div>
+    <div class="kv">距离 1~1 ｜ 命中 2 次 ｜ 其中会改变判定 <b>0</b></div>
+    <div class="kv">原判定：record_only:2 ｜ 类别：:2</div>
+    <div class="kv">样例：onebot:3573002001:1702877035 @2026-09-16 01:48:20.044379 (470794920)&lt;br&gt;onebot:3573002001:498552802 @2026-09-15 09:49:43.028313 (470794920)</div>
+    <div class="pick">
+      <label><input type="radio" name="67" value="放行"> 放行</label>
+      <label><input type="radio" name="67" value="撤回"> 撤回</label>
+      <label><input type="radio" name="67" value="再看看"> 再看看</label>
+    </div>
+  </div>
+</div>
+<div class="card" data-no="68">
+  <div><img src="img-68_84a400040000ac8c_3127d1b0.jpg" alt="68" onclick="zoom(this.src)"></div>
+  <div>
+    <div><span class="no">#68</span> <span class="status s1">无法判定</span></div>
+    <div class="kv">来源：<b>candidate:history:790dc0d3cacc49d65b81f4a9e42292172748928026ef839ce901b6942aeeae31（无法判定:证据不足）</b></div>
+    <div class="kv">距离 0~0 ｜ 命中 2 次 ｜ 其中会改变判定 <b>0</b></div>
+    <div class="kv">原判定：record_only:2 ｜ 类别：:2</div>
+    <div class="kv">样例：onebot:3573002001:109058461 @2026-09-15 05:15:56.861233 (470794920)&lt;br&gt;onebot:3573002001:229383006 @2026-09-14 13:25:12.446376 (470794920)</div>
+    <div class="pick">
+      <label><input type="radio" name="68" value="放行"> 放行</label>
+      <label><input type="radio" name="68" value="撤回"> 撤回</label>
+      <label><input type="radio" name="68" value="再看看"> 再看看</label>
+    </div>
+  </div>
+</div>
+<div class="card" data-no="69">
+  <div><img src="img-69_94c8b2b0b000acac_abfbfcdc.jpg" alt="69" onclick="zoom(this.src)"></div>
+  <div>
+    <div><span class="no">#69</span> <span class="status s1">无法判定</span></div>
+    <div class="kv">来源：<b>candidate:history:07fca782aaea34753abde7ee29a017e4ff4d106ea874ba10e9f01dfea95d9a20（无法判定:证据不足）</b></div>
+    <div class="kv">距离 0~0 ｜ 命中 1 次 ｜ 其中会改变判定 <b>0</b></div>
+    <div class="kv">原判定：allow:1 ｜ 类别：:1</div>
+    <div class="kv">样例：onebot:530297362:832520725 @2026-09-19 11:17:16.739521 (17598122)</div>
+    <div class="pick">
+      <label><input type="radio" name="69" value="放行"> 放行</label>
+      <label><input type="radio" name="69" value="撤回"> 撤回</label>
+      <label><input type="radio" name="69" value="再看看"> 再看看</label>
+    </div>
+  </div>
+</div>
+<div class="card" data-no="70">
+  <div><img src="img-70_a0a060808000acac_908afec6.jpg" alt="70" onclick="zoom(this.src)"></div>
+  <div>
+    <div><span class="no">#70</span> <span class="status s1">无法判定</span></div>
+    <div class="kv">来源：<b>candidate:history:705c908c6130849540ac5feba8afceacb9a4ecd50f33313af675e8525b60500d（无法判定:证据不足）</b></div>
+    <div class="kv">距离 0~0 ｜ 命中 1 次 ｜ 其中会改变判定 <b>0</b></div>
+    <div class="kv">原判定：allow:1 ｜ 类别：:1</div>
+    <div class="kv">样例：onebot:530297362:1223857065 @2026-09-19 10:49:46.986337 (470794920)</div>
+    <div class="pick">
+      <label><input type="radio" name="70" value="放行"> 放行</label>
+      <label><input type="radio" name="70" value="撤回"> 撤回</label>
+      <label><input type="radio" name="70" value="再看看"> 再看看</label>
+    </div>
+  </div>
+</div>
+<div class="card" data-no="71">
+  <div><img src="img-71_808080408000acac_13db1c1a.jpg" alt="71" onclick="zoom(this.src)"></div>
+  <div>
+    <div><span class="no">#71</span> <span class="status s1">无法判定</span></div>
+    <div class="kv">来源：<b>candidate:history:93ea716c406ec436065993921678f3b52d7f14437d4b34e32fde040caed9f196（无法判定:证据不足）</b></div>
+    <div class="kv">距离 0~0 ｜ 命中 1 次 ｜ 其中会改变判定 <b>0</b></div>
+    <div class="kv">原判定：allow:1 ｜ 类别：:1</div>
+    <div class="kv">样例：onebot:530297362:102267144 @2026-09-19 09:21:11.572558 (17598122)</div>
+    <div class="pick">
+      <label><input type="radio" name="71" value="放行"> 放行</label>
+      <label><input type="radio" name="71" value="撤回"> 撤回</label>
+      <label><input type="radio" name="71" value="再看看"> 再看看</label>
+    </div>
+  </div>
+</div>
+<div class="card" data-no="72">
+  <div><img src="img-72_908880808040acac_bf7f5fa7.jpg" alt="72" onclick="zoom(this.src)"></div>
+  <div>
+    <div><span class="no">#72</span> <span class="status s1">无法判定</span></div>
+    <div class="kv">来源：<b>candidate:history:ad2829df259b2ae88b5917bdb1f2446e2a032ff64b64a0244d0a26a150782ffe（无法判定:证据不足）</b></div>
+    <div class="kv">距离 0~0 ｜ 命中 1 次 ｜ 其中会改变判定 <b>0</b></div>
+    <div class="kv">原判定：allow:1 ｜ 类别：:1</div>
+    <div class="kv">样例：onebot:530297362:1813954099 @2026-09-19 08:55:42.715104 (470794920)</div>
+    <div class="pick">
+      <label><input type="radio" name="72" value="放行"> 放行</label>
+      <label><input type="radio" name="72" value="撤回"> 撤回</label>
+      <label><input type="radio" name="72" value="再看看"> 再看看</label>
+    </div>
+  </div>
+</div>
+<div class="card" data-no="73">
+  <div><img src="img-73_84a400240000ac8c_42c64342.jpg" alt="73" onclick="zoom(this.src)"></div>
+  <div>
+    <div><span class="no">#73</span> <span class="status s1">无法判定</span></div>
+    <div class="kv">来源：<b>candidate:history:59d67f23ff3ecc2be2871774321c1f573b60a005458d40c57eaed483814d8ef3（无法判定:证据不足）</b></div>
+    <div class="kv">距离 0~0 ｜ 命中 1 次 ｜ 其中会改变判定 <b>0</b></div>
+    <div class="kv">原判定：allow:1 ｜ 类别：:1</div>
+    <div class="kv">样例：onebot:530297362:609090487 @2026-09-19 05:55:06.832149 (868995385)</div>
+    <div class="pick">
+      <label><input type="radio" name="73" value="放行"> 放行</label>
+      <label><input type="radio" name="73" value="撤回"> 撤回</label>
+      <label><input type="radio" name="73" value="再看看"> 再看看</label>
+    </div>
+  </div>
+</div>
+<div class="card" data-no="74">
+  <div><img src="img-74_92f280820000acac_7145eb77.jpg" alt="74" onclick="zoom(this.src)"></div>
+  <div>
+    <div><span class="no">#74</span> <span class="status s1">无法判定</span></div>
+    <div class="kv">来源：<b>candidate:history:2ce1e5871d795af5c9bf42e57e0cc6a885d02e58a548eb234872dc3701302022（无法判定:证据不足）</b></div>
+    <div class="kv">距离 0~0 ｜ 命中 1 次 ｜ 其中会改变判定 <b>0</b></div>
+    <div class="kv">原判定：allow:1 ｜ 类别：:1</div>
+    <div class="kv">样例：onebot:530297362:1826931153 @2026-09-19 05:18:50.944455 (470794920)</div>
+    <div class="pick">
+      <label><input type="radio" name="74" value="放行"> 放行</label>
+      <label><input type="radio" name="74" value="撤回"> 撤回</label>
+      <label><input type="radio" name="74" value="再看看"> 再看看</label>
+    </div>
+  </div>
+</div>
+<div class="card" data-no="75">
+  <div><img src="img-75_e9acacc888c8d0a2_e4012064.jpg" alt="75" onclick="zoom(this.src)"></div>
+  <div>
+    <div><span class="no">#75</span> <span class="status s1">无法判定</span></div>
+    <div class="kv">来源：<b>candidate:history:5690a1501163eec417d952a111672ab4678fd1c1c76768d1c7e3ecce54c8d11d（无法判定:证据不足）</b></div>
+    <div class="kv">距离 0~0 ｜ 命中 1 次 ｜ 其中会改变判定 <b>0</b></div>
+    <div class="kv">原判定：allow:1 ｜ 类别：:1</div>
+    <div class="kv">样例：onebot:530297362:986272000 @2026-09-19 05:09:47.515418 (6638171)</div>
+    <div class="pick">
+      <label><input type="radio" name="75" value="放行"> 放行</label>
+      <label><input type="radio" name="75" value="撤回"> 撤回</label>
+      <label><input type="radio" name="75" value="再看看"> 再看看</label>
+    </div>
+  </div>
+</div>
+<div class="card" data-no="76">
+  <div><img src="img-76_808080804000ac8c_ab605a3e.jpg" alt="76" onclick="zoom(this.src)"></div>
+  <div>
+    <div><span class="no">#76</span> <span class="status s1">无法判定</span></div>
+    <div class="kv">来源：<b>candidate:history:d747ae17576a0ec21341e5f43c481063d1353e6b1b34c117668293b75b403d4d（无法判定:证据不足）</b></div>
+    <div class="kv">距离 0~0 ｜ 命中 1 次 ｜ 其中会改变判定 <b>0</b></div>
+    <div class="kv">原判定：allow:1 ｜ 类别：:1</div>
+    <div class="kv">样例：onebot:530297362:1195497829 @2026-09-18 18:53:58.533195 (17598122)</div>
+    <div class="pick">
+      <label><input type="radio" name="76" value="放行"> 放行</label>
+      <label><input type="radio" name="76" value="撤回"> 撤回</label>
+      <label><input type="radio" name="76" value="再看看"> 再看看</label>
+    </div>
+  </div>
+</div>
+<div class="card" data-no="77">
+  <div><img src="img-77_80a090804000acac_53570732.jpg" alt="77" onclick="zoom(this.src)"></div>
+  <div>
+    <div><span class="no">#77</span> <span class="status s1">无法判定</span></div>
+    <div class="kv">来源：<b>candidate:history:5bbbb1dd076af7648b23ecf9150cb9e5a770ae2e7b7cf186971a78bf1b144916（无法判定:证据不足）</b></div>
+    <div class="kv">距离 0~0 ｜ 命中 1 次 ｜ 其中会改变判定 <b>0</b></div>
+    <div class="kv">原判定：allow:1 ｜ 类别：:1</div>
+    <div class="kv">样例：onebot:530297362:1787042719 @2026-09-18 15:09:26.260843 (17598122)</div>
+    <div class="pick">
+      <label><input type="radio" name="77" value="放行"> 放行</label>
+      <label><input type="radio" name="77" value="撤回"> 撤回</label>
+      <label><input type="radio" name="77" value="再看看"> 再看看</label>
+    </div>
+  </div>
+</div>
+<div class="card" data-no="78">
+  <div><img src="img-78_8a88ca868040ac8c_2f20492d.jpg" alt="78" onclick="zoom(this.src)"></div>
+  <div>
+    <div><span class="no">#78</span> <span class="status s1">无法判定</span></div>
+    <div class="kv">来源：<b>candidate:history:fbf2c4276cbc1f39713f1a9bfa4bba18e2c92a8f4ac4a1d0cdb867fa6ba5c222（无法判定:证据不足）</b></div>
+    <div class="kv">距离 0~0 ｜ 命中 1 次 ｜ 其中会改变判定 <b>0</b></div>
+    <div class="kv">原判定：allow:1 ｜ 类别：:1</div>
+    <div class="kv">样例：onebot:530297362:26691027 @2026-09-18 14:19:23.581259 (469164994)</div>
+    <div class="pick">
+      <label><input type="radio" name="78" value="放行"> 放行</label>
+      <label><input type="radio" name="78" value="撤回"> 撤回</label>
+      <label><input type="radio" name="78" value="再看看"> 再看看</label>
+    </div>
+  </div>
+</div>
+<div class="card" data-no="79">
+  <div><img src="img-79_88acc8908400acac_319e63d4.jpg" alt="79" onclick="zoom(this.src)"></div>
+  <div>
+    <div><span class="no">#79</span> <span class="status s1">无法判定</span></div>
+    <div class="kv">来源：<b>candidate:history:61ffb3e7e9b70ff60fb257b507c13ef916efb5c4e9d0d4b13c3013058aa72950（无法判定:证据不足）</b></div>
+    <div class="kv">距离 0~0 ｜ 命中 1 次 ｜ 其中会改变判定 <b>0</b></div>
+    <div class="kv">原判定：allow:1 ｜ 类别：:1</div>
+    <div class="kv">样例：onebot:530297362:180947249 @2026-09-18 14:02:24.938471 (17598122)</div>
+    <div class="pick">
+      <label><input type="radio" name="79" value="放行"> 放行</label>
+      <label><input type="radio" name="79" value="撤回"> 撤回</label>
+      <label><input type="radio" name="79" value="再看看"> 再看看</label>
+    </div>
+  </div>
+</div>
+<div class="card" data-no="80">
+  <div><img src="img-80_8088b0b0b040ac8c_5e785f00.jpg" alt="80" onclick="zoom(this.src)"></div>
+  <div>
+    <div><span class="no">#80</span> <span class="status s1">无法判定</span></div>
+    <div class="kv">来源：<b>candidate:history:0921d7a1113f207b36c32587909a3dca348e58c6fed3198ff66f16f03345439d（无法判定:证据不足）</b></div>
+    <div class="kv">距离 0~0 ｜ 命中 1 次 ｜ 其中会改变判定 <b>0</b></div>
+    <div class="kv">原判定：allow:1 ｜ 类别：:1</div>
+    <div class="kv">样例：onebot:530297362:1604362686 @2026-09-18 11:21:38.215867 (476796763)</div>
+    <div class="pick">
+      <label><input type="radio" name="80" value="放行"> 放行</label>
+      <label><input type="radio" name="80" value="撤回"> 撤回</label>
+      <label><input type="radio" name="80" value="再看看"> 再看看</label>
+    </div>
+  </div>
+</div>
+<div class="card" data-no="81">
+  <div><img src="img-81_988090900080ac8c_75445e8c.jpg" alt="81" onclick="zoom(this.src)"></div>
+  <div>
+    <div><span class="no">#81</span> <span class="status s1">无法判定</span></div>
+    <div class="kv">来源：<b>candidate:history:cea230b41fb360ae954a3fffc5a0792b78fecf7e1e7beab12e9726ba9d6429ea（无法判定:证据不足）</b></div>
+    <div class="kv">距离 0~0 ｜ 命中 1 次 ｜ 其中会改变判定 <b>0</b></div>
+    <div class="kv">原判定：allow:1 ｜ 类别：:1</div>
+    <div class="kv">样例：onebot:530297362:237791279 @2026-09-18 10:28:13.702023 (470794920)</div>
+    <div class="pick">
+      <label><input type="radio" name="81" value="放行"> 放行</label>
+      <label><input type="radio" name="81" value="撤回"> 撤回</label>
+      <label><input type="radio" name="81" value="再看看"> 再看看</label>
+    </div>
+  </div>
+</div>
+<div class="card" data-no="82">
+  <div><img src="img-82_9484ea928040ac8c_52bbdfea.png" alt="82" onclick="zoom(this.src)"></div>
+  <div>
+    <div><span class="no">#82</span> <span class="status s1">无法判定</span></div>
+    <div class="kv">来源：<b>candidate:history:87ccdab40694a67a50c0b3d24f316ef0820a91f46965e4506f4d6b3027941a1e（无法判定:证据不足）</b></div>
+    <div class="kv">距离 0~0 ｜ 命中 1 次 ｜ 其中会改变判定 <b>0</b></div>
+    <div class="kv">原判定：record_only:1 ｜ 类别：:1</div>
+    <div class="kv">样例：onebot:530297362:1988682693 @2026-09-18 08:24:11.084085 (470794920)</div>
+    <div class="pick">
+      <label><input type="radio" name="82" value="放行"> 放行</label>
+      <label><input type="radio" name="82" value="撤回"> 撤回</label>
+      <label><input type="radio" name="82" value="再看看"> 再看看</label>
+    </div>
+  </div>
+</div>
+<div class="card" data-no="83">
+  <div><img src="img-83_a0a040808000acac_4258375d.png" alt="83" onclick="zoom(this.src)"></div>
+  <div>
+    <div><span class="no">#83</span> <span class="status s1">无法判定</span></div>
+    <div class="kv">来源：<b>candidate:history:705c908c6130849540ac5feba8afceacb9a4ecd50f33313af675e8525b60500d（无法判定:证据不足）</b></div>
+    <div class="kv">距离 1~1 ｜ 命中 1 次 ｜ 其中会改变判定 <b>0</b></div>
+    <div class="kv">原判定：record_only:1 ｜ 类别：fraud:1</div>
+    <div class="kv">样例：onebot:530297362:710715252 @2026-09-18 08:20:23.230176 (470794920)</div>
+    <div class="pick">
+      <label><input type="radio" name="83" value="放行"> 放行</label>
+      <label><input type="radio" name="83" value="撤回"> 撤回</label>
+      <label><input type="radio" name="83" value="再看看"> 再看看</label>
+    </div>
+  </div>
+</div>
+<div class="card" data-no="84">
+  <div><img src="img-84_a0a040808000acac_6508b60d.jpg" alt="84" onclick="zoom(this.src)"></div>
+  <div>
+    <div><span class="no">#84</span> <span class="status s1">无法判定</span></div>
+    <div class="kv">来源：<b>candidate:history:705c908c6130849540ac5feba8afceacb9a4ecd50f33313af675e8525b60500d（无法判定:证据不足）</b></div>
+    <div class="kv">距离 1~1 ｜ 命中 1 次 ｜ 其中会改变判定 <b>0</b></div>
+    <div class="kv">原判定：record_only:1 ｜ 类别：fraud:1</div>
+    <div class="kv">样例：onebot:530297362:1006214066 @2026-09-18 08:19:18.550368 (17598122)</div>
+    <div class="pick">
+      <label><input type="radio" name="84" value="放行"> 放行</label>
+      <label><input type="radio" name="84" value="撤回"> 撤回</label>
+      <label><input type="radio" name="84" value="再看看"> 再看看</label>
+    </div>
+  </div>
+</div>
+<div class="card" data-no="85">
+  <div><img src="img-85_a0a040808000acac_ab140a6d.png" alt="85" onclick="zoom(this.src)"></div>
+  <div>
+    <div><span class="no">#85</span> <span class="status s1">无法判定</span></div>
+    <div class="kv">来源：<b>candidate:history:705c908c6130849540ac5feba8afceacb9a4ecd50f33313af675e8525b60500d（无法判定:证据不足）</b></div>
+    <div class="kv">距离 1~1 ｜ 命中 1 次 ｜ 其中会改变判定 <b>0</b></div>
+    <div class="kv">原判定：violation_high:1 ｜ 类别：fraud:1</div>
+    <div class="kv">样例：onebot:530297362:1625584349 @2026-09-18 08:01:01.183025 (470794920)</div>
+    <div class="pick">
+      <label><input type="radio" name="85" value="放行"> 放行</label>
+      <label><input type="radio" name="85" value="撤回"> 撤回</label>
+      <label><input type="radio" name="85" value="再看看"> 再看看</label>
+    </div>
+  </div>
+</div>
+<div class="card" data-no="86">
+  <div><img src="img-86_808080400000ac8c_25f2b513.jpg" alt="86" onclick="zoom(this.src)"></div>
+  <div>
+    <div><span class="no">#86</span> <span class="status s1">无法判定</span></div>
+    <div class="kv">来源：<b>candidate:history:93ea716c406ec436065993921678f3b52d7f14437d4b34e32fde040caed9f196（无法判定:证据不足）</b></div>
+    <div class="kv">距离 2~2 ｜ 命中 1 次 ｜ 其中会改变判定 <b>0</b></div>
+    <div class="kv">原判定：record_only:1 ｜ 类别：:1</div>
+    <div class="kv">样例：onebot:530297362:1233266246 @2026-09-18 07:30:09.314855 (470794920)</div>
+    <div class="pick">
+      <label><input type="radio" name="86" value="放行"> 放行</label>
+      <label><input type="radio" name="86" value="撤回"> 撤回</label>
+      <label><input type="radio" name="86" value="再看看"> 再看看</label>
+    </div>
+  </div>
+</div>
+<div class="card" data-no="87">
+  <div><img src="img-87_808080f4b040ac8c_279442f5.png" alt="87" onclick="zoom(this.src)"></div>
+  <div>
+    <div><span class="no">#87</span> <span class="status s1">无法判定</span></div>
+    <div class="kv">来源：<b>candidate:history:0bb5e1d1ad9ae5bc26e54bc79e8ebc39131057d5d208f7d4bdc6227e67a44327（无法判定:证据不足）</b></div>
+    <div class="kv">距离 0~0 ｜ 命中 1 次 ｜ 其中会改变判定 <b>0</b></div>
+    <div class="kv">原判定：record_only:1 ｜ 类别：:1</div>
+    <div class="kv">样例：onebot:530297362:1742957485 @2026-09-18 06:20:52.501228 (470794920)</div>
+    <div class="pick">
+      <label><input type="radio" name="87" value="放行"> 放行</label>
+      <label><input type="radio" name="87" value="撤回"> 撤回</label>
+      <label><input type="radio" name="87" value="再看看"> 再看看</label>
+    </div>
+  </div>
+</div>
+<div class="card" data-no="88">
+  <div><img src="img-88_929824ac9c4cacac_4ee1be2e.jpg" alt="88" onclick="zoom(this.src)"></div>
+  <div>
+    <div><span class="no">#88</span> <span class="status s1">无法判定</span></div>
+    <div class="kv">来源：<b>candidate:history:bc1c7e31bbdcab79ad4a26e253d5ffd2527289fa6f14295a6a1b4633b681b9f3（无法判定:证据不足）</b></div>
+    <div class="kv">距离 2~2 ｜ 命中 1 次 ｜ 其中会改变判定 <b>0</b></div>
+    <div class="kv">原判定：record_only:1 ｜ 类别：:1</div>
+    <div class="kv">样例：onebot:530297362:372391584 @2026-09-18 03:27:45.695947 (470794920)</div>
+    <div class="pick">
+      <label><input type="radio" name="88" value="放行"> 放行</label>
+      <label><input type="radio" name="88" value="撤回"> 撤回</label>
+      <label><input type="radio" name="88" value="再看看"> 再看看</label>
+    </div>
+  </div>
+</div>
+<div class="card" data-no="89">
+  <div><img src="img-89_8a4a80844000acac_3ab59745.jpg" alt="89" onclick="zoom(this.src)"></div>
+  <div>
+    <div><span class="no">#89</span> <span class="status s1">无法判定</span></div>
+    <div class="kv">来源：<b>candidate:history:ac73c9a01efcdb5651901c5a5df5209d9665324805032205989f8f4022fadce9（无法判定:证据不足）</b></div>
+    <div class="kv">距离 0~0 ｜ 命中 1 次 ｜ 其中会改变判定 <b>0</b></div>
+    <div class="kv">原判定：record_only:1 ｜ 类别：other:1</div>
+    <div class="kv">样例：onebot:530297362:1196982686 @2026-09-18 03:25:12.926799 (868995385)</div>
+    <div class="pick">
+      <label><input type="radio" name="89" value="放行"> 放行</label>
+      <label><input type="radio" name="89" value="撤回"> 撤回</label>
+      <label><input type="radio" name="89" value="再看看"> 再看看</label>
+    </div>
+  </div>
+</div>
+<div class="card" data-no="90">
+  <div><img src="img-90_8aa2e0a47400acac_0c0cf7af.jpg" alt="90" onclick="zoom(this.src)"></div>
+  <div>
+    <div><span class="no">#90</span> <span class="status s1">无法判定</span></div>
+    <div class="kv">来源：<b>candidate:history:0d2d9cd1a52a5e0f67578bec54e038d0d52b3d39e47b1513d6965e401245abcc（无法判定:证据不足）</b></div>
+    <div class="kv">距离 0~0 ｜ 命中 1 次 ｜ 其中会改变判定 <b>0</b></div>
+    <div class="kv">原判定：record_only:1 ｜ 类别：other:1</div>
+    <div class="kv">样例：onebot:530297362:2080866775 @2026-09-17 06:08:53.034738 (544140282)</div>
+    <div class="pick">
+      <label><input type="radio" name="90" value="放行"> 放行</label>
+      <label><input type="radio" name="90" value="撤回"> 撤回</label>
+      <label><input type="radio" name="90" value="再看看"> 再看看</label>
+    </div>
+  </div>
+</div>
+<div class="card" data-no="91">
+  <div><img src="img-91_908080908040acac_4896f539.jpg" alt="91" onclick="zoom(this.src)"></div>
+  <div>
+    <div><span class="no">#91</span> <span class="status s1">无法判定</span></div>
+    <div class="kv">来源：<b>candidate:history:ad2829df259b2ae88b5917bdb1f2446e2a032ff64b64a0244d0a26a150782ffe（无法判定:证据不足）</b></div>
+    <div class="kv">距离 2~2 ｜ 命中 1 次 ｜ 其中会改变判定 <b>0</b></div>
+    <div class="kv">原判定：record_only:1 ｜ 类别：other:1</div>
+    <div class="kv">样例：onebot:3573002001:763269230 @2026-09-16 07:05:53.520204 (544140282)</div>
+    <div class="pick">
+      <label><input type="radio" name="91" value="放行"> 放行</label>
+      <label><input type="radio" name="91" value="撤回"> 撤回</label>
+      <label><input type="radio" name="91" value="再看看"> 再看看</label>
+    </div>
+  </div>
+</div>
+<div class="card" data-no="92">
+  <div><img src="img-92_b6a2b1b14101acac_99c14de3.jpg" alt="92" onclick="zoom(this.src)"></div>
+  <div>
+    <div><span class="no">#92</span> <span class="status s1">无法判定</span></div>
+    <div class="kv">来源：<b>candidate:history:d9902c8f5caabaddc68eddc7315f0f619e5a8a8efc16b41ca71af4c57a72366a（无法判定:证据不足）</b></div>
+    <div class="kv">距离 0~0 ｜ 命中 1 次 ｜ 其中会改变判定 <b>0</b></div>
+    <div class="kv">原判定：record_only:1 ｜ 类别：:1</div>
+    <div class="kv">样例：onebot:3573002001:1815412782 @2026-09-16 06:53:34.007595 (544140282)</div>
+    <div class="pick">
+      <label><input type="radio" name="92" value="放行"> 放行</label>
+      <label><input type="radio" name="92" value="撤回"> 撤回</label>
+      <label><input type="radio" name="92" value="再看看"> 再看看</label>
+    </div>
+  </div>
+</div>
+<div class="card" data-no="93">
+  <div><img src="img-93_80c000000000ac8c_e096e4e3.jpg" alt="93" onclick="zoom(this.src)"></div>
+  <div>
+    <div><span class="no">#93</span> <span class="status s1">无法判定</span></div>
+    <div class="kv">来源：<b>candidate:history:14fa27b9f601707cdfb1054f83741bdccbc3f22b0d92129eb7a53f49fbb179d6（无法判定:证据不足）</b></div>
+    <div class="kv">距离 1~1 ｜ 命中 1 次 ｜ 其中会改变判定 <b>0</b></div>
+    <div class="kv">原判定：record_only:1 ｜ 类别：:1</div>
+    <div class="kv">样例：onebot:3573002001:365378894 @2026-09-15 06:40:28.905218 (544140282)</div>
+    <div class="pick">
+      <label><input type="radio" name="93" value="放行"> 放行</label>
+      <label><input type="radio" name="93" value="撤回"> 撤回</label>
+      <label><input type="radio" name="93" value="再看看"> 再看看</label>
+    </div>
+  </div>
+</div>
+<div class="card" data-no="94">
+  <div><img src="img-94_808000000000acac_32caddd7.jpg" alt="94" onclick="zoom(this.src)"></div>
+  <div>
+    <div><span class="no">#94</span> <span class="status s1">无法判定</span></div>
+    <div class="kv">来源：<b>candidate:history:14fa27b9f601707cdfb1054f83741bdccbc3f22b0d92129eb7a53f49fbb179d6（无法判定:证据不足）</b></div>
+    <div class="kv">距离 1~1 ｜ 命中 1 次 ｜ 其中会改变判定 <b>0</b></div>
+    <div class="kv">原判定：record_only:1 ｜ 类别：other:1</div>
+    <div class="kv">样例：onebot:3573002001:1143896972 @2026-09-13 06:37:42.641948 (17598122)</div>
+    <div class="pick">
+      <label><input type="radio" name="94" value="放行"> 放行</label>
+      <label><input type="radio" name="94" value="撤回"> 撤回</label>
+      <label><input type="radio" name="94" value="再看看"> 再看看</label>
+    </div>
+  </div>
+</div>
+<div class="card" data-no="95">
+  <div><img src="img-95_aa898cbc0c00acac_70784436.jpg" alt="95" onclick="zoom(this.src)"></div>
+  <div>
+    <div><span class="no">#95</span> <span class="status s1">无法判定</span></div>
+    <div class="kv">来源：<b>candidate:history:c8b6fc0da9496f630db7da4a898fd8048e00e638c6dbcb6a80ffe41bafc3f860（无法判定:证据不足）</b></div>
+    <div class="kv">距离 1~1 ｜ 命中 1 次 ｜ 其中会改变判定 <b>0</b></div>
+    <div class="kv">原判定：record_only:1 ｜ 类别：:1</div>
+    <div class="kv">样例：onebot:3573002001:1990068402 @2026-09-12 21:44:14.039565 (470794920)</div>
+    <div class="pick">
+      <label><input type="radio" name="95" value="放行"> 放行</label>
+      <label><input type="radio" name="95" value="撤回"> 撤回</label>
+      <label><input type="radio" name="95" value="再看看"> 再看看</label>
+    </div>
+  </div>
+</div></form>
+<h2 style="font-size:16px;margin:18px 0 6px">结论（可复制）</h2>
+<textarea id="out" readonly placeholder="选完上面的按钮后，点这里生成"></textarea>
+<button type="button" onclick="collect()">生成结论文本</button>
+<div id="lightbox" onclick="this.style.display='none'"><img id="lightimg"></div>
+<script>
+function zoom(src) { document.getElementById('lightimg').src = src;
+  document.getElementById('lightbox').style.display = 'flex'; }
+function collect() {
+  const out = [];
+  document.querySelectorAll('.card').forEach(c => {
+    const v = document.querySelector(`input[name="${c.dataset.no}"]:checked`);
+    out.push(c.dataset.no + ' ' + (v ? v.value : '未定'));
+  });
+  document.getElementById('out').value = out.join('；');
+}
+</script></body></html>

@@ -1,0 +1,82 @@
+{
+  "at": "2026-09-22T09:11:37.945715+00:00",
+  "run_id": "35707930568",
+  "head_sha": "06324fedab4baf8d0ee14e09991c5385627a01ed",
+  "checkout_sha": "e911fc76fa9572fa7167aa58ad31764842c65587",
+  "conclusion": "success",
+  "url": "https://github.com/miaomiao636/qq-group-moderation-bot/actions/runs/35707930568",
+  "evidence_commands": [
+    "gh run view 35707930568 --json headSha,status,conclusion,jobs,url,startedAt,updatedAt",
+    "gh run view 35707930568 --job <job_id> --log"
+  ],
+  "run_json_sha256": "d36cd87f73332232f31072f480e6b7cc2bec664026e9dcca6a64c16adc4c9c81",
+  "jobs": [
+    {
+      "name": "Runtime deps regression (clean install)",
+      "job_id": "106681262100",
+      "conclusion": "success",
+      "url": "https://github.com/miaomiao636/qq-group-moderation-bot/actions/runs/35707930568/job/106681262100",
+      "checkout_sha": "e911fc76fa9572fa7167aa58ad31764842c65587",
+      "commands": [
+        "Runtime deps regression (clean install)\tInstall runtime deps only (no dev group)\t﻿2026-09-22T09:00:39.9841214Z ##[group]Run uv sync --locked --no-dev",
+        "Runtime deps regression (clean install)\tVerify app imports with runtime deps only\t﻿2026-09-22T09:00:40.4217018Z ##[group]Run uv run --no-sync python -c \"from app.main import app; print('runtime import OK')\""
+      ],
+      "results": [
+        "Runtime deps regression (clean install)\tVerify app imports with runtime deps only\t2026-09-22T09:00:40.4217736Z ^[[36;1muv run --no-sync python -c \"from app.main import app; print('runtime import OK')\"^[[0m",
+        "Runtime deps regression (clean install)\tVerify app imports with runtime deps only\t2026-09-22T09:00:42.1036564Z runtime import OK",
+        "Runtime deps regression (clean install)\tAssert dev deps are NOT installed\t2026-09-22T09:00:42.2299812Z OK: dev 依赖未安装，运行时环境干净"
+      ],
+      "log_sha256": "58b8dcf29de46394f23b78bfcf212dfcd2d7ccb9b344b31a7d8eb1d15a4cd953"
+    },
+    {
+      "name": "Lint, Type-check & Test (ubuntu-latest)",
+      "job_id": "106681262361",
+      "conclusion": "success",
+      "url": "https://github.com/miaomiao636/qq-group-moderation-bot/actions/runs/35707930568/job/106681262361",
+      "checkout_sha": "e911fc76fa9572fa7167aa58ad31764842c65587",
+      "commands": [
+        "Lint, Type-check & Test (ubuntu-latest)\tInstall dependencies (locked)\t﻿2026-09-22T09:00:44.0050141Z ##[group]Run uv sync --locked --all-groups",
+        "Lint, Type-check & Test (ubuntu-latest)\tLint (ruff check)\t﻿2026-09-22T09:00:44.7110967Z ##[group]Run uv run ruff check app tests alembic",
+        "Lint, Type-check & Test (ubuntu-latest)\tFormat check (ruff format)\t﻿2026-09-22T09:00:44.7705208Z ##[group]Run uv run ruff format --check app tests alembic",
+        "Lint, Type-check & Test (ubuntu-latest)\tType check (mypy)\t﻿2026-09-22T09:00:44.8256293Z ##[group]Run uv run mypy app",
+        "Lint, Type-check & Test (ubuntu-latest)\tTest (pytest)\t﻿2026-09-22T09:00:51.4879175Z ##[group]Run uv run pytest"
+      ],
+      "results": [
+        "Lint, Type-check & Test (ubuntu-latest)\tLint (ruff check)\t2026-09-22T09:00:44.7665723Z All checks passed!",
+        "Lint, Type-check & Test (ubuntu-latest)\tFormat check (ruff format)\t2026-09-22T09:00:44.8213746Z 336 files already formatted",
+        "Lint, Type-check & Test (ubuntu-latest)\tType check (mypy)\t2026-09-22T09:00:51.4618494Z Success: no issues found in 114 source files",
+        "Lint, Type-check & Test (ubuntu-latest)\tTest (pytest)\t2026-09-22T09:06:04.2110306Z 2375 passed, 3 skipped in 311.77s (0:05:11)"
+      ],
+      "log_sha256": "e65e2851031f603684fabe4da5e31691c346831d81bf7c296493a64404b1b472"
+    },
+    {
+      "name": "Lint, Type-check & Test (windows-latest)",
+      "job_id": "106681262562",
+      "conclusion": "success",
+      "url": "https://github.com/miaomiao636/qq-group-moderation-bot/actions/runs/35707930568/job/106681262562",
+      "checkout_sha": "e911fc76fa9572fa7167aa58ad31764842c65587",
+      "commands": [
+        "Lint, Type-check & Test (windows-latest)\tInstall dependencies (locked)\t﻿2026-09-22T09:00:49.4655193Z ##[group]Run uv sync --locked --all-groups",
+        "Lint, Type-check & Test (windows-latest)\tLint (ruff check)\t﻿2026-09-22T09:00:53.0351156Z ##[group]Run uv run ruff check app tests alembic",
+        "Lint, Type-check & Test (windows-latest)\tFormat check (ruff format)\t﻿2026-09-22T09:00:53.6510882Z ##[group]Run uv run ruff format --check app tests alembic",
+        "Lint, Type-check & Test (windows-latest)\tType check (mypy)\t﻿2026-09-22T09:00:54.1767286Z ##[group]Run uv run mypy app",
+        "Lint, Type-check & Test (windows-latest)\tTest (pytest)\t﻿2026-09-22T09:01:09.4888522Z ##[group]Run uv run pytest"
+      ],
+      "results": [
+        "Lint, Type-check & Test (windows-latest)\tLint (ruff check)\t2026-09-22T09:00:53.5255624Z All checks passed!",
+        "Lint, Type-check & Test (windows-latest)\tFormat check (ruff format)\t2026-09-22T09:00:54.0530317Z 336 files already formatted",
+        "Lint, Type-check & Test (windows-latest)\tType check (mypy)\t2026-09-22T09:01:09.3478819Z Success: no issues found in 114 source files",
+        "Lint, Type-check & Test (windows-latest)\tTest (pytest)\t2026-09-22T09:10:42.2590630Z 2375 passed, 3 skipped in 570.65s (0:09:30)"
+      ],
+      "log_sha256": "4663869f04c7e4ed44869d8875258e6aed5ff41decb8339c2d16138f1fe15c52"
+    }
+  ],
+  "checkout_parents": [
+    "68a94b9602e6bb4ba1e4aab65f1ea01b4b2c26c6",
+    "06324fedab4baf8d0ee14e09991c5385627a01ed"
+  ],
+  "checkout_contains_exact_head": true,
+  "checkout_commit_json_sha256": "f7f0e7821501425dfac62b5a037502e5ff56dc5e5144a3a7857b286daecca09b",
+  "runtime_dev_dependency_absence_assertion_verified": true,
+  "private_summary_sha256": "1365c36e2d0f348c36e0f099e74931be01e291fb2306b618df41809cc67ab2da"
+}

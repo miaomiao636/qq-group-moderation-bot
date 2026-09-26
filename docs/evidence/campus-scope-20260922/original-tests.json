@@ -1,0 +1,175 @@
+[
+  {
+    "path": "tests/test_wall_pair.py",
+    "original_sha256": "9b5e632f31127eb658a36d90bc65f566c83972ded6299a793d1604bdf2427648",
+    "base_sha": "6ef867aafea654e5e9f9ad667dc3ee17d664602f",
+    "archive": "original-tests/test_wall_pair.py",
+    "changed_functions": [
+      "_wall_detail"
+    ],
+    "assertion_changes": [],
+    "adaptation": "Explicit synthetic confirmed-campus identity/brand evidence; original safety outcomes retained."
+  },
+  {
+    "path": "tests/test_wall_pair_contract.py",
+    "original_sha256": "f4f796c83f63fd3ca92f116347e8537a34eb493770435ed61dd49ba39949d810",
+    "base_sha": "6ef867aafea654e5e9f9ad667dc3ee17d664602f",
+    "archive": "original-tests/test_wall_pair_contract.py",
+    "changed_functions": [
+      "_vision"
+    ],
+    "assertion_changes": [],
+    "adaptation": "Explicit synthetic confirmed-campus identity/brand evidence; original safety outcomes retained."
+  },
+  {
+    "path": "tests/test_pairing_inflight.py",
+    "original_sha256": "9f3426737c72b035ef2deaeaf438cbda7c76ea2a10d795ec54fe0d083aeded81",
+    "base_sha": "6ef867aafea654e5e9f9ad667dc3ee17d664602f",
+    "archive": "original-tests/test_pairing_inflight.py",
+    "changed_functions": [
+      "_FakeAI.review_message",
+      "test_queued_intervening_text_does_not_break_wall_window"
+    ],
+    "assertion_changes": [],
+    "adaptation": "Explicit synthetic confirmed-campus identity/brand evidence; original safety outcomes retained."
+  },
+  {
+    "path": "tests/test_pairing_active_context.py",
+    "original_sha256": "4fa728ed02866c5b909245f59968fd63092838aaf2c95d6ff28211c3f939a140",
+    "base_sha": "6ef867aafea654e5e9f9ad667dc3ee17d664602f",
+    "archive": "original-tests/test_pairing_active_context.py",
+    "changed_functions": [
+      "test_wall_source_from_other_bot_account_does_not_exempt_new_event"
+    ],
+    "assertion_changes": [],
+    "adaptation": "Explicit synthetic confirmed-campus identity/brand evidence; original safety outcomes retained."
+  },
+  {
+    "path": "tests/test_pairing_retention_metadata.py",
+    "original_sha256": "361ae4351c45a17ff0ce2de23209412abd38d00607b6b99f5108b4eb19a39f0f",
+    "base_sha": "6ef867aafea654e5e9f9ad667dc3ee17d664602f",
+    "archive": "original-tests/test_pairing_retention_metadata.py",
+    "changed_functions": [
+      "test_cleanup_markers_do_not_poison_or_bypass_pairing"
+    ],
+    "assertion_changes": [],
+    "adaptation": "Explicit synthetic confirmed-campus identity/brand evidence; original safety outcomes retained."
+  },
+  {
+    "path": "tests/test_r116_miniprogram_allow.py",
+    "original_sha256": "4314dfe5e12d055294cbd9293949914654374bbb24b0272009cb47a32d9497a3",
+    "base_sha": "6ef867aafea654e5e9f9ad667dc3ee17d664602f",
+    "archive": "original-tests/test_r116_miniprogram_allow.py",
+    "changed_functions": [
+      "_vision"
+    ],
+    "assertion_changes": [],
+    "adaptation": "Explicit synthetic confirmed-campus identity/brand evidence; original safety outcomes retained."
+  },
+  {
+    "path": "tests/test_r132_qr_configured_thresholds.py",
+    "original_sha256": "422c75b43b2f6bd8dcf3f563c3deccaac7ed5d94ba5591a0bbd802fa980e3b77",
+    "base_sha": "6ef867aafea654e5e9f9ad667dc3ee17d664602f",
+    "archive": "original-tests/test_r132_qr_configured_thresholds.py",
+    "changed_functions": [
+      "Primary.moderate_image",
+      "Secondary.moderate_image"
+    ],
+    "assertion_changes": [],
+    "adaptation": "Explicit synthetic confirmed-campus identity/brand evidence; original safety outcomes retained."
+  },
+  {
+    "path": "tests/test_r132_qr_unresolved.py",
+    "original_sha256": "134790e6108f5744113d58ff036697a16876d58be125bf3b841874c696d2023d",
+    "base_sha": "6ef867aafea654e5e9f9ad667dc3ee17d664602f",
+    "archive": "original-tests/test_r132_qr_unresolved.py",
+    "changed_functions": [
+      "FakeVision.moderate_image"
+    ],
+    "assertion_changes": [],
+    "adaptation": "Explicit synthetic confirmed-campus identity/brand evidence; original safety outcomes retained."
+  },
+  {
+    "path": "tests/test_r132_qr_review_pair.py",
+    "original_sha256": "622756c4958b2e09a93d65424209a15e33b0fee2e6514c7c136fc4358ad07ccb",
+    "base_sha": "6ef867aafea654e5e9f9ad667dc3ee17d664602f",
+    "archive": "original-tests/test_r132_qr_review_pair.py",
+    "changed_functions": [
+      "FakePrimary.moderate_image",
+      "FakeSecondary.moderate_image"
+    ],
+    "assertion_changes": [],
+    "adaptation": "Explicit synthetic confirmed-campus identity/brand evidence; original safety outcomes retained."
+  },
+  {
+    "path": "tests/test_r132_threshold_matrix.py",
+    "original_sha256": "4c5e86caa36b536e5ad3d46b06cbcfb7d82354594d80cbcce7652e351d3aae50",
+    "base_sha": "6ef867aafea654e5e9f9ad667dc3ee17d664602f",
+    "archive": "original-tests/test_r132_threshold_matrix.py",
+    "changed_functions": [
+      "Model.moderate_image"
+    ],
+    "assertion_changes": [],
+    "adaptation": "Explicit synthetic confirmed-campus identity/brand evidence; original safety outcomes retained."
+  },
+  {
+    "path": "tests/test_r132_source_collection_contract.py",
+    "original_sha256": "18d72e0f14a601c62139c21ff209d794c67fadfbd4401c94bf98dc734a4d3125",
+    "base_sha": "6ef867aafea654e5e9f9ad667dc3ee17d664602f",
+    "archive": "original-tests/test_r132_source_collection_contract.py",
+    "changed_functions": [
+      "vision",
+      "FixedVision.moderate_image"
+    ],
+    "assertion_changes": [],
+    "adaptation": "Explicit synthetic confirmed-campus identity/brand evidence; original safety outcomes retained."
+  },
+  {
+    "path": "tests/test_r132_source_message_order.py",
+    "original_sha256": "a1389bab65e9471fcfb77928d80e377261ac2eab56ffefce12391d702406be2c",
+    "base_sha": "6ef867aafea654e5e9f9ad667dc3ee17d664602f",
+    "archive": "original-tests/test_r132_source_message_order.py",
+    "changed_functions": [
+      "full_pair",
+      "result",
+      "test_prefix_and_flag_cannot_come_from_different_results"
+    ],
+    "assertion_changes": [
+      "full_pair"
+    ],
+    "adaptation": "Explicit synthetic confirmed-campus identity/brand evidence; original safety outcomes retained. full_pair source-row expectation now exactly record_only when any attachment lacks campus identity; final no-exemption assertion unchanged."
+  },
+  {
+    "path": "tests/test_r132_window_card_adjacent.py",
+    "original_sha256": "953e5e07456ba838f89a51051e3e128516089eeb9cfaa58b61f33e28b7cfa692",
+    "base_sha": "6ef867aafea654e5e9f9ad667dc3ee17d664602f",
+    "archive": "original-tests/test_r132_window_card_adjacent.py",
+    "changed_functions": [
+      "make_source"
+    ],
+    "assertion_changes": [],
+    "adaptation": "Explicit synthetic confirmed-campus identity/brand evidence; original safety outcomes retained."
+  },
+  {
+    "path": "tests/test_r132_window_evidence.py",
+    "original_sha256": "e9b8594b4c343406d183442d0b4cf6aee563afc1e6feb7a4e1909cafba0cb943",
+    "base_sha": "6ef867aafea654e5e9f9ad667dc3ee17d664602f",
+    "archive": "original-tests/test_r132_window_evidence.py",
+    "changed_functions": [
+      "source_image"
+    ],
+    "assertion_changes": [],
+    "adaptation": "Explicit synthetic confirmed-campus identity/brand evidence; original safety outcomes retained."
+  },
+  {
+    "path": "tests/test_r132_r09_real_unresolved_shapes.py",
+    "original_sha256": "a12bd248a4dac9de420c9a7f6bfac0430496c88a53f31e2dd748dde34c4e8145",
+    "base_sha": "6ef867aafea654e5e9f9ad667dc3ee17d664602f",
+    "archive": "original-tests/test_r132_r09_real_unresolved_shapes.py",
+    "changed_functions": [
+      "Vision.moderate_image"
+    ],
+    "assertion_changes": [],
+    "adaptation": "Explicit synthetic confirmed-campus identity/brand evidence; original safety outcomes retained."
+  }
+]

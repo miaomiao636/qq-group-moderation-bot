@@ -34,7 +34,7 @@ def test_voice_spam_transcription_flagged() -> None:
     att = attachment(asr_refer_text="招募兼职刷单，日结，加我微信 abc12345")
     decision = evaluate_voice(MSG_ID, GROUP, MEMBER, att, TextRuleEngine())
     assert decision.verdict == "violation_high"
-    assert set(decision.recommended_actions) == {"recall", "mute", "warn"}
+    assert decision.recommended_actions == ["recall"]
     assert "kick" not in decision.model_dump_json().lower()
 
 

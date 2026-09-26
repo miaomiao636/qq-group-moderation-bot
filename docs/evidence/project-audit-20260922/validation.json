@@ -1,0 +1,169 @@
+{
+  "execution_sha": "1c17ba09e5bef268a6162864830396e8d36c6107",
+  "source_baseline": "3792c81594fc9a9dfa49925a68ca69538a2e4a57",
+  "checks": {
+    "focused": {
+      "execution_sha": "1c17ba09e5bef268a6162864830396e8d36c6107",
+      "command": [
+        "<production .venv Python>",
+        "-m",
+        "pytest",
+        "tests/test_auth_unicode_input.py",
+        "tests/test_backup_preservation_boundaries.py",
+        "tests/test_media_evidence_retention.py",
+        "tests/test_report_read_consistency.py",
+        "tests/test_runtime_resource_ownership.py",
+        "-o",
+        "addopts=",
+        "-q",
+        "--tb=short"
+      ],
+      "at": "2026-09-22T09:48:40.765894+00:00",
+      "exit_code": 0,
+      "environment": {
+        "PYTHONUTF8": "1",
+        "PYTHONIOENCODING": "utf-8"
+      },
+      "summary": "51 passed in 10.26s",
+      "log_sha256": "86344c3d0a4a2271e3af1b66693930568ddc8253e92b9a16da27f9ed86651f74"
+    },
+    "full": {
+      "execution_sha": "1c17ba09e5bef268a6162864830396e8d36c6107",
+      "command": [
+        "<production .venv Python>",
+        "-m",
+        "pytest",
+        "-o",
+        "addopts=",
+        "-q",
+        "--tb=short"
+      ],
+      "at": "2026-09-22T09:52:23.363420+00:00",
+      "exit_code": 0,
+      "environment": {
+        "PYTHONUTF8": "1",
+        "PYTHONIOENCODING": "utf-8"
+      },
+      "summary": "2425 passed, 4 skipped in 221.53s (0:03:41)",
+      "log_sha256": "b115621dd05f6b1ffb138f15be199f9655f3fe5ab654f0ba8956a02ec03944c6"
+    },
+    "reviewer": {
+      "execution_sha": "1c17ba09e5bef268a6162864830396e8d36c6107",
+      "command": [
+        "<production .venv Python>",
+        "-m",
+        "pytest",
+        "tests",
+        "-k",
+        "r132_review",
+        "-o",
+        "addopts=",
+        "-q",
+        "--tb=short"
+      ],
+      "at": "2026-09-22T09:52:41.502226+00:00",
+      "exit_code": 0,
+      "environment": {
+        "PYTHONUTF8": "1",
+        "PYTHONIOENCODING": "utf-8"
+      },
+      "summary": "262 passed, 2167 deselected in 17.48s",
+      "log_sha256": "9d13fc8dc84bef93d0e0940f9f034378c827f5dc376acbe4b3d3133565353406"
+    },
+    "ruff": {
+      "execution_sha": "1c17ba09e5bef268a6162864830396e8d36c6107",
+      "command": [
+        "<production .venv Python>",
+        "-m",
+        "ruff",
+        "check",
+        "app",
+        "tests",
+        "alembic",
+        "scripts"
+      ],
+      "at": "2026-09-22T09:52:41.589016+00:00",
+      "exit_code": 0,
+      "environment": {
+        "PYTHONUTF8": "1",
+        "PYTHONIOENCODING": "utf-8"
+      },
+      "summary": "All checks passed!",
+      "log_sha256": "82b3e6a6c090a57601d22943bd23fca9218d1031dbe5a7b754092f9a156b4f18"
+    },
+    "format": {
+      "execution_sha": "1c17ba09e5bef268a6162864830396e8d36c6107",
+      "command": [
+        "<production .venv Python>",
+        "-m",
+        "ruff",
+        "format",
+        "--check",
+        "app",
+        "tests",
+        "alembic",
+        "scripts"
+      ],
+      "at": "2026-09-22T09:52:41.675224+00:00",
+      "exit_code": 0,
+      "environment": {
+        "PYTHONUTF8": "1",
+        "PYTHONIOENCODING": "utf-8"
+      },
+      "summary": "367 files already formatted",
+      "log_sha256": "0f63e40db34c45148aeebbf57fa4a4e9d889c43582cf592390bc818981f0eece"
+    },
+    "mypy": {
+      "execution_sha": "1c17ba09e5bef268a6162864830396e8d36c6107",
+      "command": [
+        "<production .venv Python>",
+        "-m",
+        "mypy",
+        "app"
+      ],
+      "at": "2026-09-22T09:52:42.056773+00:00",
+      "exit_code": 0,
+      "environment": {
+        "PYTHONUTF8": "1",
+        "PYTHONIOENCODING": "utf-8"
+      },
+      "summary": "Success: no issues found in 115 source files",
+      "log_sha256": "336ae7260eddea0a164e71dab37c0961f938ab384bb7074267808c1ce87da93d"
+    }
+  },
+  "skip_reason_followup": {
+    "execution_sha": "1c17ba09e5bef268a6162864830396e8d36c6107",
+    "command": [
+      "<production .venv Python>",
+      "-m",
+      "pytest",
+      "tests/test_image_engine.py",
+      "tests/test_longterm_data.py",
+      "tests/test_managed_copies.py",
+      "tests/test_space_inspector_history.py",
+      "-o",
+      "addopts=",
+      "-q",
+      "-rs",
+      "--tb=short"
+    ],
+    "summary": "50 passed, 4 skipped in 1.65s",
+    "reasons": [
+      "SKIPPED [1] tests\\test_image_engine.py:214: 真实样本仅存于测试机本地（gitignored）",
+      "SKIPPED [1] tests\\test_longterm_data.py:139: directory symbolic links are unavailable on this host",
+      "SKIPPED [1] tests\\test_managed_copies.py:148: 本环境不支持创建文件符号链接",
+      "SKIPPED [1] tests\\test_space_inspector_history.py:188: symlink unavailable on this platform: OSError"
+    ],
+    "log_sha256": "ef9527b428c59695f5a913c653da2656775d28bb5412f19623433bc54f2806d3"
+  },
+  "production_deployed": false,
+  "remote_model_calls": 0,
+  "new_test_files": [
+    "test_auth_unicode_input.py",
+    "test_runtime_resource_ownership.py",
+    "test_report_read_consistency.py",
+    "test_backup_preservation_boundaries.py",
+    "test_media_evidence_retention.py"
+  ],
+  "existing_reviewer_probe_edits": false
+}

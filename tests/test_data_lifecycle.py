@@ -66,11 +66,11 @@ async def _run_cleanup() -> dict:
 
 
 @pytest.mark.asyncio
-async def test_case_auto_archive_after_15d() -> None:
-    """终态满 15 天自动归档；未满不归档；PENDING 永不归档。"""
+async def test_case_auto_archive_after_30d() -> None:
+    """结案满 30 天自动归档；未满不归档；PENDING 永不归档。"""
     g = "GA-" + uuid.uuid4().hex[:10]
-    old = await _make_closed_case(days_ago=16, group=g)
-    fresh = await _make_closed_case(days_ago=2, group=g)
+    old = await _make_closed_case(days_ago=31, group=g)
+    fresh = await _make_closed_case(days_ago=29, group=g)
     await _run_cleanup()
     async with SessionLocal() as session:
         assert (await session.get(Case, old.id)).archived is True

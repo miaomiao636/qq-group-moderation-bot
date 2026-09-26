@@ -120,8 +120,13 @@ async def test_empty_feedback_context_when_no_records() -> None:
 
 
 def test_prompt_version_bumped_for_feedback() -> None:
-    """反馈上下文注入后 PROMPT_VERSION 必须升级（缓存键含版本号）。"""
-    assert PROMPT_VERSION == "t204-v6"
+    """反馈上下文注入后 PROMPT_VERSION 必须升级（缓存键含版本号）。
+
+    只校验"版本不低于引入反馈上下文的 v6"，不钉死具体值——提示词/契约每次
+    变更都应继续升版（例如 D-039 小程序码放行升到 t204-v14）。
+    """
+    assert PROMPT_VERSION.startswith("t204-v")
+    assert int(PROMPT_VERSION.removeprefix("t204-v")) >= 6
 
 
 def test_request_carries_feedback_context() -> None:

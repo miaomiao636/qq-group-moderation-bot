@@ -1,0 +1,1138 @@
+"""Synthetic, isolated admin batch operations; no live messages or member actions."""
+
+from __future__ import annotations
+
+import asyncio
+import csv
+import io
+import json
+import re
+from datetime import UTC, datetime, timedelta
+
+import pytest
+from app.actions.orchestrator import ActionIntent
+from app.cases.models import Case, ViolationRecord
+from app.models import AdminAudit, AdminChangePlan, ProviderGroupSettings
+from app.web import auth, case_batch
+from sqlalchemy import event, func, insert, select, update
+
+from tests import test_longterm_web
+
+web_ui = test_longterm_web.web_ui
+
+
+async def seed(factory, count=2):
+    async with factory() as session:
+        session.add(
+            ProviderGroupSettings(provider="onebot", external_group_id="123456", name="合成群")
+        )
+        for index in range(count):
+            case = Case(
+                case_no=f"BATCH-{index}",
+                provider="onebot",
+                group_openid="old-group",
+                member_openid="old-user",
+                external_group_id="123456",
+                external_user_id=str(200000 + index),
+            )
+            session.add(case)
+            await session.flush()
+            session.add(
+                ViolationRecord(
+                    provider="onebot",
+                    group_openid="old-group",
+                    member_openid="old-user",
+                    external_group_id="123456",
+                    external_user_id=case.external_user_id,
+                    message_id=f"msg-{index}",
+                    category="ad",
+                    confidence=0.95,
+                    case_id=case.id,
+                )
+            )
+        await session.commit()
+
+
+async def preview(client, csrf, **kw):
+    response = await client.post(
+        "/admin/cases/batch-preview",
+        data={
+            "csrf": csrf,
+            "scope": "selected",
+            "case_ids": ["1", "2"],
+            "reason": "已人工核对，本次保留成员",
+            **kw,
+        },
+    )
+    assert response.status_code == 200, response.text
+    return re.search(r'name="plan_id" value="([^"]+)"', response.text)[1]
+
+
+async def statuses(factory):
+    async with factory() as session:
+        return list(await session.scalars(select(Case.status).order_by(Case.id)))
+
+
+async def seed_large_batch(factory, count, evidence_per_case=0):
+    async with factory() as session:
+        await session.execute(
+            insert(Case),
+            [
+                {
+                    "id": index,
+                    "case_no": f"LARGE-{index}",
+                    "provider": "onebot",
+                    "group_openid": "old-group",
+                    "member_openid": "old-user",
+                    "external_group_id": "123456",
+                    "external_user_id": str(200000 + index),
+                }
+                for index in range(1, count + 1)
+            ],
+        )
+        if evidence_per_case:
+            await session.execute(
+                insert(ViolationRecord),
+                [
+                    {
+                        "provider": "onebot",
+                        "group_openid": "old-group",
+                        "member_openid": "old-user",
+                        "external_group_id": "123456",
+                        "external_user_id": str(200000 + index),
+                        "message_id": f"large-{index}-{evidence}",
+                        "category": "ad",
+                        "confidence": 0.95,
+                        "case_id": index,
+                    }
+                    for index in range(1, count + 1)
+                    for evidence in range(evidence_per_case)
+                ],
+            )
+        await session.commit()
+
+
+@pytest.mark.parametrize("already_closed", [False, True])
+async def test_full_5000_case_batch_closes_once_with_all_evidence_preserved(web_ui, already_closed):
+    client, factory, _, csrf = web_ui
+    await seed_large_batch(factory, 5000, evidence_per_case=5)
+    if already_closed:
+        async with factory() as session:
+            await session.execute(update(Case).where(Case.id == 1).values(status="CLOSED"))
+            await session.commit()
+    pending_count = 4999 if already_closed else 5000
+    response = await client.post(
+        "/admin/cases/batch-preview",
+        data={
+            "csrf": csrf,
+            "scope": "selected",
+            "case_ids_compact": json.dumps([str(i) for i in range(1, 5001)]),
+        },
+    )
+    assert response.status_code == 200, response.text
+    assert f"{pending_count} 个案件" in response.text
+    if already_closed:
+        assert "跳过 1 个已关闭案件" in response.text
+    plan_id = re.search(r'name="plan_id" value="([^"]+)"', response.text)[1]
+    expected_statuses = ["CLOSED"] if already_closed else []
+    assert await statuses(factory) == expected_statuses + ["PENDING_REVIEW"] * pending_count
+    for _ in range(2):
+        confirm = await client.post(
+            "/admin/cases/batch-confirm", data={"csrf": csrf, "plan_id": plan_id}
+        )
+        assert confirm.status_code == 303, confirm.text
+    async with factory() as session:
+        rows = list(await session.scalars(select(Case)))
+        assert len(rows) == 5000 and all(row.status == "CLOSED" for row in rows)
+        for row in rows:
+            if already_closed and row.id == 1:
+                assert row.audit_json == "{}"
+                continue
+            chain = json.loads(row.audit_json)["transitions"]
+            assert [(step["from"], step["to"]) for step in chain] == [
+                ("PENDING_REVIEW", "KEEP"),
+                ("KEEP", "CLOSED"),
+            ]
+            assert all(step["extra"]["reason"] == "人工处理" for step in chain)
+        assert await session.scalar(select(func.count()).select_from(ViolationRecord)) == 25000
+        assert not await session.scalar(select(ViolationRecord.id).where(ViolationRecord.revoked))
+        assert await session.scalar(select(func.count()).select_from(ActionIntent)) == 0
+        for action, expected in [(case_batch.ACTION, pending_count), ("case_batch_complete", 1)]:
+            assert (
+                await session.scalar(
+                    select(func.count()).select_from(AdminAudit).where(AdminAudit.action == action)
+                )
+                == expected
+            )
+
+
+@pytest.mark.parametrize("scope", ["selected", "filtered"])
+async def test_5001_case_batch_is_rejected_without_partial_work(web_ui, scope):
+    client, factory, _, csrf = web_ui
+    await seed_large_batch(factory, 5001)
+    data = {"csrf": csrf, "scope": scope}
+    if scope == "selected":
+        data["case_ids_compact"] = json.dumps([str(i) for i in range(1, 5002)])
+    response = await client.post("/admin/cases/batch-preview", data=data)
+    assert response.status_code == 422, response.text
+    assert await statuses(factory) == ["PENDING_REVIEW"] * 5001
+    async with factory() as session:
+        assert await session.scalar(select(func.count()).select_from(AdminChangePlan)) == 0
+        assert await session.scalar(select(func.count()).select_from(AdminAudit)) == 0
+
+
+async def test_export_authoritative_ids_and_summary_only(web_ui):
+    client, factory, _, csrf = web_ui
+    await seed(factory)
+    response = await client.post(
+        "/admin/cases/batch-export", data={"csrf": csrf, "scope": "selected", "case_ids": ["2"]}
+    )
+    assert response.status_code == 200
+    assert response.content.startswith(b"\xef\xbb\xbf")
+    assert response.headers["cache-control"] == "no-store"
+    rows = list(csv.DictReader(io.StringIO(response.content.decode("utf-8-sig"))))
+    assert len(rows) == 1
+    assert rows[0]["群名"] == "合成群"
+    assert rows[0]["群号"] == "123456" and rows[0]["QQ号"] == "200001"
+    assert rows[0]["违规记录数"] == "1"
+    assert "广告" in rows[0]["案件依据"] or "ad" in rows[0]["案件依据"]
+    assert "old-user" not in response.text and "message_snapshot_json" not in response.text
+
+
+async def test_case_detail_includes_reverse_linked_new_evidence(web_ui):
+    client, factory, _, _ = web_ui
+    await seed(factory, 1)
+    detail = await client.get("/admin/cases/1")
+    assert detail.status_code == 200
+    assert "证据（1 条）" in detail.text
+
+
+async def test_single_case_false_positive_revokes_reverse_linked_evidence(web_ui):
+    client, factory, _, csrf = web_ui
+    await seed(factory, 1)
+
+    response = await client.post(
+        "/admin/cases/1/false-positive", data={"csrf": csrf}, follow_redirects=False
+    )
+    assert response.status_code == 303
+
+    async with factory() as session:
+        case = await session.get(Case, 1)
+        records = list(await session.scalars(select(ViolationRecord)))
+        audits = list(
+            await session.scalars(
+                select(AdminAudit).where(AdminAudit.action == "case_false_positive")
+            )
+        )
+        assert case is not None and case.status == "CLOSED"
+        assert len(records) == 1 and records[0].revoked
+        assert "管理员标记误判" in records[0].revoke_reason
+        assert len(audits) == 1 and json.loads(audits[0].detail_json)["records"] == 1
+
+
+async def test_single_case_false_positive_rejects_evidence_owned_by_another_case(web_ui):
+    client, factory, _, csrf = web_ui
+    await seed(factory, 2)
+    async with factory() as session:
+        cases = list(await session.scalars(select(Case).order_by(Case.id)))
+        records = list(await session.scalars(select(ViolationRecord).order_by(ViolationRecord.id)))
+        cases[1].external_user_id = cases[0].external_user_id
+        records[1].external_user_id = cases[0].external_user_id
+        cases[0].violation_ids_json = json.dumps([records[1].id])
+        await session.commit()
+
+    response = await client.post(
+        "/admin/cases/1/false-positive", data={"csrf": csrf}, follow_redirects=False
+    )
+    assert response.status_code == 409
+
+    async with factory() as session:
+        case = await session.get(Case, 1)
+        records = list(await session.scalars(select(ViolationRecord).order_by(ViolationRecord.id)))
+        audits = list(
+            await session.scalars(
+                select(AdminAudit).where(AdminAudit.action == "case_false_positive")
+            )
+        )
+        assert case is not None and case.status == "PENDING_REVIEW"
+        assert len(records) == 2 and not any(record.revoked for record in records)
+        assert not audits
+
+
+async def test_single_case_false_positive_rejects_shared_explicit_evidence(web_ui):
+    client, factory, _, csrf = web_ui
+    await seed(factory, 2)
+    async with factory() as session:
+        cases = list(await session.scalars(select(Case).order_by(Case.id)))
+        record = await session.scalar(select(ViolationRecord).where(ViolationRecord.case_id == 1))
+        assert record is not None
+        cases[1].external_user_id = cases[0].external_user_id
+        cases[0].violation_ids_json = json.dumps([record.id])
+        cases[1].violation_ids_json = json.dumps([record.id])
+        await session.commit()
+
+    response = await client.post(
+        "/admin/cases/1/false-positive", data={"csrf": csrf}, follow_redirects=False
+    )
+    assert response.status_code == 409
+
+    async with factory() as session:
+        case = await session.get(Case, 1)
+        record = await session.get(ViolationRecord, record.id)
+        assert case is not None and case.status == "PENDING_REVIEW"
+        assert record is not None and not record.revoked
+
+
+async def test_single_case_false_positive_rejects_incomplete_onebot_identity(web_ui):
+    client, factory, _, csrf = web_ui
+    await seed(factory, 1)
+    async with factory() as session:
+        case = await session.get(Case, 1)
+        record = await session.scalar(select(ViolationRecord))
+        assert case is not None and record is not None
+        case.external_user_id = ""
+        record.external_user_id = ""
+        await session.commit()
+
+    response = await client.post(
+        "/admin/cases/1/false-positive", data={"csrf": csrf}, follow_redirects=False
+    )
+    assert response.status_code == 409
+
+    async with factory() as session:
+        case = await session.get(Case, 1)
+        record = await session.scalar(select(ViolationRecord))
+        assert case is not None and case.status == "PENDING_REVIEW"
+        assert record is not None and not record.revoked
+
+
+async def test_preview_and_idempotent_atomic_close_preserve_violations(web_ui):
+    client, factory, _, csrf = web_ui
+    await seed(factory)
+    plan_id = await preview(client, csrf)
+    assert await statuses(factory) == ["PENDING_REVIEW"] * 2
+    for _ in range(2):
+        response = await client.post(
+            "/admin/cases/batch-confirm", data={"csrf": csrf, "plan_id": plan_id}
+        )
+        assert response.status_code == 303, response.text
+    assert await statuses(factory) == ["CLOSED"] * 2
+    async with factory() as session:
+        records = list(await session.scalars(select(ViolationRecord)))
+        assert len(records) == 2 and not any(r.revoked for r in records)
+        cases = list(await session.scalars(select(Case)))
+        for case in cases:
+            transitions = json.loads(case.audit_json)["transitions"]
+            assert [t["to"] for t in transitions] == ["KEEP", "CLOSED"]
+            assert "已人工核对" in case.audit_json
+        audits = list(
+            await session.scalars(select(AdminAudit).where(AdminAudit.action == "case_batch_keep"))
+        )
+        assert len(audits) == 2
+
+
+async def test_mixed_closed_and_pending_selection_previews_skips_and_closes_pending(web_ui):
+    client, factory, _, csrf = web_ui
+    await seed(factory, 4)
+    first_plan = await preview(client, csrf, case_ids=["1"])
+    assert (
+        await client.post("/admin/cases/batch-confirm", data={"csrf": csrf, "plan_id": first_plan})
+    ).status_code == 303
+
+    response = await client.post(
+        "/admin/cases/batch-preview",
+        data={"csrf": csrf, "scope": "selected", "case_ids": ["1", "2", "3"]},
+    )
+    assert response.status_code == 200, response.text
+    assert "2 个案件" in response.text
+    assert "跳过 1 个已关闭案件" in response.text
+    assert "BATCH-0" in response.text
+    plan_id = re.search(r'name="plan_id" value="([^"]+)"', response.text)[1]
+    assert (
+        await client.post("/admin/cases/batch-confirm", data={"csrf": csrf, "plan_id": plan_id})
+    ).status_code == 303
+    assert await statuses(factory) == ["CLOSED", "CLOSED", "CLOSED", "PENDING_REVIEW"]
+    async with factory() as session:
+        completed = list(
+            await session.scalars(select(AdminAudit).where(AdminAudit.action == "case_batch_keep"))
+        )
+        assert [item.target_id for item in completed].count("1") == 1
+
+
+async def test_selection_with_only_closed_cases_shows_noop_without_plan(web_ui):
+    client, factory, _, csrf = web_ui
+    await seed(factory)
+    first_plan = await preview(client, csrf, case_ids=["1"])
+    await client.post("/admin/cases/batch-confirm", data={"csrf": csrf, "plan_id": first_plan})
+    response = await client.post(
+        "/admin/cases/batch-preview",
+        data={"csrf": csrf, "scope": "selected", "case_ids": ["1"]},
+    )
+    assert response.status_code == 200, response.text
+    assert "均已关闭" in response.text
+    assert 'name="plan_id"' not in response.text
+    assert await statuses(factory) == ["CLOSED", "PENDING_REVIEW"]
+
+
+async def test_filtered_batch_limit_counts_pending_not_already_closed(web_ui, monkeypatch):
+    client, factory, _, csrf = web_ui
+    await seed(factory, 3)
+    first_plan = await preview(client, csrf, case_ids=["1"])
+    await client.post("/admin/cases/batch-confirm", data={"csrf": csrf, "plan_id": first_plan})
+    monkeypatch.setattr(case_batch, "CLOSE_LIMIT", 2)
+    response = await client.post(
+        "/admin/cases/batch-preview", data={"csrf": csrf, "scope": "filtered"}
+    )
+    assert response.status_code == 200, response.text
+    assert "2 个案件" in response.text and "跳过 1 个已关闭案件" in response.text
+    plan_id = re.search(r'name="plan_id" value="([^"]+)"', response.text)[1]
+    assert (
+        await client.post("/admin/cases/batch-confirm", data={"csrf": csrf, "plan_id": plan_id})
+    ).status_code == 303
+    assert await statuses(factory) == ["CLOSED"] * 3
+
+
+async def test_archived_closed_selection_is_skipped_but_archived_pending_still_rejected(web_ui):
+    client, factory, _, csrf = web_ui
+    await seed(factory, 3)
+    first_plan = await preview(client, csrf, case_ids=["1"])
+    await client.post("/admin/cases/batch-confirm", data={"csrf": csrf, "plan_id": first_plan})
+    async with factory() as session:
+        (await session.get(Case, 1)).archived = True
+        await session.commit()
+    response = await client.post(
+        "/admin/cases/batch-preview",
+        data={"csrf": csrf, "scope": "selected", "case_ids": ["1", "2"]},
+    )
+    assert response.status_code == 200 and "跳过 1 个已关闭案件" in response.text
+    async with factory() as session:
+        (await session.get(Case, 3)).archived = True
+        await session.commit()
+    response = await client.post(
+        "/admin/cases/batch-preview",
+        data={"csrf": csrf, "scope": "selected", "case_ids": ["1", "3"]},
+    )
+    assert response.status_code == 409
+    assert await statuses(factory) == ["CLOSED", "PENDING_REVIEW", "PENDING_REVIEW"]
+
+
+async def test_preview_without_reason_records_human_processing(web_ui):
+    client, factory, _, csrf = web_ui
+    await seed(factory)
+    dashboard = await client.get("/admin/")
+    batch_form = dashboard.text.split('id="case-batch"', 1)[1].split("</form>", 1)[0]
+    assert 'name="reason"' not in batch_form and "name=reason" not in batch_form
+    assert "批量标记已人工处理" in batch_form
+    response = await client.post(
+        "/admin/cases/batch-preview",
+        data={"csrf": csrf, "scope": "selected", "case_ids": ["1", "2"]},
+    )
+    assert response.status_code == 200, response.text
+    assert "人工处理" in response.text
+    plan_id = re.search(r'name="plan_id" value="([^"]+)"', response.text)[1]
+    async with factory() as session:
+        plan = await session.get(AdminChangePlan, plan_id)
+        assert json.loads(plan.params_json)["reason"] == "人工处理"
+    confirm = await client.post(
+        "/admin/cases/batch-confirm", data={"csrf": csrf, "plan_id": plan_id}
+    )
+    assert confirm.status_code == 303
+    assert "case_batch_done=1" in confirm.headers["location"]
+    completed_page = await client.get(confirm.headers["location"], follow_redirects=True)
+    assert 'data-selection-reset="1"' in completed_page.text
+    assert await statuses(factory) == ["CLOSED", "CLOSED"]
+    async with factory() as session:
+        rows = list(await session.scalars(select(Case).order_by(Case.id)))
+        assert all("人工处理" in row.audit_json for row in rows)
+
+
+@pytest.mark.parametrize("drift", ["status", "new_evidence", "revoked", "identity"])
+async def test_drift_invalidates_entire_preview(web_ui, drift):
+    client, factory, _, csrf = web_ui
+    await seed(factory)
+    plan_id = await preview(client, csrf)
+    async with factory() as session:
+        case = await session.get(Case, 2)
+        if drift == "status":
+            case.status = "MANUAL_PENDING"
+        elif drift == "identity":
+            case.external_user_id = "999999"
+        elif drift == "revoked":
+            (await session.get(ViolationRecord, 2)).revoked = True
+        else:
+            session.add(
+                ViolationRecord(
+                    group_openid="old-group",
+                    member_openid="old-user",
+                    message_id="new",
+                    category="ad",
+                    confidence=0.95,
+                    case_id=2,
+                )
+            )
+        await session.commit()
+    before = await statuses(factory)
+    response = await client.post(
+        "/admin/cases/batch-confirm", data={"csrf": csrf, "plan_id": plan_id}
+    )
+    assert response.status_code == 409
+    assert await statuses(factory) == before
+
+
+async def test_audit_failure_rolls_back_then_retry(web_ui):
+    client, factory, engine, csrf = web_ui
+    await seed(factory)
+    plan_id = await preview(client, csrf)
+
+    def fail(_conn, _cursor, statement, _params, _context, _many):
+        if statement.lower().startswith("insert into admin_audits"):
+            raise RuntimeError("synthetic audit failure")
+
+    event.listen(engine.sync_engine, "before_cursor_execute", fail)
+    try:
+        response = await client.post(
+            "/admin/cases/batch-confirm", data={"csrf": csrf, "plan_id": plan_id}
+        )
+        assert response.status_code == 500
+    finally:
+        event.remove(engine.sync_engine, "before_cursor_execute", fail)
+    assert await statuses(factory) == ["PENDING_REVIEW"] * 2
+    assert (
+        await client.post("/admin/cases/batch-confirm", data={"csrf": csrf, "plan_id": plan_id})
+    ).status_code == 303
+
+
+async def test_final_receipt_failure_rolls_back_case_updates_and_bulk_audits(web_ui, monkeypatch):
+    client, factory, engine, csrf = web_ui
+    monkeypatch.setattr(case_batch, "CLOSE_SUMMARY_CHUNK", 2)
+    await seed(factory, 3)
+    plan_id = await preview(client, csrf, case_ids=["1", "2", "3"])
+
+    def fail(_conn, _cursor, statement, params, _context, many):
+        if (
+            statement.lower().startswith("insert into admin_audits")
+            and not many
+            and "case_batch_complete" in params
+        ):
+            raise RuntimeError("synthetic final receipt failure")
+
+    event.listen(engine.sync_engine, "before_cursor_execute", fail)
+    try:
+        response = await client.post(
+            "/admin/cases/batch-confirm", data={"csrf": csrf, "plan_id": plan_id}
+        )
+        assert response.status_code == 500
+    finally:
+        event.remove(engine.sync_engine, "before_cursor_execute", fail)
+    async with factory() as session:
+        cases = list(await session.scalars(select(Case)))
+        assert all(row.status == "PENDING_REVIEW" and row.audit_json == "{}" for row in cases)
+        assert (await session.get(AdminChangePlan, plan_id)).status == "PENDING"
+        assert (
+            await session.scalar(
+                select(func.count())
+                .select_from(AdminAudit)
+                .where(AdminAudit.action == case_batch.ACTION)
+            )
+            == 0
+        )
+    assert (
+        await client.post("/admin/cases/batch-confirm", data={"csrf": csrf, "plan_id": plan_id})
+    ).status_code == 303
+    assert await statuses(factory) == ["CLOSED"] * 3
+
+
+@pytest.mark.parametrize("phase", ["preview", "confirm"])
+async def test_later_evidence_chunk_limit_rejects_whole_batch(web_ui, monkeypatch, phase):
+    client, factory, _, csrf = web_ui
+    monkeypatch.setattr(case_batch, "CLOSE_SUMMARY_CHUNK", 2)
+    monkeypatch.setattr(case_batch, "EVIDENCE_LIMIT", 2)
+    await seed_large_batch(factory, 3, evidence_per_case=1)
+    plan_id = None
+    if phase == "confirm":
+        plan_id = await preview(client, csrf, case_ids=["1", "2", "3"])
+    # Descending selection puts case 1 in the last evidence chunk.
+    async with factory() as session:
+        await session.execute(
+            insert(ViolationRecord),
+            [
+                {
+                    "provider": "onebot",
+                    "group_openid": "old-group",
+                    "member_openid": "old-user",
+                    "external_group_id": "123456",
+                    "external_user_id": "200001",
+                    "message_id": f"extra-{i}",
+                    "category": "ad",
+                    "confidence": 0.95,
+                    "case_id": 1,
+                }
+                for i in range(2)
+            ],
+        )
+        await session.commit()
+    data = (
+        {"csrf": csrf, "plan_id": plan_id}
+        if plan_id
+        else {"csrf": csrf, "scope": "selected", "case_ids": ["1", "2", "3"]}
+    )
+    response = await client.post(f"/admin/cases/batch-{phase}", data=data)
+    assert response.status_code == 422 and "证据数量过多" in response.text
+    assert await statuses(factory) == ["PENDING_REVIEW"] * 3
+    async with factory() as session:
+        assert not await session.scalar(
+            select(AdminAudit.id).where(AdminAudit.action == case_batch.ACTION)
+        )
+        if plan_id:
+            assert (await session.get(AdminChangePlan, plan_id)).status == "PENDING"
+        else:
+            assert not await session.scalar(select(AdminChangePlan.id))
+
+
+@pytest.mark.parametrize("path", ["batch-preview", "batch-confirm", "batch-export"])
+async def test_batch_requires_cookie_and_csrf(web_ui, path):
+    client, _, _, csrf = web_ui
+    response = await client.post(f"/admin/cases/{path}", data={"csrf": "bad"})
+    assert response.status_code == 403
+    client.cookies.clear()
+    response = await client.post(
+        f"/admin/cases/{path}",
+        data={"csrf": csrf},
+        headers={"Authorization": "Bearer test-agent-token"},
+    )
+    assert response.status_code == 401
+
+
+@pytest.mark.parametrize("mutation", ["expired", "other_session", "other_action", "approved"])
+async def test_invalid_plan_cannot_close(web_ui, mutation):
+    client, factory, _, csrf = web_ui
+    await seed(factory)
+    plan_id = await preview(client, csrf)
+    extra_token = None
+    if mutation == "other_session":
+        extra_token = auth.login("admin", "test-admin-pass")
+        client.cookies.clear()
+        client.cookies.set(auth.SESSION_COOKIE, extra_token)
+        csrf = auth.csrf_token(extra_token)
+    else:
+        async with factory() as session:
+            plan = await session.get(AdminChangePlan, plan_id)
+            if mutation == "expired":
+                plan.expires_at = datetime.now(UTC) - timedelta(seconds=1)
+            elif mutation == "other_action":
+                plan.action = "group_settings"
+            else:
+                plan.status = "APPROVED"
+            await session.commit()
+    try:
+        response = await client.post(
+            "/admin/cases/batch-confirm", data={"csrf": csrf, "plan_id": plan_id}
+        )
+        assert response.status_code == 409
+        assert await statuses(factory) == ["PENDING_REVIEW"] * 2
+    finally:
+        if extra_token:
+            auth.logout(extra_token)
+
+
+async def test_concurrent_confirm_consumes_once(web_ui):
+    client, factory, _, csrf = web_ui
+    await seed(factory)
+    plan_id = await preview(client, csrf)
+    responses = await asyncio.gather(
+        *(
+            client.post("/admin/cases/batch-confirm", data={"csrf": csrf, "plan_id": plan_id})
+            for _ in range(2)
+        )
+    )
+    assert [r.status_code for r in responses] == [303, 303]
+    async with factory() as session:
+        assert (
+            len(
+                list(
+                    await session.scalars(
+                        select(AdminAudit).where(AdminAudit.action == "case_batch_keep")
+                    )
+                )
+            )
+            == 2
+        )
+        assert (
+            len(
+                list(
+                    await session.scalars(
+                        select(AdminAudit).where(AdminAudit.action == "case_batch_complete")
+                    )
+                )
+            )
+            == 1
+        )
+
+
+async def test_filtered_export_spans_pages_but_confirmation_never_adds_new_cases(web_ui):
+    client, factory, _, csrf = web_ui
+    await seed(factory, 51)
+    response = await client.get("/admin/?status=PENDING_REVIEW&group=合成群")
+    assert response.status_code == 200
+    assert len(re.findall(r"name=case_ids value=", response.text)) == 50
+    assert "BATCH-50" in response.text
+    assert 'id="case-batch"' in response.text and "导出 CSV" in response.text
+    batch_html = response.text.split('id="case-batch"', 1)[1]
+    assert "old-group" not in batch_html and "old-user" not in batch_html
+    assert "123456" in batch_html and "200050" in batch_html and "onebot" in batch_html
+    response = await client.post(
+        "/admin/cases/batch-export", data={"csrf": csrf, "scope": "filtered", "group": "合成群"}
+    )
+    assert response.status_code == 200
+    assert len(list(csv.DictReader(io.StringIO(response.content.decode("utf-8-sig"))))) == 51
+    plan_id = await preview(client, csrf, scope="filtered", group="合成群", status="PENDING_REVIEW")
+    async with factory() as session:
+        session.add(
+            Case(
+                case_no="NEW",
+                group_openid="x",
+                member_openid="x",
+                provider="onebot",
+                external_group_id="123456",
+                external_user_id="299999",
+            )
+        )
+        await session.commit()
+    response = await client.post(
+        "/admin/cases/batch-confirm", data={"csrf": csrf, "plan_id": plan_id, "case_ids": "52"}
+    )
+    assert response.status_code == 303
+    assert await statuses(factory) == ["CLOSED"] * 51 + ["PENDING_REVIEW"]
+
+
+async def test_selected_cases_from_nonadjacent_pages_export_and_close_together(web_ui):
+    client, factory, _, csrf = web_ui
+    await seed(factory, 101)
+    first_page = await client.get("/admin/?page=1")
+    third_page = await client.get("/admin/?page=3")
+    assert first_page.status_code == third_page.status_code == 200
+    first = re.findall(r"name=case_ids value=(\d+)", first_page.text)[0]
+    last = re.findall(r"name=case_ids value=(\d+)", third_page.text)[0]
+    assert first != last
+    selection = {"csrf": csrf, "scope": "selected", "case_ids": [first, last]}
+    exported = await client.post("/admin/cases/batch-export", data=selection)
+    assert exported.status_code == 200
+    rows = list(csv.DictReader(io.StringIO(exported.content.decode("utf-8-sig"))))
+    assert len(rows) == 2
+    assert {row["QQ号"] for row in rows} == {str(199999 + int(first)), str(199999 + int(last))}
+    previewed = await client.post("/admin/cases/batch-preview", data=selection)
+    assert previewed.status_code == 200, previewed.text
+    assert "人工处理" in previewed.text
+    plan_id = re.search(r'name="plan_id" value="([^"]+)"', previewed.text)[1]
+    closed = await client.post(
+        "/admin/cases/batch-confirm", data={"csrf": csrf, "plan_id": plan_id}
+    )
+    assert closed.status_code == 303
+    async with factory() as session:
+        cases = list(await session.scalars(select(Case).order_by(Case.id)))
+        assert [case.id for case in cases if case.status == "CLOSED"] == sorted(
+            [int(first), int(last)]
+        )
+        assert len([case for case in cases if case.status == "PENDING_REVIEW"]) == 99
+
+
+async def test_compact_selection_exports_more_than_form_field_limit(web_ui):
+    client, factory, _, csrf = web_ui
+    await seed(factory, 1001)
+    response = await client.post(
+        "/admin/cases/batch-export",
+        files=[
+            ("csrf", (None, csrf)),
+            ("scope", (None, "selected")),
+            ("case_ids_compact", (None, json.dumps([str(i) for i in range(1, 1002)]))),
+        ],
+    )
+    assert response.status_code == 200, response.text[:200]
+    rows = list(csv.DictReader(io.StringIO(response.content.decode("utf-8-sig"))))
+    assert len(rows) == 1001
+    assert {row["QQ号"] for row in rows} == {str(200000 + i) for i in range(1001)}
+    assert await statuses(factory) == ["PENDING_REVIEW"] * 1001
+
+
+async def test_compact_browser_selection_previews_without_closing(web_ui):
+    client, factory, _, csrf = web_ui
+    await seed(factory)
+    response = await client.post(
+        "/admin/cases/batch-preview",
+        data={"csrf": csrf, "scope": "selected", "case_ids_compact": '["1","2"]'},
+    )
+    assert response.status_code == 200, response.text[:200]
+    assert "2 个案件" in response.text
+    assert await statuses(factory) == ["PENDING_REVIEW"] * 2
+
+
+def test_compact_browser_selection_accepts_full_limit_and_exact_integer():
+    highest = str(2**63 - 1)
+    ids = case_batch.selected_ids(None, json.dumps([highest] * case_batch.EXPORT_LIMIT))
+    assert len(ids) == case_batch.EXPORT_LIMIT
+    assert ids[0] == ids[-1] == 2**63 - 1
+
+
+@pytest.mark.parametrize(
+    "compact",
+    [
+        "",
+        "not json",
+        "{}",
+        "[0]",
+        "[-1]",
+        '["01"]',
+        '["0"]',
+        '["-1"]',
+        '["1.0"]',
+        '[" 1"]',
+        '["１"]',
+        "[true]",
+        "[1.0]",
+        "[1,2,3]",
+        '["999"]',
+    ],
+)
+async def test_compact_selection_rejects_bad_or_changed_ids(web_ui, compact):
+    client, factory, _, csrf = web_ui
+    await seed(factory)
+    response = await client.post(
+        "/admin/cases/batch-export",
+        data={"csrf": csrf, "scope": "selected", "case_ids_compact": compact},
+    )
+    assert response.status_code in {409, 422}, response.text[:200]
+    assert await statuses(factory) == ["PENDING_REVIEW"] * 2
+
+
+async def test_compact_selection_rejects_mixed_and_over_limit(web_ui):
+    client, factory, _, csrf = web_ui
+    await seed(factory)
+    for fields in (
+        {"case_ids_compact": '["1"]', "case_ids": ["2"]},
+        {"case_ids_compact": json.dumps([str(i) for i in range(1, case_batch.EXPORT_LIMIT + 2)])},
+    ):
+        response = await client.post(
+            "/admin/cases/batch-export", data={"csrf": csrf, "scope": "selected", **fields}
+        )
+        assert response.status_code == 422, response.text[:200]
+    assert await statuses(factory) == ["PENDING_REVIEW"] * 2
+
+
+async def test_export_provider_isolation_formula_and_openid(web_ui):
+    client, factory, _, csrf = web_ui
+    await seed(factory)
+    async with factory() as session:
+        session.add(
+            ProviderGroupSettings(
+                provider="qq_official", external_group_id="123456", name="  =SUM(1,2)\n备注"
+            )
+        )
+        session.add(
+            Case(
+                case_no="OFFICIAL",
+                provider="qq_official",
+                group_openid="old",
+                member_openid="old",
+                external_group_id="123456",
+                external_user_id="openid-123",
+            )
+        )
+        (
+            await session.get(ProviderGroupSettings, ("onebot", "123456"))
+        ).name = '<script>alert("bad")</script>'
+        await session.commit()
+    response = await client.post(
+        "/admin/cases/batch-export", data={"csrf": csrf, "scope": "filtered", "group": "SUM"}
+    )
+    assert response.status_code == 200
+    rows = list(csv.DictReader(io.StringIO(response.content.decode("utf-8-sig"))))
+    assert len(rows) == 1 and rows[0]["案件编号"] == "OFFICIAL"
+    assert rows[0]["QQ号"] == "" and rows[0]["群号"] == ""
+    assert rows[0]["成员身份"] == "openid-123"
+    assert rows[0]["群名"].startswith("'  =")
+    response = await client.post(
+        "/admin/cases/batch-preview",
+        data={"csrf": csrf, "case_ids": ["1"], "reason": "<script>secret()</script>"},
+    )
+    assert response.status_code == 200
+    assert "<script>alert" not in response.text and "<script>secret" not in response.text
+    assert "&lt;script&gt;" in response.text
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        "=CMD()",
+        "  +CMD()",
+        "\tname",
+        "\nname",
+        "@test",
+        "-20",
+        "  \r=evil",
+        "00123",
+        "1234567890123456",
+    ],
+)
+def test_csv_formula_and_numeric_text(value):
+    assert case_batch.csv_cell(value).startswith("'")
+
+
+def test_csv_plain_zero_stays_numeric():
+    assert case_batch.csv_cell("0") == "0"
+
+
+@pytest.mark.parametrize(
+    "data,code",
+    [
+        ({"case_ids": []}, 422),
+        ({"case_ids": ["999"]}, 409),
+        ({"case_ids": ["-1"]}, 422),
+        ({"reason": "x" * 501}, 422),
+        ({"scope": "all"}, 422),
+        ({"scope": "filtered", "date_from": "2026-99-00"}, 422),
+        ({"scope": "filtered", "date_from": "2026-01-02", "date_to": "2026-01-01"}, 422),
+        ({"scope": "filtered", "date_to": "9999-12-31"}, 422),
+    ],
+)
+async def test_bad_selection_is_rejected_without_writes(web_ui, data, code):
+    client, factory, _, csrf = web_ui
+    await seed(factory)
+    response = await client.post(
+        "/admin/cases/batch-preview",
+        data={"csrf": csrf, "scope": "selected", "case_ids": ["1"], "reason": "reviewed", **data},
+    )
+    assert response.status_code == code
+    assert await statuses(factory) == ["PENDING_REVIEW"] * 2
+
+
+async def test_limits_and_ineligible_not_silently_skipped(web_ui, monkeypatch):
+    client, factory, _, csrf = web_ui
+    await seed(factory, 3)
+    monkeypatch.setattr(case_batch, "CLOSE_LIMIT", 2)
+    monkeypatch.setattr(case_batch, "EXPORT_LIMIT", 2)
+    for path in ("batch-export", "batch-preview"):
+        response = await client.post(
+            f"/admin/cases/{path}", data={"csrf": csrf, "scope": "filtered", "reason": "reviewed"}
+        )
+        assert response.status_code == 422
+    async with factory() as session:
+        (await session.get(Case, 2)).archived = True
+        await session.commit()
+    response = await client.post(
+        "/admin/cases/batch-preview",
+        data={"csrf": csrf, "case_ids": ["1", "2"], "reason": "reviewed"},
+    )
+    assert response.status_code == 409
+    assert await statuses(factory) == ["PENDING_REVIEW"] * 3
+
+
+async def test_duplicate_ids_and_disabled_delete(web_ui):
+    client, factory, _, csrf = web_ui
+    await seed(factory)
+    plan_id = await preview(client, csrf, case_ids=["1", "1"])
+    assert (
+        await client.post("/admin/cases/batch-confirm", data={"csrf": csrf, "plan_id": plan_id})
+    ).status_code == 303
+    response = await client.post(
+        "/admin/cases/batch-delete", data={"csrf": csrf, "case_ids": ["1", "2"]}
+    )
+    assert "停用" in response.text
+    assert await statuses(factory) == ["CLOSED", "PENDING_REVIEW"]
+
+
+@pytest.mark.parametrize("link", ["explicit", "reverse"])
+async def test_mismatched_evidence_hidden_and_all_abnormal_selection_stays_pending(web_ui, link):
+    client, factory, _, csrf = web_ui
+    await seed(factory)
+    async with factory() as session:
+        record = await session.get(ViolationRecord, 1)
+        record.external_user_id = "other-member"
+        if link == "explicit":
+            record.case_id = None
+            (await session.get(Case, 1)).violation_ids_json = "[1]"
+        await session.commit()
+    response = await client.post(
+        "/admin/cases/batch-export", data={"csrf": csrf, "case_ids": ["1"]}
+    )
+    assert response.status_code == 200
+    rows = list(csv.DictReader(io.StringIO(response.content.decode("utf-8-sig"))))
+    assert len(rows) == 1
+    assert rows[0]["违规记录数"] == "0"
+    assert rows[0]["案件依据"] == ""
+    assert rows[0]["证据编号"] == ""
+    assert rows[0]["关联异常证据数"] == "1"
+    detail = await client.get("/admin/cases/1")
+    assert detail.status_code == 200
+    assert "证据（0 条）" in detail.text
+    assert "关联证据身份不符，已隐藏" in detail.text
+    assert "违规 #1" not in detail.text
+    assert "标记误判（撤销违规）" not in detail.text
+    response = await client.post(
+        "/admin/cases/batch-preview",
+        data={"csrf": csrf, "case_ids": ["1"], "reason": "reviewed"},
+    )
+    assert response.status_code == 200
+    assert "跳过 1 个证据关联异常案件" in response.text
+    assert "仍待人工核对" in response.text
+    assert 'name="plan_id"' not in response.text
+    assert "均已关闭" not in response.text
+    async with factory() as session:
+        assert not await session.scalar(select(AdminChangePlan.id))
+    response = await client.post("/admin/cases/1/false-positive", data={"csrf": csrf})
+    assert response.status_code == 409
+    async with factory() as session:
+        assert not (await session.get(ViolationRecord, 1)).revoked
+    assert await statuses(factory) == ["PENDING_REVIEW"] * 2
+
+
+@pytest.mark.parametrize("link", ["explicit", "reverse"])
+async def test_preview_skips_abnormal_and_closed_cases_then_closes_healthy_only(web_ui, link):
+    client, factory, _, csrf = web_ui
+    await seed(factory, 3)
+    async with factory() as session:
+        bad_case = await session.get(Case, 1)
+        bad_record = await session.get(ViolationRecord, 1)
+        bad_record.external_user_id = "other-member"
+        if link == "explicit":
+            bad_record.case_id = None
+            bad_case.violation_ids_json = "[1]"
+        (await session.get(Case, 3)).status = "CLOSED"
+        await session.commit()
+        case_before = {c.name: getattr(bad_case, c.name) for c in Case.__table__.columns}
+        record_before = {
+            c.name: getattr(bad_record, c.name) for c in ViolationRecord.__table__.columns
+        }
+    response = await client.post(
+        "/admin/cases/batch-preview",
+        data={"csrf": csrf, "scope": "selected", "case_ids_compact": '["1","2","3"]'},
+    )
+    assert response.status_code == 200, response.text
+    assert "批量标记已人工处理：1 个案件" in response.text
+    assert "跳过 1 个已关闭案件" in response.text
+    assert "跳过 1 个证据关联异常案件" in response.text
+    assert "仍待人工核对" in response.text and "BATCH-0" in response.text
+    assert "other-member" not in response.text
+    plan_id = re.search(r'name="plan_id" value="([^"]+)"', response.text)[1]
+    async with factory() as session:
+        plan = await session.get(AdminChangePlan, plan_id)
+        assert json.loads(plan.params_json)["ids"] == [2]
+        skipped = await session.scalar(
+            select(AdminAudit).where(AdminAudit.action == "case_batch_skip_abnormal")
+        )
+        assert skipped.target_id == plan_id
+        assert json.loads(skipped.detail_json) == {
+            "reason": "evidence_identity_mismatch",
+            "cases": [{"id": 1, "mismatched_records": 1}],
+        }
+    for _ in range(2):
+        response = await client.post(
+            "/admin/cases/batch-confirm", data={"csrf": csrf, "plan_id": plan_id}
+        )
+        assert response.status_code == 303
+    assert await statuses(factory) == ["PENDING_REVIEW", "CLOSED", "CLOSED"]
+    async with factory() as session:
+        bad_case = await session.get(Case, 1)
+        bad_record = await session.get(ViolationRecord, 1)
+        assert {c.name: getattr(bad_case, c.name) for c in Case.__table__.columns} == case_before
+        assert {
+            c.name: getattr(bad_record, c.name) for c in ViolationRecord.__table__.columns
+        } == record_before
+        applied = list(
+            await session.scalars(select(AdminAudit).where(AdminAudit.action == case_batch.ACTION))
+        )
+        assert [audit.target_id for audit in applied] == ["2"]
+        assert await session.scalar(select(func.count()).select_from(ActionIntent)) == 0
+
+
+async def test_new_mismatch_after_preview_still_rejects_entire_confirmation(web_ui):
+    client, factory, _, csrf = web_ui
+    await seed(factory)
+    plan_id = await preview(client, csrf)
+    async with factory() as session:
+        (await session.get(ViolationRecord, 2)).external_user_id = "new-mismatch"
+        await session.commit()
+    response = await client.post(
+        "/admin/cases/batch-confirm", data={"csrf": csrf, "plan_id": plan_id}
+    )
+    assert response.status_code == 409 and "身份不一致" in response.text
+    assert await statuses(factory) == ["PENDING_REVIEW"] * 2
+    async with factory() as session:
+        assert (await session.get(AdminChangePlan, plan_id)).status == "PENDING"
+        assert not await session.scalar(
+            select(AdminAudit.id).where(AdminAudit.action == case_batch.ACTION)
+        )
+
+
+async def test_export_keeps_valid_evidence_while_flagging_bad_reverse_link(web_ui):
+    client, factory, _, csrf = web_ui
+    await seed(factory, 1)
+    async with factory() as session:
+        session.add(
+            ViolationRecord(
+                provider="onebot",
+                group_openid="old-group",
+                member_openid="old-user",
+                external_group_id="123456",
+                external_user_id="other-member",
+                message_id="mislinked",
+                category="fraud",
+                confidence=0.95,
+                case_id=1,
+            )
+        )
+        await session.commit()
+    response = await client.post(
+        "/admin/cases/batch-export", data={"csrf": csrf, "case_ids": ["1"]}
+    )
+    assert response.status_code == 200
+    row = next(csv.DictReader(io.StringIO(response.content.decode("utf-8-sig"))))
+    assert row["违规记录数"] == "1"
+    assert row["案件依据"] == "ad"
+    assert row["证据编号"] == "1"
+    assert row["关联异常证据数"] == "1"
+    detail = await client.get("/admin/cases/1")
+    assert "证据（1 条）" in detail.text
+    assert "违规 #1" in detail.text
+    assert "违规 #2" not in detail.text
+
+
+async def test_legacy_official_only_identity_fallback(web_ui):
+    client, factory, _, csrf = web_ui
+    await seed(factory)
+    async with factory() as session:
+        session.add(
+            Case(case_no="LEGACY", group_openid="official-group", member_openid="official-member")
+        )
+        session.add(
+            Case(
+                case_no="BROKEN-ONEBOT",
+                provider="onebot",
+                group_openid="333333",
+                member_openid="444444",
+            )
+        )
+        await session.commit()
+    response = await client.post(
+        "/admin/cases/batch-export", data={"csrf": csrf, "case_ids": ["3", "4"]}
+    )
+    rows = {
+        r["案件编号"]: r for r in csv.DictReader(io.StringIO(response.content.decode("utf-8-sig")))
+    }
+    assert rows["LEGACY"]["成员身份"] == "official-member" and rows["LEGACY"]["QQ号"] == ""
+    assert rows["BROKEN-ONEBOT"]["成员身份"] == "" and rows["BROKEN-ONEBOT"]["QQ号"] == ""
+    response = await client.get("/admin/?group=333333")
+    assert "BROKEN-ONEBOT" in response.text and "身份未补全" in response.text
+    response = await client.post(
+        "/admin/cases/batch-preview",
+        data={"csrf": csrf, "scope": "filtered", "group": "333333", "reason": "reviewed"},
+    )
+    assert response.status_code == 409
+    assert "缺少权威" in response.text
+
+
+async def test_oversized_integer_id_is_validation_error(web_ui):
+    client, _, _, csrf = web_ui
+    response = await client.post(
+        "/admin/cases/batch-export", data={"csrf": csrf, "case_ids": [str(2**64)]}
+    )
+    assert response.status_code == 422

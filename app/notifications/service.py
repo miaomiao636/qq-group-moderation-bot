@@ -414,37 +414,44 @@ async def purge_notifications(session: AsyncSession, *, before: datetime) -> dic
         NotificationDelivery.notice_id == NotificationNotice.id,
         NotificationDelivery.status == "SENDING",
     )
-    targets = list(
-        (
-            await session.scalars(
-                select(NotificationNotice.id).where(
-                    NotificationNotice.created_at < _now(before),
-                    or_(
-                        NotificationNotice.acknowledged_at.is_not(None),
-                        NotificationNotice.resolved_at.is_not(None),
-                    ),
-                    ~inflight,
+    notices_deleted = deliveries_deleted = 0
+    while True:
+        targets = list(
+            (
+                await session.scalars(
+                    select(NotificationNotice.id)
+                    .where(
+                        NotificationNotice.created_at < _now(before),
+                        or_(
+                            NotificationNotice.acknowledged_at.is_not(None),
+                            NotificationNotice.resolved_at.is_not(None),
+                        ),
+                        ~inflight,
+                    )
+                    .order_by(NotificationNotice.id)
+                    .limit(500)
                 )
-            )
-        ).all()
-    )
-    deliveries = list(
-        (
+            ).all()
+        )
+        if not targets:
+            break
+        # Bound bind parameters; all batches retain the same writer reservation
+        # and caller-owned transaction. No partial cleanup commits on failure.
+        deliveries = (
             await session.scalars(
                 delete(NotificationDelivery)
                 .where(NotificationDelivery.notice_id.in_(targets))
                 .returning(NotificationDelivery.id)
             )
         ).all()
-    )
-    notices = list(
-        (
+        notices = (
             await session.scalars(
                 delete(NotificationNotice)
                 .where(NotificationNotice.id.in_(targets))
                 .returning(NotificationNotice.id)
             )
         ).all()
-    )
+        deliveries_deleted += len(deliveries)
+        notices_deleted += len(notices)
     await session.flush()
-    return {"notices_deleted": len(notices), "deliveries_deleted": len(deliveries)}
+    return {"notices_deleted": notices_deleted, "deliveries_deleted": deliveries_deleted}

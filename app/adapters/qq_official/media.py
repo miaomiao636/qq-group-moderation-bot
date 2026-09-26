@@ -13,6 +13,7 @@ import asyncio
 import hashlib
 import ipaddress
 import logging
+import shutil
 import socket
 import time
 import urllib.parse
@@ -23,6 +24,7 @@ from typing import Any
 
 import httpx
 
+from app.config import get_settings
 from app.core.fs_guard import chain_has_link, is_link_like
 
 logger = logging.getLogger(__name__)
@@ -65,7 +67,38 @@ def sniff_ext(data: bytes, declared: str) -> str:
 def total_media_size(media_dir: Path) -> int:
     if not media_dir.exists():
         return 0
-    return sum(f.stat().st_size for f in media_dir.iterdir() if f.is_file())
+    total = 0
+    for file in media_dir.iterdir():
+        try:
+            if file.is_file():
+                total += file.stat().st_size
+        except FileNotFoundError:
+            continue  # Retention or download rename may run concurrently.
+    return total
+
+
+def capacity_status(media_dir: Path, *, quota_bytes: int | None = None) -> dict[str, Any]:
+    """Read-only capacity snapshot; does not authorize eviction or moderation."""
+    quota = get_settings().media_quota_bytes if quota_bytes is None else quota_bytes
+    if quota <= 0:
+        raise ValueError("media quota must be positive")
+    try:
+        used = total_media_size(media_dir)
+        parent = media_dir
+        while not parent.exists() and parent != parent.parent:
+            parent = parent.parent
+        free = shutil.disk_usage(parent).free
+    except OSError:
+        return {"state": "unknown", "quota_bytes": quota, "reason": "无法读取媒体存储容量"}
+    state = "full" if used >= quota else "warning" if used * 100 >= quota * 80 else "ok"
+    return {
+        "state": state,
+        "used_bytes": used,
+        "quota_bytes": quota,
+        "remaining_bytes": max(0, quota - used),
+        "disk_free_bytes": free,
+        "warning_percent": 80,
+    }
 
 
 def ensure_media_dir(media_dir: Path) -> None:
@@ -382,12 +415,14 @@ async def download_attachment(
     idx: int,
     content_type: str,
     *,
-    quota_bytes: int = MEDIA_QUOTA_BYTES,
+    quota_bytes: int | None = None,
 ) -> tuple[str | None, str, str]:
     """下载单个附件。返回 (filename, ext, reason)。
 
     filename=None 表示未下载（reason 给出原因：配额/大小/网络）。
     """
+    if quota_bytes is None:
+        quota_bytes = get_settings().media_quota_bytes
     if not url:
         return None, "", "无URL"
     if url.startswith("//"):

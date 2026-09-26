@@ -13,8 +13,11 @@ from sqlalchemy import case, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.cases.models import Case, ViolationRecord
+from app.config import get_settings
 from app.moderation.ai import AIUsageLog, summarize_ai_usage
 from app.moderation.feedback import NEGATIVE_LABELS, POSITIVE_LABELS, FeedbackRecord
+from app.reports.service import build_recall_overview
+from app.reports.snapshot import report_snapshot
 from app.runtime.models import ShadowDecision
 
 
@@ -34,7 +37,13 @@ async def _group_counts(
 
 
 async def build_stats(session: AsyncSession) -> dict[str, Any]:
+    async with report_snapshot(session):
+        return await _build_stats(session)
+
+
+async def _build_stats(session: AsyncSession) -> dict[str, Any]:
     """聚合后台大盘所需的全部指标。"""
+    now = datetime.now(UTC)
     total_shadow = await _count(session, select(func.count()).select_from(ShadowDecision))
     total_violations = await _count(session, select(func.count()).select_from(ViolationRecord))
     pending_cases = await _count(
@@ -60,7 +69,7 @@ async def build_stats(session: AsyncSession) -> dict[str, Any]:
     candidate_status = await _group_counts(session, RuleCandidate_status())
 
     # 最近 7 天每日影子判定量（按本机 UTC 自然日）
-    today = datetime.now(UTC).replace(hour=0, minute=0, second=0, microsecond=0)
+    today = now.replace(hour=0, minute=0, second=0, microsecond=0)
     last7: list[tuple[str, int]] = []
     for i in range(6, -1, -1):
         start = today - timedelta(days=i)
@@ -104,6 +113,11 @@ async def build_stats(session: AsyncSession) -> dict[str, Any]:
 
     # AI 与人工标注一致率：以人工反馈为临时真值，比对同消息的影子判定
     agreement = await _agreement(session)
+    # 确认记录会按判断保留期清理；终身累计会把历史未采集误当作未撤回。
+    recall_window_days = min(7, get_settings().decision_retention_days)
+    recall_counts = await build_recall_overview(
+        session, now - timedelta(days=recall_window_days), now
+    )
 
     return {
         "totals": {
@@ -122,7 +136,15 @@ async def build_stats(session: AsyncSession) -> dict[str, Any]:
         "ai_by_model": ai_by_model,
         "ai_usage": await summarize_ai_usage(session, since=datetime.min.replace(tzinfo=UTC)),
         "agreement": agreement,
-        "generated_at": datetime.now(UTC).isoformat(),
+        "recall": {
+            "window_days": recall_window_days,
+            "entered": recall_counts["onebot_recall_entered"],
+            "api_succeeded": recall_counts["onebot_recall_api_succeeded"],
+            "notice_confirmed": recall_counts["onebot_recall_confirmed"],
+            "notice_unconfirmed": recall_counts["onebot_recall_unconfirmed"],
+            "notice_untracked": recall_counts["onebot_recall_untracked"],
+        },
+        "generated_at": now.isoformat(),
     }
 
 
@@ -145,7 +167,7 @@ async def _agreement(session: AsyncSession) -> dict[str, Any]:
     latest = {
         (f.provider, f.external_group_id or f.group_openid, f.message_id): f for f in feedbacks
     }
-    message_ids = {f.message_id for f in feedbacks}
+    message_ids = select(FeedbackRecord.message_id).distinct()
     shadows = (
         (
             await session.execute(
