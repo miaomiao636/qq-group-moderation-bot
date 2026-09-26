@@ -149,4 +149,14 @@ N03 尚未闭环：现有清理有 mtime/处理时间路径；来源期限未成
 
 依负责人此次裁定调整内部错连测试的预览期望，从整批 409 改为明确跳过且保持待审；单案误判拒绝、确认阶段严校验和证据保护断言保留。追加后 `python -m pytest tests/test_case_batch.py -o addopts='' -q --tb=short --durations=3` 为 82 passed / 29.20 秒，5000 案完整测试约 3.32 秒，混合已关闭项约 3.22 秒（含建数、预览、两次确认及断言，本机合成库，不是生产保证）。Ruff 检查、375 文件格式检查和 130 源文件 mypy 通过。
 
-私有收据目录：`D:/QQBotAudits/case-batch-5000-20260926`。初轮全量使用仅影响父 Python 的 `-X utf8`，导致 Windows 子进程中文输出编码不一致（10 failed、2793 passed、19 skipped）；去掉该单进程覆盖、按本机原运行方式复验，相关迁移/安装 24 项通过，原断言与无关源码未改。完整重验用 `python -m pytest -o addopts='' -q --tb=short`，最终输出 `pytest-final.txt`；`checks.json` 与 `ci-final.json` 记录当前源码/最终 HEAD 的本地门禁和远端三 job，必须按精确 SHA 核对，未生成或非 success 不视为验收。本轮尚未重启服务，无生产案件状态、配置、群动作或数据库迁移变更。
+私有收据目录：`D:/QQBotAudits/case-batch-5000-20260926`。初轮全量使用仅影响父 Python 的 `-X utf8`，导致 Windows 子进程中文输出编码不一致（10 failed、2793 passed、19 skipped）；去掉该单进程覆盖、按本机原运行方式复验，相关迁移/安装 24 项通过，原断言与无关源码未改。完整重验用 `python -m pytest -o addopts='' -q --tb=short`，最终输出 `pytest-final.txt`；`checks.json` 与 `ci-final.json` 记录部署源码的本地门禁和远端三 job，必须按精确 SHA 核对，未生成或非 success 不视为验收。源码及隔离验收阶段未重启服务；后续授权上线见下节。
+
+### 批量 5000 授权部署（2026-09-26）
+
+负责人明确选择“现在上线”后，生产 Web 加载源码 `4e2a578ce8ae9ab36a34807883e59a408697a48e`。部署前本地完整回归 2806 passed / 19 skipped（350.77 秒），82 项批量专项、Ruff/375 文件格式/mypy 130 源文件均通过；[CI run 36230379643](https://github.com/miaomiao636/qq-group-moderation-bot/actions/runs/36230379643) 的三个 job 全部 success，PR 合成提交 `5358fcc4d96e2050edda4f9ef893fb8b62681d1b` 与部署源码的 tree 同为 `c0de2776fedb832a81013ad297aca02cbfc4b244`。独立浏览器合成验收为 5000 案中正常结案 4998 件、已关闭跳过 1 件、异常保留 1 件，25000 条证据保持、动作意图 0；测试服务及临时标签页均已关闭。
+
+通过 Windows UAC 执行私有 `restart-web-batch5000.ps1 -Execute`：先在 D 盘创建 `moderation-20260926T085811Z-9wp86g2i.db`，199876608 字节（约 190.6 MiB），完整性 `ok`、外键错误 0、revision `f3c8a9d12064`，SHA256 `89e7a574f6bd62e95166c32ae11ad47f8dc3a2db76218a90f970a77a6dc87997`。哈希由主审独立复算一致。北京时间 16:58:14 启动新 Web 进程，16:59:14 验证 OneBot ready；Web 服务 PID 20076 → 32056，8001 监听属于其新 Python 子进程 45188，Runtime 保持 PID 23420。服务应用目录和启动入口与本仓库一致。
+
+最终 `/healthz` 为 ok、OneBot ready/connected/login online、已处理自然消息 5 条、失败 0、队列 0；浏览器后台入口显示正常登录页，本轮未取得生产登录态，未通过真实页面执行结案。17:00:23 的最终配置基线与上线前一致，包括急停 false、recall_only、71 群审核/动作开启及 4 群双关闭。没有数据库迁移、历史证据更改或生产批量操作。
+
+上述备份、命令、时间和进程核验的私有收据为 `moderation-20260926T085811Z-9wp86g2i-validation.json`、`restart-20260926T085813Z.json`、`deployment-final.json`、`action-baseline-before-4e2a578.json` 与 `action-baseline-after-4e2a578.json`；`checks.json` 已记录 production_restarted=true。后续上线记录提交仅改文档，不改变已加载应用代码；源码测试与 CI 的通过结论仅对应上列精确 SHA。用户刷新案件页后即可使用新上限，原异常案件仍须另行复核。
