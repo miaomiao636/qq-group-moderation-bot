@@ -15,6 +15,14 @@
 
 ### 本轮源码与本机验证
 
+#### Windows CI 后续补正（以最终收据为准）
+
+`8fc48d27ccfffa26bf004fcdbb3eef486f3f2b22` 的 [首次 CI](https://github.com/miaomiao636/qq-group-moderation-bot/actions/runs/36218557352) 中，Ubuntu 与 clean runtime-deps 成功，Windows `uv run pytest` 失败：历史任务选择测试预期 50 条但返回 48 条。用 `gh run view 36218557352 --log-failed` 取证于 `ci-windows-failed.log`；不能把该候选包写成远端全绿。
+
+检查发现历史读取把文件检查、连接准备耗时计入了 SQL 的 0.25 秒预算，会把有效任务当作无法读取而略过。新增固定时钟回归明确复现这种行为后，将预算起点移到连接准备完成、第一条 SQL 前；查询限额和 SQLite 中断门禁不变。原内部“最近 50 项”测试仅固定时钟以隔离磁盘/调度波动，实际数据库仍读取，50 项及首尾顺序断言全部保留；真实 SQLite 超时中断用例原样保留。这是内部测试环境隔离登记，不是外部主审探针适配；`tests/test_r132_review_*.py` 无修改。
+
+本补正提交后，以干净提交执行 `uv run python -X utf8 D:/qqbot-delivery-check-20260926/recheck/run_checks.py`，其中全量命令为 `uv run pytest --junitxml=D:/qqbot-delivery-check-20260926/recheck/full.xml`，另执行下面同一组 ruff/mypy/差异门禁。实际执行 SHA、命令、结果以 `recheck/checks.json`、`recheck/summary.json` 为准；最终包及 `ci-final.json` 必须匹配补正后的最终 HEAD，不沿用失败的旧 CI。下面的 `9c618c6` 本机结果属于补正前已验证基线，保留历史，不冒充补正后的全量执行。
+
 冻结源码/入库测试执行 SHA：`9c618c694ac8d68ec87ea5243bdb9cf7c2650894`。证据目录 `D:/qqbot-delivery-check-20260926/`；`checks.json` 记录命令与退出码，`summary.json` 从 JUnit 复算。全量启动时仓库干净；执行期间只补接收方手册和包描述文本，`app/`、`scripts/`、`tests/`、迁移及锁定依赖均未改变。
 
 ```powershell

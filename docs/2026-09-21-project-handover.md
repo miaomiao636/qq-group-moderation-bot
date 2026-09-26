@@ -433,6 +433,8 @@ A09 前 6 秒、历史授权快照、Windows 回滚全链实机演练、
 
 **COMPANION-READY-20260926**：新增内部 `test_bundle_backup_source.py`、`test_space_inspector_backup.py`、`test_service_installer.py`、`test_service_recovery.py`，补充既有内部打包收据断言。使用合成数据、假的 NSSM/Windows API 与隔离目录；主审探针未修改。CLI/干净发行包验收另留证，不冒充入库探针。精确 SHA、命令与计数见交付整改记录。
 
+同轮 Windows CI 补正登记：`test_space_inspector_history.py` 的最近任务选择用例固定时钟，保留原数量/顺序断言和真实 SQLite 读取；预算中断用例原样保留，另加连接准备不消耗 SQL 预算回归。生产查询时限未提高，修正计时起点；无外部探针适配。失败 CI 与后续完整重验均见交付整改记录。
+
 **COMPANION-DELIVERY-20260925**：新增内部 `tests/test_companion_bundle.py`，仅使用临时合成 Git 仓库。验证固定提交字节、排除现场/历史资料、拒绝符号链接和不明运行资源、必备文件、覆盖保护及配置模板非空凭据拦截；原主审探针未适配或修改。私有验包脚本不计入库测试，真实新机安装仍未执行。
 
 **SPACE-EXPORT-PATH-20260925**：新增内部 `tests/test_space_inspector_export_settings.py`；既有 `tests/test_space_inspector_gui.py` 的合成服务仅增加导出目录和配置错误字段以配合新增事件载荷，保留原断言。外部主审探针没有修改；隔离 GUI 验证是私有实跑证据，不计作入库测试。详情见 [巡检记录](2026-09-21-space-inspector.md#自定义导出位置space-export-path-20260925)。

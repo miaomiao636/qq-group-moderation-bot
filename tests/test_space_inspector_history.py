@@ -159,6 +159,7 @@ def test_foreign_or_invalid_schema_is_skipped_without_changes(tmp_path: Path, ta
 
 def test_recent_fifty_use_canonical_directory_names_and_ignore_unrelated_files(
     tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     store = make_task(tmp_path, "20260921T120000Z-00000000")
     store.close()
@@ -169,6 +170,9 @@ def test_recent_fifty_use_canonical_directory_names_and_ignore_unrelated_files(
         (folder / "task.sqlite3").write_bytes(data)
     (tmp_path / "unrelated").mkdir()
     (tmp_path / "99999999T999999Z-00000000").mkdir()
+    # This case specifies selection/order, not the speed of the runner's disk.
+    # Query interruption is exercised with a real SQLite progress handler below.
+    monkeypatch.setattr(history, "time", SimpleNamespace(monotonic=lambda: 0.0))
     rows = list_tasks(tmp_path)
     assert len(rows) == 50
     assert rows[0]["folder"] == tmp_path / "20260921T125200Z-00000000"
@@ -269,3 +273,26 @@ def test_actual_sqlite_query_is_interrupted_when_budget_expires(
     monkeypatch.setattr(history, "_QUERY_SECONDS", 0)
     assert history._read_task(folder) is None
     assert progress_calls and progress_calls[-1] == 1
+
+
+def test_connection_preparation_does_not_consume_sql_query_budget(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    store = make_task(tmp_path)
+    folder = store.folder
+    store.close()
+    clock = SimpleNamespace(value=0.0)
+    real_connect = sqlite3.connect
+
+    def connect(database: str, **kwargs: Any) -> sqlite3.Connection:
+        connection = real_connect(database, **kwargs)
+        # A slow filesystem/connection preparation is not time spent on SQL queries.
+        clock.value += 0.5
+        return connection
+
+    monkeypatch.setattr(history, "time", SimpleNamespace(monotonic=lambda: clock.value))
+    monkeypatch.setattr(history.sqlite3, "connect", connect)
+    row = history._read_task(folder)
+    assert row is not None
+    assert row["checked"] == 2 and row["total"] == 3
+    assert history._QUERY_SECONDS == 0.25

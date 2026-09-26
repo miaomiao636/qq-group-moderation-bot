@@ -81,7 +81,6 @@ def _created_at(value: object) -> str:
 def _read_task(folder: Path) -> dict[str, object] | None:
     database = folder / "task.sqlite3"
     connection: sqlite3.Connection | None = None
-    deadline = time.monotonic() + _QUERY_SECONDS
     try:
         if not _ordinary(folder, directory=True) or not _ordinary(database, directory=False):
             return None
@@ -97,6 +96,9 @@ def _read_task(folder: Path) -> dict[str, object] | None:
         connection = sqlite3.connect(database.as_uri() + "?mode=ro", uri=True, timeout=0.05)
         connection.setlimit(sqlite3.SQLITE_LIMIT_LENGTH, 8192)
         connection.setlimit(sqlite3.SQLITE_LIMIT_SQL_LENGTH, 8192)
+        # Filesystem checks and opening SQLite may be slow on Windows. Start the
+        # SQL budget at the first query; keep its duration and interrupt guard.
+        deadline = time.monotonic() + _QUERY_SECONDS
         connection.set_progress_handler(lambda: int(time.monotonic() >= deadline), 1000)
         connection.execute("PRAGMA trusted_schema=OFF")
         connection.execute("PRAGMA query_only=ON")
