@@ -247,7 +247,9 @@ async def summaries(
     return result
 
 
-async def close_summaries(session: AsyncSession, rows: list[Case]) -> list[dict[str, Any]]:
+async def close_summaries(
+    session: AsyncSession, rows: list[Case], *, strict_evidence: bool = True
+) -> list[dict[str, Any]]:
     """Bound each evidence read while retaining the caller's transaction snapshot.
 
     A large batch can exceed the per-query evidence limit in total. Only hashes
@@ -255,7 +257,11 @@ async def close_summaries(session: AsyncSession, rows: list[Case]) -> list[dict[
     """
     result: list[dict[str, Any]] = []
     for start in range(0, len(rows), CLOSE_SUMMARY_CHUNK):
-        result.extend(await summaries(session, rows[start : start + CLOSE_SUMMARY_CHUNK]))
+        result.extend(
+            await summaries(
+                session, rows[start : start + CLOSE_SUMMARY_CHUNK], strict_evidence=strict_evidence
+            )
+        )
     return result
 
 

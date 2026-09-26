@@ -634,13 +634,36 @@ async def case_batch_prepare(
                 },
             )
         pending, closed = case_batch.partition_for_close(cases)
+        inspected = await case_batch.close_summaries(session, pending, strict_evidence=False)
+        abnormal = [row for row in inspected if row["identity_mismatch"]]
+        abnormal_ids = {row["id"] for row in abnormal}
+        pending = [row for row in pending if row.id not in abnormal_ids]
         if pending:
             plan, preview = await case_batch.create_plan(
                 session, pending, _human_actor(token), reason
             )
-            await session.commit()
         else:
             plan, preview = None, []
+        if abnormal:
+            session.add(
+                AdminAudit(
+                    operator=_human_actor(token),
+                    action="case_batch_skip_abnormal",
+                    target_type="admin_plan" if plan else "case_selection",
+                    target_id=plan.id if plan else "",
+                    detail_json=case_batch.canonical(
+                        {
+                            "reason": "evidence_identity_mismatch",
+                            "cases": [
+                                {"id": row["id"], "mismatched_records": row["identity_mismatch"]}
+                                for row in abnormal
+                            ],
+                        }
+                    ),
+                )
+            )
+        if plan or abnormal:
+            await session.commit()
     closed_labels = "、".join(_esc(row.case_no) for row in closed[:20])
     closed_note = (
         f"<p>跳过 {len(closed)} 个已关闭案件（重复选中不再处理）：{closed_labels}"
@@ -648,11 +671,26 @@ async def case_batch_prepare(
         if closed
         else ""
     )
+    abnormal_note = ""
+    if abnormal:
+        abnormal_rows = "".join(
+            f'<tr><td><a href="/admin/cases/{row["id"]}" target="_blank" rel="noopener">'
+            f"{_esc(row['case_no'])}</a></td><td>{row['identity_mismatch']} 条</td></tr>"
+            for row in abnormal
+        )
+        abnormal_note = (
+            f"<h3>跳过 {len(abnormal)} 个证据关联异常案件</h3>"
+            "<p>以下案件仍待人工核对，案件和原证据保持不变，不计入本次处理数量。</p>"
+            f"<table><tr><th>案件</th><th>身份不符的关联证据</th></tr>{abnormal_rows}</table>"
+        )
     if plan is None:
+        heading = (
+            "本次没有可批量处理的待审案件" if abnormal else f"所选 {len(closed)} 个案件均已关闭"
+        )
         response = _page(
             "批量结案预览",
-            f"<h2>所选 {len(closed)} 个案件均已关闭</h2>{closed_note}"
-            "<p>没有需要再次处理的待审案件。</p>"
+            f"<h2>{heading}</h2>{closed_note}{abnormal_note}"
+            "<p>本次未结案。</p>"
             '<a class="btn" href="/admin?case_batch_done=1">清空勾选并返回案件列表</a>',
         )
         response.headers["Cache-Control"] = "no-store"
@@ -666,7 +704,7 @@ async def case_batch_prepare(
     response = _page(
         "批量结案预览",
         f"<h2>批量标记已人工处理：{len(preview)} 个案件</h2>"
-        f"{closed_note}"
+        f"{closed_note}{abnormal_note}"
         "<p>将以下待审案件标记为已人工处理并结案。保留证据和违规累计，不踢人；同群成员再犯将新建待审案。</p>"
         f"<p>结案记录：{_esc(json.loads(plan.params_json)['reason'])}</p><p>预览 5 分钟内有效；案件或证据变化需重新预览。来源为 qq_official 的成员身份是 OpenID，不是 QQ 号。</p>"
         f"<table><tr><th>案件</th><th>来源</th><th>群名 / 群身份</th><th>成员身份</th><th>案件依据</th></tr>{rows}</table>"

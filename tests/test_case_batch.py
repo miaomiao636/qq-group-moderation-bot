@@ -941,7 +941,7 @@ async def test_duplicate_ids_and_disabled_delete(web_ui):
 
 
 @pytest.mark.parametrize("link", ["explicit", "reverse"])
-async def test_mismatched_evidence_hidden_from_export_and_detail_but_blocks_close(web_ui, link):
+async def test_mismatched_evidence_hidden_and_all_abnormal_selection_stays_pending(web_ui, link):
     client, factory, _, csrf = web_ui
     await seed(factory)
     async with factory() as session:
@@ -971,13 +971,96 @@ async def test_mismatched_evidence_hidden_from_export_and_detail_but_blocks_clos
         "/admin/cases/batch-preview",
         data={"csrf": csrf, "case_ids": ["1"], "reason": "reviewed"},
     )
-    assert response.status_code == 409
-    assert "身份不一致" in response.text
+    assert response.status_code == 200
+    assert "跳过 1 个证据关联异常案件" in response.text
+    assert "仍待人工核对" in response.text
+    assert 'name="plan_id"' not in response.text
+    assert "均已关闭" not in response.text
+    async with factory() as session:
+        assert not await session.scalar(select(AdminChangePlan.id))
     response = await client.post("/admin/cases/1/false-positive", data={"csrf": csrf})
     assert response.status_code == 409
     async with factory() as session:
         assert not (await session.get(ViolationRecord, 1)).revoked
     assert await statuses(factory) == ["PENDING_REVIEW"] * 2
+
+
+@pytest.mark.parametrize("link", ["explicit", "reverse"])
+async def test_preview_skips_abnormal_and_closed_cases_then_closes_healthy_only(web_ui, link):
+    client, factory, _, csrf = web_ui
+    await seed(factory, 3)
+    async with factory() as session:
+        bad_case = await session.get(Case, 1)
+        bad_record = await session.get(ViolationRecord, 1)
+        bad_record.external_user_id = "other-member"
+        if link == "explicit":
+            bad_record.case_id = None
+            bad_case.violation_ids_json = "[1]"
+        (await session.get(Case, 3)).status = "CLOSED"
+        await session.commit()
+        case_before = {c.name: getattr(bad_case, c.name) for c in Case.__table__.columns}
+        record_before = {
+            c.name: getattr(bad_record, c.name) for c in ViolationRecord.__table__.columns
+        }
+    response = await client.post(
+        "/admin/cases/batch-preview",
+        data={"csrf": csrf, "scope": "selected", "case_ids_compact": '["1","2","3"]'},
+    )
+    assert response.status_code == 200, response.text
+    assert "批量标记已人工处理：1 个案件" in response.text
+    assert "跳过 1 个已关闭案件" in response.text
+    assert "跳过 1 个证据关联异常案件" in response.text
+    assert "仍待人工核对" in response.text and "BATCH-0" in response.text
+    assert "other-member" not in response.text
+    plan_id = re.search(r'name="plan_id" value="([^"]+)"', response.text)[1]
+    async with factory() as session:
+        plan = await session.get(AdminChangePlan, plan_id)
+        assert json.loads(plan.params_json)["ids"] == [2]
+        skipped = await session.scalar(
+            select(AdminAudit).where(AdminAudit.action == "case_batch_skip_abnormal")
+        )
+        assert skipped.target_id == plan_id
+        assert json.loads(skipped.detail_json) == {
+            "reason": "evidence_identity_mismatch",
+            "cases": [{"id": 1, "mismatched_records": 1}],
+        }
+    for _ in range(2):
+        response = await client.post(
+            "/admin/cases/batch-confirm", data={"csrf": csrf, "plan_id": plan_id}
+        )
+        assert response.status_code == 303
+    assert await statuses(factory) == ["PENDING_REVIEW", "CLOSED", "CLOSED"]
+    async with factory() as session:
+        bad_case = await session.get(Case, 1)
+        bad_record = await session.get(ViolationRecord, 1)
+        assert {c.name: getattr(bad_case, c.name) for c in Case.__table__.columns} == case_before
+        assert {
+            c.name: getattr(bad_record, c.name) for c in ViolationRecord.__table__.columns
+        } == record_before
+        applied = list(
+            await session.scalars(select(AdminAudit).where(AdminAudit.action == case_batch.ACTION))
+        )
+        assert [audit.target_id for audit in applied] == ["2"]
+        assert await session.scalar(select(func.count()).select_from(ActionIntent)) == 0
+
+
+async def test_new_mismatch_after_preview_still_rejects_entire_confirmation(web_ui):
+    client, factory, _, csrf = web_ui
+    await seed(factory)
+    plan_id = await preview(client, csrf)
+    async with factory() as session:
+        (await session.get(ViolationRecord, 2)).external_user_id = "new-mismatch"
+        await session.commit()
+    response = await client.post(
+        "/admin/cases/batch-confirm", data={"csrf": csrf, "plan_id": plan_id}
+    )
+    assert response.status_code == 409 and "身份不一致" in response.text
+    assert await statuses(factory) == ["PENDING_REVIEW"] * 2
+    async with factory() as session:
+        assert (await session.get(AdminChangePlan, plan_id)).status == "PENDING"
+        assert not await session.scalar(
+            select(AdminAudit.id).where(AdminAudit.action == case_batch.ACTION)
+        )
 
 
 async def test_export_keeps_valid_evidence_while_flagging_bad_reverse_link(web_ui):
