@@ -179,6 +179,23 @@ def _ai_daily_table(daily: list[dict[str, Any]]) -> str:
     )
 
 
+def _recall_overview(recall: dict[str, int]) -> str:
+    return (
+        f"<div class=card><h3>自动撤回核验（最近 {recall['window_days']} 天）</h3>"
+        + _kpis(
+            [
+                ("进入撤回流程", recall["entered"]),
+                ("接口返回成功", recall["api_succeeded"]),
+                ("收到匹配 QQ 撤回通知", recall["notice_confirmed"]),
+                ("尚无匹配通知", recall["notice_unconfirmed"]),
+                ("未采集确认", recall["notice_untracked"]),
+            ]
+        )
+        + "<p class=muted>按进入流程时间（UTC）统计；接口成功与收到通知是两项可能重叠的证据，"
+        "不能相加。尚无通知或未采集不等于消息未撤回；迟到通知会更新统计。</p></div>"
+    )
+
+
 def _stats_body(stats: dict[str, Any]) -> str:
     t = stats["totals"]
     ai_fail_rate = (t["ai_failed"] / t["ai_calls"] * 100) if t["ai_calls"] else 0.0
@@ -201,6 +218,7 @@ def _stats_body(stats: dict[str, Any]) -> str:
     )
     return (
         kpis
+        + _recall_overview(stats["recall"])
         + _bars("判定分布", stats["verdicts"])
         + _bars("违规类别分布", stats["categories"])
         + _bars("最近7天每日处理量", stats["last7"])

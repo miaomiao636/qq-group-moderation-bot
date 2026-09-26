@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from datetime import UTC, datetime, timedelta
+
 import pytest
 from app.db import Base
 from app.moderation.feedback import FeedbackRecord
@@ -55,6 +57,73 @@ async def test_only_latest_explicit_human_labels_are_truth() -> None:
             assert result["false_positive"] == 1
             assert result["precision"] == 0.0
             assert result["recall"] is None
+    finally:
+        await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_dashboard_recall_counts_distinguish_api_and_qq_notice() -> None:
+    from app.actions.orchestrator import ActionIntent
+    from app.actions.recall_confirmation import RecallConfirmation
+    from app.reports.stats import build_stats
+
+    now = datetime.now(UTC)
+    engine = create_async_engine("sqlite+aiosqlite:///:memory:")
+    try:
+        async with engine.begin() as conn:
+            await conn.run_sync(Base.metadata.create_all)
+        async with AsyncSession(engine) as session:
+            records = [
+                ("onebot", "SUCCEEDED", "confirmed", now - timedelta(days=1)),
+                ("onebot", "SUCCEEDED", "unconfirmed", now - timedelta(days=1)),
+                ("onebot", "UNKNOWN", "confirmed", now - timedelta(days=1)),
+                ("onebot", "FAILED", "confirmed", now - timedelta(days=1)),
+                ("onebot", "SUCCEEDED", None, now - timedelta(days=1)),
+                ("onebot", "SKIPPED", None, now - timedelta(days=1)),
+                ("onebot", "SUCCEEDED", "confirmed", now - timedelta(days=10)),
+                ("onebot", "SUCCEEDED", "confirmed", now + timedelta(days=1)),
+                ("qq_official", "SUCCEEDED", "confirmed", now - timedelta(days=1)),
+            ]
+            for index, (provider, status, tracking, created_at) in enumerate(records):
+                intent = ActionIntent(
+                    idempotency_key=f"recall-stats-{index}",
+                    action="recall",
+                    status=status,
+                    provider=provider,
+                    group_openid="g",
+                    target_member_openid="u",
+                    message_id=f"source-{index}",
+                    external_group_id="g",
+                    external_user_id="u",
+                    external_message_id=f"message-{index}",
+                    created_at=created_at,
+                )
+                session.add(intent)
+                await session.flush()
+                if tracking is not None:
+                    session.add(
+                        RecallConfirmation(
+                            intent_id=intent.id,
+                            account_id="10000001",
+                            group_id="g",
+                            user_id="u",
+                            message_id=f"message-{index}",
+                            source_event_key=f"source-{index}",
+                            source_sent_at=created_at,
+                            requested_at=created_at,
+                            confirmed_at=now if tracking == "confirmed" else None,
+                        )
+                    )
+            await session.commit()
+            recall = (await build_stats(session))["recall"]
+            assert recall == {
+                "window_days": 7,
+                "entered": 5,
+                "api_succeeded": 3,
+                "notice_confirmed": 3,
+                "notice_unconfirmed": 1,
+                "notice_untracked": 1,
+            }
     finally:
         await engine.dispose()
 

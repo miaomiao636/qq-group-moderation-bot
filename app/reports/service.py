@@ -67,6 +67,29 @@ async def _recall_counts(session: AsyncSession, start: datetime, end: datetime) 
     }
 
 
+async def build_recall_overview(
+    session: AsyncSession, start: datetime, end: datetime
+) -> dict[str, int]:
+    """Count a bounded OneBot recall cohort without conflating API and QQ notices."""
+    counts = await _counts(
+        session,
+        **await _recall_counts(session, start, end),
+        onebot_recall_api_succeeded=select(func.count())
+        .select_from(ActionIntent)
+        .where(
+            ActionIntent.provider == "onebot",
+            ActionIntent.action == "recall",
+            ActionIntent.status == "SUCCEEDED",
+            ActionIntent.created_at >= start,
+            ActionIntent.created_at < end,
+        ),
+    )
+    counts["onebot_recall_entered"] = sum(
+        counts[f"onebot_recall_{key}"] for key in ("confirmed", "unconfirmed", "untracked")
+    )
+    return counts
+
+
 async def build_daily(session: AsyncSession, day: datetime | None = None) -> dict[str, Any]:
     """构建日报（默认昨天00:00~24:00 UTC窗口）。"""
     day = day or (datetime.now(UTC) - timedelta(days=1))

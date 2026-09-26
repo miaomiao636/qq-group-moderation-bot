@@ -132,6 +132,11 @@ def test_stats_dashboard_renders(logged_in: TestClient) -> None:
     assert "统计大盘" in resp.text
     assert "判定分布" in resp.text
     assert "AI 调用（按模型）" in resp.text
+    assert "自动撤回核验" in resp.text
+    assert "接口返回成功" in resp.text
+    assert "收到匹配 QQ 撤回通知" in resp.text
+    assert "尚无匹配通知" in resp.text
+    assert "未采集确认" in resp.text
 
 
 def test_case_dashboard_renders(logged_in: TestClient) -> None:

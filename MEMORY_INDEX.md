@@ -1,5 +1,7 @@
 # 项目记忆索引
 
+- **STAT-RECALL-20260926**：统计页补 OneBot 撤回流程、API 成功与 QQ 通知匹配的匿名近 7 天概览；通知未匹配根因仍未解决，源码/现场分别验收。入口见 [撤回确认记录](docs/2026-09-24-recall-confirmation.md#stat-recall-20260926统计大盘显示撤回证据源码候选)。
+
 配套交付最新验证入口：[Windows CI 后续补正](docs/2026-09-25-companion-delivery.md#windows-ci-后续补正以最终收据为准)。首次候选失败保留历史；最终状态核对补正后的 `recheck` 与精确 HEAD CI 收据。
 
 - **COMPANION-READY-20260926**：补齐 NapCat 新安装计划/显式执行、无 Git 发行清单备份、巡检独立离线备份与隔离恢复；按既有 D-035 统一 MIT 元数据，仅制作公司 ZIP。没有部署到生产。源码/合成验证与新现场验收分别记录，见 [交付整改](docs/2026-09-25-companion-delivery.md#companion-ready-20260926)。以下前轮技术缺口以该更新为准。
