@@ -10,10 +10,11 @@ import re
 from datetime import UTC, datetime, timedelta
 
 import pytest
+from app.actions.orchestrator import ActionIntent
 from app.cases.models import Case, ViolationRecord
 from app.models import AdminAudit, AdminChangePlan, ProviderGroupSettings
 from app.web import auth, case_batch
-from sqlalchemy import event, select
+from sqlalchemy import event, func, insert, select, update
 
 from tests import test_longterm_web
 
@@ -70,6 +71,114 @@ async def preview(client, csrf, **kw):
 async def statuses(factory):
     async with factory() as session:
         return list(await session.scalars(select(Case.status).order_by(Case.id)))
+
+
+async def seed_large_batch(factory, count, evidence_per_case=0):
+    async with factory() as session:
+        await session.execute(
+            insert(Case),
+            [
+                {
+                    "id": index,
+                    "case_no": f"LARGE-{index}",
+                    "provider": "onebot",
+                    "group_openid": "old-group",
+                    "member_openid": "old-user",
+                    "external_group_id": "123456",
+                    "external_user_id": str(200000 + index),
+                }
+                for index in range(1, count + 1)
+            ],
+        )
+        if evidence_per_case:
+            await session.execute(
+                insert(ViolationRecord),
+                [
+                    {
+                        "provider": "onebot",
+                        "group_openid": "old-group",
+                        "member_openid": "old-user",
+                        "external_group_id": "123456",
+                        "external_user_id": str(200000 + index),
+                        "message_id": f"large-{index}-{evidence}",
+                        "category": "ad",
+                        "confidence": 0.95,
+                        "case_id": index,
+                    }
+                    for index in range(1, count + 1)
+                    for evidence in range(evidence_per_case)
+                ],
+            )
+        await session.commit()
+
+
+@pytest.mark.parametrize("already_closed", [False, True])
+async def test_full_5000_case_batch_closes_once_with_all_evidence_preserved(web_ui, already_closed):
+    client, factory, _, csrf = web_ui
+    await seed_large_batch(factory, 5000, evidence_per_case=5)
+    if already_closed:
+        async with factory() as session:
+            await session.execute(update(Case).where(Case.id == 1).values(status="CLOSED"))
+            await session.commit()
+    pending_count = 4999 if already_closed else 5000
+    response = await client.post(
+        "/admin/cases/batch-preview",
+        data={
+            "csrf": csrf,
+            "scope": "selected",
+            "case_ids_compact": json.dumps([str(i) for i in range(1, 5001)]),
+        },
+    )
+    assert response.status_code == 200, response.text
+    assert f"{pending_count} 个案件" in response.text
+    if already_closed:
+        assert "跳过 1 个已关闭案件" in response.text
+    plan_id = re.search(r'name="plan_id" value="([^"]+)"', response.text)[1]
+    expected_statuses = ["CLOSED"] if already_closed else []
+    assert await statuses(factory) == expected_statuses + ["PENDING_REVIEW"] * pending_count
+    for _ in range(2):
+        confirm = await client.post(
+            "/admin/cases/batch-confirm", data={"csrf": csrf, "plan_id": plan_id}
+        )
+        assert confirm.status_code == 303, confirm.text
+    async with factory() as session:
+        rows = list(await session.scalars(select(Case)))
+        assert len(rows) == 5000 and all(row.status == "CLOSED" for row in rows)
+        for row in rows:
+            if already_closed and row.id == 1:
+                assert row.audit_json == "{}"
+                continue
+            chain = json.loads(row.audit_json)["transitions"]
+            assert [(step["from"], step["to"]) for step in chain] == [
+                ("PENDING_REVIEW", "KEEP"),
+                ("KEEP", "CLOSED"),
+            ]
+            assert all(step["extra"]["reason"] == "人工处理" for step in chain)
+        assert await session.scalar(select(func.count()).select_from(ViolationRecord)) == 25000
+        assert not await session.scalar(select(ViolationRecord.id).where(ViolationRecord.revoked))
+        assert await session.scalar(select(func.count()).select_from(ActionIntent)) == 0
+        for action, expected in [(case_batch.ACTION, pending_count), ("case_batch_complete", 1)]:
+            assert (
+                await session.scalar(
+                    select(func.count()).select_from(AdminAudit).where(AdminAudit.action == action)
+                )
+                == expected
+            )
+
+
+@pytest.mark.parametrize("scope", ["selected", "filtered"])
+async def test_5001_case_batch_is_rejected_without_partial_work(web_ui, scope):
+    client, factory, _, csrf = web_ui
+    await seed_large_batch(factory, 5001)
+    data = {"csrf": csrf, "scope": scope}
+    if scope == "selected":
+        data["case_ids_compact"] = json.dumps([str(i) for i in range(1, 5002)])
+    response = await client.post("/admin/cases/batch-preview", data=data)
+    assert response.status_code == 422, response.text
+    assert await statuses(factory) == ["PENDING_REVIEW"] * 5001
+    async with factory() as session:
+        assert await session.scalar(select(func.count()).select_from(AdminChangePlan)) == 0
+        assert await session.scalar(select(func.count()).select_from(AdminAudit)) == 0
 
 
 async def test_export_authoritative_ids_and_summary_only(web_ui):
@@ -391,6 +500,93 @@ async def test_audit_failure_rolls_back_then_retry(web_ui):
     assert (
         await client.post("/admin/cases/batch-confirm", data={"csrf": csrf, "plan_id": plan_id})
     ).status_code == 303
+
+
+async def test_final_receipt_failure_rolls_back_case_updates_and_bulk_audits(web_ui, monkeypatch):
+    client, factory, engine, csrf = web_ui
+    monkeypatch.setattr(case_batch, "CLOSE_SUMMARY_CHUNK", 2)
+    await seed(factory, 3)
+    plan_id = await preview(client, csrf, case_ids=["1", "2", "3"])
+
+    def fail(_conn, _cursor, statement, params, _context, many):
+        if (
+            statement.lower().startswith("insert into admin_audits")
+            and not many
+            and "case_batch_complete" in params
+        ):
+            raise RuntimeError("synthetic final receipt failure")
+
+    event.listen(engine.sync_engine, "before_cursor_execute", fail)
+    try:
+        response = await client.post(
+            "/admin/cases/batch-confirm", data={"csrf": csrf, "plan_id": plan_id}
+        )
+        assert response.status_code == 500
+    finally:
+        event.remove(engine.sync_engine, "before_cursor_execute", fail)
+    async with factory() as session:
+        cases = list(await session.scalars(select(Case)))
+        assert all(row.status == "PENDING_REVIEW" and row.audit_json == "{}" for row in cases)
+        assert (await session.get(AdminChangePlan, plan_id)).status == "PENDING"
+        assert (
+            await session.scalar(
+                select(func.count())
+                .select_from(AdminAudit)
+                .where(AdminAudit.action == case_batch.ACTION)
+            )
+            == 0
+        )
+    assert (
+        await client.post("/admin/cases/batch-confirm", data={"csrf": csrf, "plan_id": plan_id})
+    ).status_code == 303
+    assert await statuses(factory) == ["CLOSED"] * 3
+
+
+@pytest.mark.parametrize("phase", ["preview", "confirm"])
+async def test_later_evidence_chunk_limit_rejects_whole_batch(web_ui, monkeypatch, phase):
+    client, factory, _, csrf = web_ui
+    monkeypatch.setattr(case_batch, "CLOSE_SUMMARY_CHUNK", 2)
+    monkeypatch.setattr(case_batch, "EVIDENCE_LIMIT", 2)
+    await seed_large_batch(factory, 3, evidence_per_case=1)
+    plan_id = None
+    if phase == "confirm":
+        plan_id = await preview(client, csrf, case_ids=["1", "2", "3"])
+    # Descending selection puts case 1 in the last evidence chunk.
+    async with factory() as session:
+        await session.execute(
+            insert(ViolationRecord),
+            [
+                {
+                    "provider": "onebot",
+                    "group_openid": "old-group",
+                    "member_openid": "old-user",
+                    "external_group_id": "123456",
+                    "external_user_id": "200001",
+                    "message_id": f"extra-{i}",
+                    "category": "ad",
+                    "confidence": 0.95,
+                    "case_id": 1,
+                }
+                for i in range(2)
+            ],
+        )
+        await session.commit()
+    data = (
+        {"csrf": csrf, "plan_id": plan_id}
+        if plan_id
+        else {"csrf": csrf, "scope": "selected", "case_ids": ["1", "2", "3"]}
+    )
+    response = await client.post(f"/admin/cases/batch-{phase}", data=data)
+    assert response.status_code == 422 and "证据数量过多" in response.text
+    assert await statuses(factory) == ["PENDING_REVIEW"] * 3
+    async with factory() as session:
+        assert not await session.scalar(
+            select(AdminAudit.id).where(AdminAudit.action == case_batch.ACTION)
+        )
+        if plan_id:
+            assert (await session.get(AdminChangePlan, plan_id)).status == "PENDING"
+        else:
+            assert not await session.scalar(select(AdminChangePlan.id))
 
 
 @pytest.mark.parametrize("path", ["batch-preview", "batch-confirm", "batch-export"])

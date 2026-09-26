@@ -15,16 +15,17 @@ from hashlib import sha256
 from typing import Any
 
 from fastapi import HTTPException
-from sqlalchemy import and_, case, or_, select, update
+from sqlalchemy import and_, case, insert, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.cases.models import Case, ViolationRecord
 from app.cases.service import transition_case
 from app.models import AdminAudit, AdminChangePlan, GroupAlias, ProviderGroupSettings
 
-CLOSE_LIMIT = 200
+CLOSE_LIMIT = 5000
 EXPORT_LIMIT = 5000
 EVIDENCE_LIMIT = 20000
+CLOSE_SUMMARY_CHUNK = 200
 ACTION = "case_batch_keep"
 
 
@@ -246,6 +247,18 @@ async def summaries(
     return result
 
 
+async def close_summaries(session: AsyncSession, rows: list[Case]) -> list[dict[str, Any]]:
+    """Bound each evidence read while retaining the caller's transaction snapshot.
+
+    A large batch can exceed the per-query evidence limit in total. Only hashes
+    and summaries survive each chunk; all chunks are validated before any close.
+    """
+    result: list[dict[str, Any]] = []
+    for start in range(0, len(rows), CLOSE_SUMMARY_CHUNK):
+        result.extend(await summaries(session, rows[start : start + CLOSE_SUMMARY_CHUNK]))
+    return result
+
+
 def csv_cell(value: object) -> str:
     value = str(value)
     stripped = value.lstrip()
@@ -351,7 +364,7 @@ async def create_plan(
     if not 1 <= len(reason) <= 500:
         raise HTTPException(422, "请填写 1 至 500 字的结案原因")
     eligible(rows)
-    preview = await summaries(session, rows)
+    preview = await close_summaries(session, rows)
     plan = AdminChangePlan(
         id=secrets.token_urlsafe(32),
         action=ACTION,
@@ -392,22 +405,28 @@ async def confirm_plan(session: AsyncSession, plan_id: str, actor: str) -> int:
         raise HTTPException(409, "预览已过期或已失效，请重新预览")
     rows = await select_cases(session, "selected", params["ids"], {}, limit=CLOSE_LIMIT)
     eligible(rows)
-    current = await summaries(session, rows)
+    current = await close_summaries(session, rows)
     if {str(r["id"]): r["fingerprint"] for r in current} != json.loads(plan.expected_state_json):
         raise HTTPException(409, "案件或关联证据已变化，本批未结案，请重新预览")
+    extra = {"batch_plan": plan.id, "reason": params["reason"]}
     for row in rows:
-        extra = {"batch_plan": plan.id, "reason": params["reason"]}
-        await transition_case(session, row.id, "KEEP", actor, extra, commit=False)
-        await transition_case(session, row.id, "CLOSED", actor, extra, commit=False)
-        session.add(
-            AdminAudit(
-                operator=actor,
-                action=ACTION,
-                target_type="case",
-                target_id=str(row.id),
-                detail_json=canonical(extra),
-            )
-        )
+        await transition_case(session, row.id, "KEEP", actor, extra, commit=False, flush=False)
+        await transition_case(session, row.id, "CLOSED", actor, extra, commit=False, flush=False)
+    # Keep both transition audit entries, but write only the final case state.
+    # One transaction owns every update and audit, including the plan receipt.
+    await session.execute(
+        insert(AdminAudit),
+        [
+            {
+                "operator": actor,
+                "action": ACTION,
+                "target_type": "case",
+                "target_id": str(row.id),
+                "detail_json": canonical(extra),
+            }
+            for row in rows
+        ],
+    )
     plan.status = "EXECUTED"
     plan.approved_by = actor
     session.add(

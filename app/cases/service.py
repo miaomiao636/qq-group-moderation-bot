@@ -364,10 +364,12 @@ async def transition_case(
     extra: dict[str, Any] | None = None,
     *,
     commit: bool = True,
+    flush: bool = True,
 ) -> Case:
     """案件状态转换（供 T-301 审批界面调用），校验合法性并记录审计。
 
     R-102-8：审计记录的 `from` 必须在赋值前捕获（原实现赋值后读取，from=to，错误）。
+    批量事务可用 commit=False, flush=False 延迟刷新，由调用方统一刷新和提交。
     """
     case = await session.get(Case, case_id)
     if case is None:
@@ -391,6 +393,6 @@ async def transition_case(
     case.audit_json = json.dumps(audit, ensure_ascii=False)
     if commit:
         await session.commit()
-    else:
+    elif flush:
         await session.flush()
     return case
