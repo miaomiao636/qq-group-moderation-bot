@@ -622,7 +622,9 @@ async def case_batch_prepare(
             limit=case_batch.EXPORT_LIMIT,
         )
         if exporting:
-            data = case_batch.export_csv(await case_batch.summaries(session, cases))
+            data = case_batch.export_csv(
+                await case_batch.summaries(session, cases, strict_evidence=False)
+            )
             return Response(
                 data,
                 media_type="text/csv; charset=utf-8",
@@ -706,7 +708,7 @@ async def stats_dashboard(request: Request) -> Response:
 # ---------- 案件详情 ----------
 
 
-async def _load_case(case_id: int) -> tuple[Case, list[ViolationRecord]]:
+async def _load_case(case_id: int) -> tuple[Case, list[ViolationRecord], int]:
     async with SessionLocal() as session:
         case = await session.get(Case, case_id)
         if case is None:
@@ -719,7 +721,10 @@ async def _load_case(case_id: int) -> tuple[Case, list[ViolationRecord]]:
                 .order_by(ViolationRecord.id)
             )
         )
-        return case, records
+        matching = [
+            record for record in records if case_batch.identity(record) == case_batch.identity(case)
+        ]
+        return case, matching, len(records) - len(matching)
 
 
 def _evidence_html(records: list[ViolationRecord]) -> str:
@@ -778,7 +783,7 @@ async def case_detail(request: Request, case_id: int, code: str = "", notice: st
     if not token:
         return _login_redirect()
     csrf = _csrf_field(token)
-    case, records = await _load_case(case_id)
+    case, records, mismatched = await _load_case(case_id)
     async with SessionLocal() as session:
         alias_map = await _alias_map(session)
     group_name = alias_map.get(case.group_openid or "", "")
@@ -789,6 +794,11 @@ async def case_detail(request: Request, case_id: int, code: str = "", notice: st
     )
     notice_html = f"<p class=warn>{_esc(notice)}</p>" if notice else ""
     evidence = _evidence_html(records)
+    evidence_warning = (
+        f"<p class=warn>有 {mismatched} 条关联证据身份不符，已隐藏；请逐案核对。</p>"
+        if mismatched
+        else ""
+    )
     buttons = ""
     if case.status == "PENDING_REVIEW":
         buttons = (
@@ -815,6 +825,8 @@ async def case_detail(request: Request, case_id: int, code: str = "", notice: st
             f"onsubmit=\"return confirm('确认取消该案件？')\">"
             f"{csrf}<button class=btn>无法确认成员/取消</button></form>"
         )
+    if mismatched:
+        buttons = "<p class=warn>关联证据身份不一致，暂不能处理此案；请先核对证据关联。</p>"
     audit_data = _json_object(case.audit_json)
     if case.archived:
         if audit_data.get("lifecycle_purged_at"):
@@ -832,7 +844,7 @@ async def case_detail(request: Request, case_id: int, code: str = "", notice: st
         f"<h2>案件 {_esc(case.case_no)}</h2>{notice_html}"
         f"<div class=card><p>状态：<b>{_esc(_status_zh(case.status))}</b>　成员OpenID：<code>{_esc(case.member_openid)}</code> "
         "<span class=warn>（未验证QQ号）</span>　群：" + group_html + "</p>"
-        f"<p>证据（{len(records)} 条）：</p>{evidence}</div>"
+        f"<p>证据（{len(records)} 条）：</p>{evidence_warning}{evidence}</div>"
         f"<div class=card><h3>操作</h3>{buttons or '<p class=muted>案件已终态，无可用操作</p>'}</div>"
         f"<div class=card><h3>审计记录</h3><pre>{audit}</pre></div>"
     )
@@ -1023,6 +1035,7 @@ async def _transition_case_chain(
         case_row = await session.get(Case, case_id)
         if case_row is None:
             raise HTTPException(404, "案件不存在")
+        await case_batch.summaries(session, [case_row])
         for target in targets:
             await transition_case(session, case_id, target, operator, commit=False)
         audit_details = dict(details or {})

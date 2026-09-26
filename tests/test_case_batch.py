@@ -582,6 +582,10 @@ def test_csv_formula_and_numeric_text(value):
     assert case_batch.csv_cell(value).startswith("'")
 
 
+def test_csv_plain_zero_stays_numeric():
+    assert case_batch.csv_cell("0") == "0"
+
+
 @pytest.mark.parametrize(
     "data,code",
     [
@@ -642,7 +646,7 @@ async def test_duplicate_ids_and_disabled_delete(web_ui):
 
 
 @pytest.mark.parametrize("link", ["explicit", "reverse"])
-async def test_mismatched_evidence_identity_rejected(web_ui, link):
+async def test_mismatched_evidence_hidden_from_export_and_detail_but_blocks_close(web_ui, link):
     client, factory, _, csrf = web_ui
     await seed(factory)
     async with factory() as session:
@@ -652,13 +656,66 @@ async def test_mismatched_evidence_identity_rejected(web_ui, link):
             record.case_id = None
             (await session.get(Case, 1)).violation_ids_json = "[1]"
         await session.commit()
-    for path in ("batch-export", "batch-preview"):
-        response = await client.post(
-            f"/admin/cases/{path}", data={"csrf": csrf, "case_ids": ["1"], "reason": "reviewed"}
-        )
-        assert response.status_code == 409
-        assert "身份不一致" in response.text
+    response = await client.post(
+        "/admin/cases/batch-export", data={"csrf": csrf, "case_ids": ["1"]}
+    )
+    assert response.status_code == 200
+    rows = list(csv.DictReader(io.StringIO(response.content.decode("utf-8-sig"))))
+    assert len(rows) == 1
+    assert rows[0]["违规记录数"] == "0"
+    assert rows[0]["案件依据"] == ""
+    assert rows[0]["证据编号"] == ""
+    assert rows[0]["关联异常证据数"] == "1"
+    detail = await client.get("/admin/cases/1")
+    assert detail.status_code == 200
+    assert "证据（0 条）" in detail.text
+    assert "关联证据身份不符，已隐藏" in detail.text
+    assert "违规 #1" not in detail.text
+    assert "标记误判（撤销违规）" not in detail.text
+    response = await client.post(
+        "/admin/cases/batch-preview",
+        data={"csrf": csrf, "case_ids": ["1"], "reason": "reviewed"},
+    )
+    assert response.status_code == 409
+    assert "身份不一致" in response.text
+    response = await client.post("/admin/cases/1/false-positive", data={"csrf": csrf})
+    assert response.status_code == 409
+    async with factory() as session:
+        assert not (await session.get(ViolationRecord, 1)).revoked
     assert await statuses(factory) == ["PENDING_REVIEW"] * 2
+
+
+async def test_export_keeps_valid_evidence_while_flagging_bad_reverse_link(web_ui):
+    client, factory, _, csrf = web_ui
+    await seed(factory, 1)
+    async with factory() as session:
+        session.add(
+            ViolationRecord(
+                provider="onebot",
+                group_openid="old-group",
+                member_openid="old-user",
+                external_group_id="123456",
+                external_user_id="other-member",
+                message_id="mislinked",
+                category="fraud",
+                confidence=0.95,
+                case_id=1,
+            )
+        )
+        await session.commit()
+    response = await client.post(
+        "/admin/cases/batch-export", data={"csrf": csrf, "case_ids": ["1"]}
+    )
+    assert response.status_code == 200
+    row = next(csv.DictReader(io.StringIO(response.content.decode("utf-8-sig"))))
+    assert row["违规记录数"] == "1"
+    assert row["案件依据"] == "ad"
+    assert row["证据编号"] == "1"
+    assert row["关联异常证据数"] == "1"
+    detail = await client.get("/admin/cases/1")
+    assert "证据（1 条）" in detail.text
+    assert "违规 #1" in detail.text
+    assert "违规 #2" not in detail.text
 
 
 async def test_legacy_official_only_identity_fallback(web_ui):

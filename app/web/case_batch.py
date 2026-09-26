@@ -165,7 +165,9 @@ async def select_cases(
     return rows
 
 
-async def summaries(session: AsyncSession, rows: list[Case]) -> list[dict[str, Any]]:
+async def summaries(
+    session: AsyncSession, rows: list[Case], *, strict_evidence: bool = True
+) -> list[dict[str, Any]]:
     explicit: dict[int, set[int]] = {}
     for row in rows:
         try:
@@ -201,11 +203,16 @@ async def summaries(session: AsyncSession, rows: list[Case]) -> list[dict[str, A
     group_names = await names(session)
     result = []
     for row in rows:
-        evidence_ids = explicit[row.id] | reverse.get(row.id, set())
-        evidence = [by_id[i] for i in sorted(evidence_ids) if i in by_id]
+        linked_ids = explicit[row.id] | reverse.get(row.id, set())
+        linked = [by_id[i] for i in sorted(linked_ids) if i in by_id]
         provider, gid, uid = identity(row)
-        if any(identity(record) != (provider, gid, uid) for record in evidence):
+        evidence = [record for record in linked if identity(record) == (provider, gid, uid)]
+        mismatched = len(linked) - len(evidence)
+        if mismatched and strict_evidence:
             raise HTTPException(409, f"案件 {row.case_no} 的关联证据身份不一致，请逐案检查")
+        # Missing references remain visible for audit, but known mismatched
+        # records must never be attributed to this case in a CSV export.
+        evidence_ids = {record.id for record in evidence} | (linked_ids - by_id.keys())
         name = group_names.get((provider, gid), "")
         # Include reverse-linked evidence: a new violation can reuse the case
         # without changing any Case columns. Store hashes, not raw evidence copies.
@@ -231,7 +238,8 @@ async def summaries(session: AsyncSession, rows: list[Case]) -> list[dict[str, A
                 "count": len(evidence),
                 "basis": "; ".join(sorted({r.category for r in evidence if not r.revoked})),
                 "evidence_ids": ";".join(str(i) for i in sorted(evidence_ids)),
-                "missing": len(evidence_ids - by_id.keys()),
+                "missing": len(linked_ids - by_id.keys()),
+                "identity_mismatch": mismatched,
                 "fingerprint": sha256(canonical(snapshot).encode()).hexdigest(),
             }
         )
@@ -246,7 +254,7 @@ def csv_cell(value: object) -> str:
     if (
         (stripped and stripped[0] in "=+-@")
         or value.startswith(("\t", "\r", "\n"))
-        or (value.isdecimal() and (len(value) > 15 or value.startswith("0")))
+        or (value.isdecimal() and (len(value) > 15 or (len(value) > 1 and value.startswith("0"))))
     ):
         return "'" + value
     return value
@@ -271,6 +279,7 @@ def export_csv(rows: list[dict[str, Any]]) -> bytes:
             "案件依据",
             "证据编号",
             "缺失证据数",
+            "关联异常证据数",
         ]
     )
     for r in rows:
@@ -297,6 +306,7 @@ def export_csv(rows: list[dict[str, Any]]) -> bytes:
                     r["basis"],
                     r["evidence_ids"],
                     r["missing"],
+                    r["identity_mismatch"],
                 ]
             ]
         )

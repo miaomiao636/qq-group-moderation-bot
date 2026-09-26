@@ -126,3 +126,13 @@ N03 尚未闭环：现有清理有 mtime/处理时间路径；来源期限未成
 首次上线后，真人跨页导出返回“案件编号无效或数量过多”。根因是前端 `box.value` 为字符串，单字段 JSON 实际是 `["1","2"]`；首轮回归构造为整数数组 `[1,2]`，后端严格类型检查误拒绝浏览器请求。新测试先用 1001 个字符串 ID 的 multipart 请求重现 422，再让后端对 ASCII 十进制字符串做长度、正数及 SQLite 64 位范围校验后转整数；旧整数请求仍兼容，混用字段、无效格式和超限仍拒绝。预览操作也用字符串请求回归，5000 个最大合法 ID 测试覆盖字段长度边界。前端脚本模拟额外核对了 1200 个 ID 的元素类型。
 
 源码 `edf986bfdd1d698211f854e57c9abf30cb95aeac` 已推送；本地目标、全量 pytest 退出码 0，ruff check/format、mypy 通过；[GitHub CI run 35973756828](https://github.com/miaomiao636/qq-group-moderation-bot/actions/runs/35973756828) 的 Windows、Linux 全量及干净运行依赖三 job 均 success。热修复前在 D 盘生成 `moderation-20260924T081057Z-6gdokjra.db`，162,955,264 字节，SHA256 `33396b792e89c2925e3a9b745d3743b2adcee3e63bbf430edb40e5489684c571`，`integrity_check=ok`、外键错误 0、revision `f3c8a9d12064`；收据 `backup-receipt-hotfix.json`。本机 UAC 授权执行 `restart-web-hotfix.ps1`，`restart-receipt-hotfix.json` 显示 Web 从 Running 恢复 Running，Runtime 始终 Running；新 Web 进程于北京时间 16:26:41 启动。`/healthz` 为 200、后台未登录 303；OneBot 短暂重连后 `ready`、connected、login online、队列 0。无迁移、群配置或案件状态写入。真人刷新页面后的再次导出仍待用户反馈，不能将合成成功写为生产名单已导出。
+
+## CASE-ACCEPTANCE-20260926：真实页面验收与证据错连导出补正
+
+在已登录的生产后台用 Computer Use 逐页全选，第一页 50 件、第二页 50 件，跨页勾选保持为 100 件；浏览器实际下载 CSV，100 行、案件编号 100 个唯一值。未对生产案件执行批量结案。
+
+在 D 盘一致性数据库副本运行隔离的 SAFE/SHADOW Web，使用真实页面混选 1 件已关闭和 1 件待审案件：预览明确跳过已关闭案，仅列出 1 件待审案；确认后只在副本中转为 KEEP → CLOSED，生产库及审计计数保持原样。
+
+隔离副本中“当前筛选全部”原本在历史证据错连处返回 409。只读盘点发现 1550 件未归档案件中有 21 件涉及 80 条身份不符的反向关联证据。本次补正让 CSV 只计入身份相符的证据，在末尾新增“关联异常证据数”一列；错连记录不进入违规类别、证据编号或数量。详情页隐藏错连证据并提示核对，异常案件的单案处理和批量结案仍严格拒绝，未自动改写历史关联。修复后在同一隔离页面实际导出 1550 行、1550 个唯一案件编号、15 列；21 件异常案的异常计数合计 80。当前只是源码和隔离副本验收，生产 Web 尚未加载此补正。
+
+最终工作树验证：`python -m pytest -q --tb=short` 退出码 0；`python -m pytest tests/test_case_batch.py tests/test_longterm_web.py tests/test_admin_web.py -q` 退出码 0；`python -m ruff check` 与 `ruff format --check` 对改动文件通过；`python -m mypy app` 对 130 个源文件通过。隔离验收服务已关闭，正式 `QQBotWeb`、`QQBotRuntime` 均保持 Running。
