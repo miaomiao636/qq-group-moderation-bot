@@ -155,21 +155,21 @@ def _case_audit_metadata(audit: dict[str, Any], now: datetime) -> str:
 async def _purge_case_lifecycle(
     session: AsyncSession, *, now: datetime, raw_cutoff: datetime
 ) -> dict[str, int]:
-    """Hide completed cases after 15d; clear eligible content after 90d archived.
+    """Hide completed cases after 30d; clear eligible content after 90d archived.
 
     Case and violation IDs remain durable: both are referenced by audit/feedback,
     and SQLite may reuse a physically deleted maximum ID. Neither archive age
     nor a case's JSON list proves that a violation has no other live consumers.
     Raw-source redaction has its own TTL above and is never deferred here.
     """
-    archive_cutoff = now - timedelta(days=15)
+    archive_cutoff = now - timedelta(days=30)
     result = await session.execute(
         update(Case)
         .where(
             Case.archived.is_(False),
             Case.status == "CLOSED",
             Case.closed_at.is_not(None),
-            Case.closed_at < archive_cutoff,
+            Case.closed_at <= archive_cutoff,
         )
         .values(archived=True, archived_at=now)
         .execution_options(synchronize_session=False)
@@ -209,7 +209,7 @@ async def _purge_case_lifecycle(
             case.status != "CLOSED"
             or case.closed_at is None
             or case.archived_at is None
-            or case.closed_at.replace(tzinfo=None) >= archive_cutoff
+            or case.closed_at.replace(tzinfo=None) > archive_cutoff
             or case.archived_at.replace(tzinfo=None) < case.closed_at.replace(tzinfo=None)
             or ids is None
             or not isinstance(audit, dict)
