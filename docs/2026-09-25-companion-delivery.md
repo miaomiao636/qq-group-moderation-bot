@@ -13,7 +13,40 @@
 
 本轮没有打开真实 QQ/NapCat、读取生产凭据或备份真实业务数据，没有生产服务、迁移、群开关、计划任务变更。公司账号登录、实际 Windows 故障恢复/备份调度、长时间巡检及人工暂停恢复仍需接收方现场验收。配置回读不能替代系统重启后的恢复实演。
 
-源码冻结后的完整回归、门禁、D 盘干净发行包验证和最终 HEAD CI 收据将在本节追加；尚未取得的证据不计作通过。
+### 本轮源码与本机验证
+
+冻结源码/入库测试执行 SHA：`9c618c694ac8d68ec87ea5243bdb9cf7c2650894`。证据目录 `D:/qqbot-delivery-check-20260926/`；`checks.json` 记录命令与退出码，`summary.json` 从 JUnit 复算。全量启动时仓库干净；执行期间只补接收方手册和包描述文本，`app/`、`scripts/`、`tests/`、迁移及锁定依赖均未改变。
+
+```powershell
+uv run pytest --junitxml=D:/qqbot-delivery-check-20260926/full.xml
+uv run ruff check app tests alembic scripts
+uv run ruff format --check app tests alembic scripts
+uv run mypy app
+git diff --check
+```
+
+实际全量 **2788 passed、19 skipped、0 failed/error（2807 项）**；同次执行中的原主审子集 **31 文件/262 项全通过**，相关交付回归 **65 项全通过**。ruff check、format（402 文件）、mypy（130 源文件）与差异检查通过。跳过为生产服务持锁保护 13、私有样本缺失 1、链接权限 4、可选巡检运行环境缺失 1；未停生产以消除跳过。可选巡检依赖在下述隔离环境另外安装并验证导入，但没有把这次导入称为该浏览器测试已执行。
+
+### 固定提交候选包的隔离验证
+
+同一来源 SHA `9c618c694ac8d68ec87ea5243bdb9cf7c2650894`，执行：
+
+```powershell
+uv run python scripts/build_companion_bundle.py --ref 9c618c694ac8d68ec87ea5243bdb9cf7c2650894 --output D:/qqbot-delivery-check-20260926/candidate.zip
+uv run python -X utf8 D:/qqbot-delivery-check-20260926/smoke_bundle.py
+```
+
+该中间候选包 SHA-256 为 `84ff545a0bdaeef592b5033f1923061b84cf651f0b5286cc29ca6ec84e2ad92a`，清单哈希 `8ebab988ce43974ea74fbd4689800a8e270373f98c1fb6c3dba4a6bce2b81844`。核对 **180 文件**与源码语法/哈希、**19 个包内文档链接**；D 盘无 Git 解压目录独立 `uv sync --locked --no-dev --extra inspection`，主应用、Tk、巡检及备份导入成功，反向确认 pytest 未安装。
+
+在这个解压目录实跑安装只读计划、合成空库迁移/初始化、bundle 备份与完整隔离恢复、巡检合成任务/缓存/导出备份与隔离恢复；恢复后加载任务验证待检成员、账号绑定与原观察，确认没有浏览器会话或生效的旧导出设置。逐条子命令、退出码见 `smoke-commands.json`，结果见 `smoke-summary.json`。完整恢复副本均在 D 盘，不是生产数据或实际服务故障演练。
+
+验证暴露并修正手册遗漏：空库完成 schema 迁移后，还需用现有 `backfill` 在预览无记录前提下初始化判定记录版本。缺失时备份原保护正确拒绝，未删门禁或手写标记。私有验证脚本初始误用 `APP_ENV=dev`，按实际枚举改为 `local`；初次 PowerShell 直接执行受本机脚本策略阻止，后续仅验证进程临时执行策略，不改变整机策略或服务；公司手册补 IT 执行策略说明。失败日志保留，未把失败命令计为通过。
+
+### 最终包与远端核验方式
+
+最终文档与元数据文字修订提交后，从最终 HEAD 再生成 `dist/qqbot-companion-<短SHA>-candidate.zip`，重新核对清单、链接及独立恢复流程；具体最终来源、ZIP 哈希、清单哈希与验包结果保存为 `final-bundle.json`、`final-smoke/smoke-summary.json`，不把上述中间包哈希冒充最终包。候选包和私有合成验证材料不提交 Git。
+
+推送后使用 `gh run list --branch windows-deploy-2026-09-10 --commit <最终HEAD> --json databaseId,headSha,status,conclusion,url` 定位，再用 `gh run view <runId> --json headSha,status,conclusion,jobs,url` 核对 Ubuntu、Windows 和 clean runtime-deps，保存 `ci-final.json`。只有精确 HEAD 全部成功才报告远端通过；本记录不预写未来 CI 成功。公司实际新现场验收独立待办。
 
 ## 前轮交付记录（2026-09-25，历史）
 

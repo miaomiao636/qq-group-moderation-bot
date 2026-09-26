@@ -35,6 +35,15 @@ Copy-Item -LiteralPath .env.example -Destination .env
 uv run --no-sync alembic upgrade head
 ```
 
+建表后，**仅对此处刚创建且没有业务数据的空库**，初始化图片判定记录。先预览，结果必须为 `rows=0`、`changed=0`；若有旧记录或报错，停止并交维护人员评估，不能套用新安装流程：
+
+```powershell
+uv run --no-sync python -c "from pathlib import Path; from scripts.image_decision_authority import backfill; print(backfill(Path('data/moderation.db')))"
+uv run --no-sync python -c "import sys; from pathlib import Path; from scripts.image_decision_authority import backfill; p=Path('data/moderation.db'); plan=backfill(p); sys.exit('STOP: database is not empty') if plan['rows'] else print(backfill(p, apply=True))"
+```
+
+这是现有判定记录版本的初始化，不导入名单、不启用动作。缺少该步骤时备份会拒绝尚未初始化的记录；不能通过删检查或手写数据库标记解决。如果实际数据库位置不是默认的 `data/moderation.db`，先统一与备份支持范围核对，不直接复制这组路径。
+
 已有生产库不套用以上命令；升级必须先备份、核对迁移兼容并安排维护窗口。巡检的安装步骤本身不需要主数据库迁移。
 
 ## NapCat 的主服务连接
@@ -60,6 +69,8 @@ uv run --no-sync python -m app
 ```
 
 确认计划后，在管理员 PowerShell 执行同一命令并加 `-Apply`。脚本检查项目配置为 `prod`、管理员口令有效、OneBot 身份/连接已配置，以及 `SHADOW` / 真实动作关闭；检查失败不会安装。已有任何选中的同名服务即拒绝，不自动停止、删除或覆盖。只有确实使用官方机器人并配置官方凭据时才加 `-Mode WithOfficial`，此时另装 `QQBotRuntime`。
+
+若 Windows 提示“禁止运行脚本”，先由公司 IT 核对包哈希与脚本、按公司的脚本签名/执行策略运行。该提示发生在安装程序执行之前，不是服务已经安装失败；不要为安装长期关闭整机执行限制。
 
 `-Apply` 配置开机启动，但默认不立即启动。需要本次启动时追加 `-StartServices`，必须在已批准的安装流程中使用；勿在本机现有生产服务上重跑。可以通过 `-ServicePrefix` 为隔离的新实例选不同名字，但端口、数据和账号隔离仍由部署人员确认。中途失败可能留下部分新服务，应核对安装状态后单独处置；脚本不会自动删除它们。
 
