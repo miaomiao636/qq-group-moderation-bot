@@ -375,7 +375,7 @@ OR o.visit_id!=(SELECT MAX(id) FROM visits WHERE qq=o.qq) LIMIT 1""").fetchone()
         diagnostics = value.get("load_diagnostics")
         if "load_diagnostics" in value and (
             type(diagnostics) is not dict
-            or set(diagnostics)
+            or set(diagnostics) - {"empty_profile_reloads", "initial_wait_ms"}
             != {
                 "reads",
                 "elapsed_ms",
@@ -397,6 +397,15 @@ OR o.visit_id!=(SELECT MAX(id) FROM visits WHERE qq=o.qq) LIMIT 1""").fetchone()
                 )
             )
             or diagnostics["stable_profile_ms"] > diagnostics["elapsed_ms"]
+            or (
+                bool({"empty_profile_reloads", "initial_wait_ms"} & set(diagnostics))
+                and (
+                    type(diagnostics.get("empty_profile_reloads")) is not int
+                    or diagnostics["empty_profile_reloads"] != 1
+                    or type(diagnostics.get("initial_wait_ms")) is not int
+                    or not 30000 <= diagnostics["initial_wait_ms"] <= 600000
+                )
+            )
         ):
             raise InspectionError("页面加载诊断依据无效。")
         reuse_contract = ""

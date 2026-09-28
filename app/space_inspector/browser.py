@@ -341,15 +341,81 @@ class Browser:
                 self._page.goto(f"https://user.qzone.qq.com/{qq}", wait_until="domcontentloaded")
             except Exception:
                 navigation_failed = True
-            return self._read_after_navigation(qq, viewer_qq, navigation_failed, lambda: committed)
+            retry_guard = {"safe": True}
+            observation = self._read_after_navigation(
+                qq, viewer_qq, navigation_failed, lambda: committed, retry_guard
+            )
+            diagnostics = observation.evidence.get("load_diagnostics", {})
+            signal = getattr(self, "_stop", threading.Event())
+            if (
+                not isinstance(diagnostics, dict)
+                or navigation_failed
+                or not committed
+                or not retry_guard["safe"]
+                or signal.is_set()
+                or observation.reason != "unrecognized_page"
+                or observation.evidence["ready_state"] != "complete"
+                or observation.evidence["viewer_qq"] != viewer_qq
+                or diagnostics.get("elapsed_ms", 0) < 30000
+                or diagnostics.get("context_retries") != 0
+                or diagnostics.get("profile_title") is not False
+                or diagnostics.get("profile_logout") is not True
+            ):
+                return observation
+
+            # Only a known, logged-in empty profile shell may be revisited. Check
+            # the live document again: an error/permission panel must never be
+            # inferred absent from the smaller persisted evidence alone.
+            document = committed
+            try:
+                raw = self._page.evaluate(SNAPSHOT_SCRIPT)
+            except Exception:
+                return observation
+            if committed != document or signal.is_set():
+                return observation
+            current = classify_page(raw, qq, viewer_qq)
+            if (
+                current.reason != "unrecognized_page"
+                or current.evidence["ready_state"] != "complete"
+                or current.evidence["viewer_qq"] != viewer_qq
+                or not isinstance(raw, dict)
+                or raw.get("normal_profile") is not False
+                or raw.get("profile_markers") != {"title": False, "logout": True}
+                or raw.get("panels") != []
+                or raw.get("permission_panels") != []
+            ):
+                return current
+            committed = 0
+            navigation_failed = False
+            try:
+                self._page.goto(f"https://user.qzone.qq.com/{qq}", wait_until="domcontentloaded")
+            except Exception:
+                navigation_failed = True
+            # No third visit. A failed/no-commit revisit must not read an old
+            # same-member document as a fresh successful observation.
+            recovered = self._read_after_navigation(
+                qq, viewer_qq, navigation_failed or not committed, lambda: committed
+            )
+            recovery_diagnostics = recovered.evidence["load_diagnostics"]
+            assert isinstance(recovery_diagnostics, dict)
+            recovery_diagnostics.update(
+                empty_profile_reloads=1, initial_wait_ms=diagnostics["elapsed_ms"]
+            )
+            return recovered
         finally:
             self._page.remove_listener("framenavigated", navigated)
 
     def _read_after_navigation(
-        self, qq: str, viewer_qq: str, navigation_failed: bool, committed: Any
+        self,
+        qq: str,
+        viewer_qq: str,
+        navigation_failed: bool,
+        committed: Any,
+        retry_guard: dict[str, bool] | None = None,
     ) -> Observation:
         # A load timeout can leave a readable WAF, login or completed member page.
-        # Inspect that same document; never automatically navigate again after failure.
+        # Inspect that same document. inspect() owns the separate, bounded recovery
+        # for an empty profile shell; navigation failures never qualify for it.
         started = time.monotonic()
         deadline = started + 30
         signal = getattr(self, "_stop", threading.Event())
@@ -377,8 +443,16 @@ class Browser:
             try:
                 reads += 1
                 raw = self._page.evaluate(SNAPSHOT_SCRIPT)
+                if retry_guard is not None and (
+                    not isinstance(raw, dict)
+                    or raw.get("panels") != []
+                    or raw.get("permission_panels") != []
+                ):
+                    retry_guard["safe"] = False
                 last = classify_page(raw, qq, viewer_qq)
             except Exception as exc:
+                if retry_guard is not None:
+                    retry_guard["safe"] = False
                 # Context replacement can interrupt evaluate during a legitimate
                 # redirect. No old snapshot survives it; closed pages never retry.
                 stable_since = None

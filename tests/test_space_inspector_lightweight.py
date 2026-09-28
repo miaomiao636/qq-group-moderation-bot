@@ -21,6 +21,76 @@ from app.space_inspector.contracts import NOTICE, RESTRICTED, UNCONFIRMED
 
 @unittest.skipUnless(importlib.util.find_spec("playwright"), "optional inspection runtime absent")
 class LightweightBrowserTest(unittest.TestCase):
+    def test_empty_profile_shell_is_revisited_only_once(self):
+        from playwright.sync_api import Error, sync_playwright
+
+        requests = []
+
+        class Handler(BaseHTTPRequestHandler):
+            def log_message(self, *_):
+                pass
+
+            def do_GET(self):
+                if self.path != "/profile":
+                    self.send_error(404)
+                    return
+                requests.append(self.path)
+                title = '<h1 id="top_head_title">合成资料</h1>' if len(requests) > 1 else ""
+                body = (
+                    '<div class="page"><div class="page_top">'
+                    '<a href="https://user.qzone.qq.com/98765432">合成查看账号</a></div>'
+                    f'<div class="page_main">{title}<a id="tb_logout">退出</a></div></div>'
+                ).encode()
+                self.send_response(200)
+                self.send_header("Content-Type", "text/html; charset=utf-8")
+                self.send_header("Cache-Control", "no-store")
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+
+        with sync_playwright() as runtime:
+            try:
+                engine = runtime.chromium.launch(channel="msedge", headless=True)
+            except Error:
+                self.skipTest("local Edge not installed")
+            server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+            thread = threading.Thread(target=server.serve_forever, daemon=True)
+            thread.start()
+            context = engine.new_context()
+            page = context.new_page()
+            try:
+                origin = f"http://127.0.0.1:{server.server_port}/profile"
+
+                class FixturePage:
+                    def __getattr__(self, name):
+                        return getattr(page, name)
+
+                    def goto(self, url, **kwargs):
+                        assert url == "https://user.qzone.qq.com/12345678"
+                        return page.goto(origin, **kwargs)
+
+                    def evaluate(self, script):
+                        raw = page.evaluate(script)
+                        raw["url"] = "https://user.qzone.qq.com/12345678"
+                        return raw
+
+                browser = Browser(Path("unused-synthetic-profile"))
+                browser._page = FixturePage()
+                browser._stop = threading.Event()
+                result = browser.inspect("12345678", "98765432")
+                self.assertEqual(result.status, UNCONFIRMED)
+                self.assertEqual(requests, ["/profile", "/profile"])
+                self.assertEqual(result.evidence["load_diagnostics"]["empty_profile_reloads"], 1)
+                self.assertGreaterEqual(
+                    result.evidence["load_diagnostics"]["initial_wait_ms"], 30000
+                )
+            finally:
+                context.close()
+                engine.close()
+                server.shutdown()
+                server.server_close()
+                thread.join(timeout=5)
+
     def test_stable_profile_is_read_while_an_image_keeps_document_interactive(self):
         from playwright.sync_api import Error, sync_playwright
 
