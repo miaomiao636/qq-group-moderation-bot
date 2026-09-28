@@ -1,5 +1,7 @@
 # 项目记忆索引
 
+- **SPACE-STABLE-20260929**：巡检稳定资料结构与附属资源加载分离；新证据合同兼容读取旧任务，取消信号接线补正。执行 SHA、命令、收据与现场边界见 [巡检记录](docs/2026-09-21-space-inspector.md#space-stable-20260929稳定资料结构与附属资源分开等待)。
+
 - **SPACE-READY-20260928**：巡检在 document complete 后继续有界等待迟到的页面结构；不重访、不放宽判据。源码/内部回归、核验收据和实机边界见 [巡检记录](docs/2026-09-21-space-inspector.md#space-ready-20260928)。
 
 - **STAT-RECALL-20260926**：统计页补 OneBot 撤回流程、API 成功与 QQ 通知匹配的匿名近 7 天概览；通知未匹配根因仍未解决，源码/现场分别验收。入口见 [撤回确认记录](docs/2026-09-24-recall-confirmation.md#stat-recall-20260926统计大盘显示撤回证据源码候选)。

@@ -1,6 +1,23 @@
 # 电脑 QQ 空间限制巡检
 
 <a id="space-ready-20260928"></a>
+## SPACE-STABLE-20260929：稳定资料结构与附属资源分开等待
+
+基线 `cf6bf6fa503b1e72793860268a37fcb9f3b7d015` 经 `git pull --ff-only`、`git log -1 --format="%H %s"`、`git status --short --branch` 确认干净同步。负责人反馈前轮修复后仍暂停；只读任务记录证实同成员先出现 `page_incomplete/interactive` 或 `unrecognized_page/complete`，手动重新访问后有成功观察。截图是稍后的画面，不能证明暂停瞬间结构已完整；既有记录无法区分资源迟到、模板差异、上下文切换或旧进程。下面代码修复针对已复现缺口，不宣称真实群所有暂停均消除。
+
+- 单快照仍按原完整页面规则分类；新增正常资料页的稳定观察分支：同一导航代次、精确目标和查看账号、资料标题与退出标志均存在、无错误/权限面板，持续至少 0.5 秒后才允许 `UNCONFIRMED`。来源单列 `qzone_profile_stable`，真实 `ready_state=interactive` 保留；不伪造 complete，不把未观察到提示称作账号正常。限制阳性模板及其完整加载要求不变。
+- 同一次导航后的结构观察预算由 8 秒延至 30 秒，状态切换不重置；成功即可返回，不让所有成员等满。单次浏览器响应耗时另计。只对明确的读取上下文销毁最多补读 2 次，导航代次变化/异常/结构消失均重置稳定候选；页面关闭、未知异常、WAF、登录跳转和明确身份错配停止。无自动刷新、重复导航或自动跳过未知成员。
+- 登录确认采用同一结构确认逻辑，并在 worker 创建服务时先绑定界面的停止信号；新登录确认只在 GUI 操作边界清除上一轮暂停，等待器不清除取消信号。
+- 加载诊断只保存读取次数、耗时、上下文补读次数及标志布尔值/稳定时长，严格校验字段和类型，不采集正文、Cookie 或完整 HTML。新缓存合同 `qzone-dom-v2`；旧任务内 v1 复用证据继续按原 complete 规则读取，不改写旧记录。新来源须带稳定证明，且不能冒用旧合同。数据表结构不变；旧版程序不理解新来源，后续读取新记录必须使用新版。
+
+回归采用 TDD：基线加新 `tests/test_space_inspector_stability.py` 初稿执行 `uv run pytest tests/test_space_inspector_stability.py -q -o addopts= --tb=short --junitxml=D:/qqbot-space-stability-20260929/red.xml`，实际 13 failed / 9 passed；后续加入取消、恢复、导出与合同边界回归，不能沿用初稿数量作为最终数量。已使用独立无登录的 Edge/localhost 页面验证挂起图片令文档长期 interactive 时仍能产生稳定资料观察；没有访问用户浏览器或改写用户任务。
+
+内部适配登记：`test_space_inspector_readiness.py` 的固定预算断言从 8 秒/33 次读调整为 30 秒/121 次读，仍断言状态切换不延长预算；`test_space_inspector_gui.py` 的 FakeService 和 `test_space_inspector_optimization.py` 的 worker 假服务增加共享停止信号绑定接口，其原断言不变。外部 `test_r132_review_*.py` 未改。
+
+冻结提交后的完整验证命令为 `uv run python -X utf8 D:/qqbot-space-stability-20260929/run_checks.py`；逐项命令、实际执行 SHA/结果写入同目录 `checks.json`、`summary.json`，最终以 `final-receipt.json` 与精确 SHA CI 为准，文件不存在或记录未成功均不代表完成。收据还区分本机源码更新与真实原任务续扫反馈。根代理唯一写入，辅助只读；主机器人服务、群授权、动作开关和既有任务数据未改，旧公司交付 ZIP 不自动更新。
+
+使用时正常关闭旧窗口，从桌面重新打开，载入原任务再继续；无需重扫已完成成员。若仍暂停，新任务记录内诊断可帮助核对缺失标志与等待过程；实际续扫与长期稳定性仍需现场验证。
+
 ## SPACE-READY-20260928：等待已加载文档内的异步页面结构
 
 负责人明确要求直接修复正常空间反复暂停。接手执行 `git pull --ff-only`、`git log -1 --format="%H %s"`、`git status --short --branch`，基线为干净且同步的 `9799e4d0433a147b5fdbab0adad285f144529c53`。其他项目任务空闲；根代理唯一写入，辅助仅审阅。

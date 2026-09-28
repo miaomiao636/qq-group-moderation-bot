@@ -95,7 +95,9 @@ def test_loading_and_unknown_structure_share_one_deadline(monkeypatch):
     browser, clock = reader(monkeypatch, [loading] * 20 + [pending_page()])
     observation = browser.inspect(QQ, VIEWER)
     assert observation.status == BLOCKED and observation.reason == "unrecognized_page"
-    assert clock.now == 8 and clock.reads == 33 and clock.visits == 1
+    # SPACE-STABLE-20260929 raises the fixed read budget to 30 seconds;
+    # loading -> complete must still not restart it.
+    assert clock.now == 30 and clock.reads == 121 and clock.visits == 1
     assert observation.evidence["notice"] == ""
 
 

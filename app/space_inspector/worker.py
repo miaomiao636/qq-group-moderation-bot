@@ -82,6 +82,7 @@ def run_worker(
         try:
             if service is None:
                 service = service_factory()
+                service.bind_stop(stop)
             if kind == "groups":
                 emit(
                     "ready",

@@ -47,10 +47,11 @@ _EVIDENCE_KEYS = {
     "panel_count",
     "report_icon_count",
 }
-EVIDENCE_CONTRACT = "qzone-dom-v1"
+EVIDENCE_CONTRACT = "qzone-dom-v2"
 _SOURCES = {
     "qzone_top_level_error",
     "qzone_profile",
+    "qzone_profile_stable",
     "qzone_permission_page",
     "qzone_unopened_page",
     "qzone_nonfriend_page",
@@ -365,11 +366,40 @@ OR o.visit_id!=(SELECT MAX(id) FROM visits WHERE qq=o.qq) LIMIT 1""").fetchone()
         if not self.db.execute("SELECT 1 FROM membership WHERE qq=? LIMIT 1", (qq,)).fetchone():
             raise InspectionError("该成员不在本任务群快照中。")
         value = observation.evidence
-        if type(value) is not dict or set(value) not in (
-            _EVIDENCE_KEYS,
-            _EVIDENCE_KEYS | {"reuse"},
+        if (
+            type(value) is not dict
+            or not _EVIDENCE_KEYS.issubset(value)
+            or set(value) - _EVIDENCE_KEYS - {"reuse", "load_diagnostics"}
         ):
             raise InspectionError("巡检依据字段无效。")
+        diagnostics = value.get("load_diagnostics")
+        if "load_diagnostics" in value and (
+            type(diagnostics) is not dict
+            or set(diagnostics)
+            != {
+                "reads",
+                "elapsed_ms",
+                "context_retries",
+                "profile_title",
+                "profile_logout",
+                "stable_profile_ms",
+            }
+            or any(
+                type(diagnostics[key]) is not bool for key in ("profile_title", "profile_logout")
+            )
+            or any(
+                type(diagnostics[key]) is not int or not minimum <= diagnostics[key] <= maximum
+                for key, minimum, maximum in (
+                    ("reads", 1, 10000),
+                    ("elapsed_ms", 0, 600000),
+                    ("context_retries", 0, 2),
+                    ("stable_profile_ms", 0, 600000),
+                )
+            )
+            or diagnostics["stable_profile_ms"] > diagnostics["elapsed_ms"]
+        ):
+            raise InspectionError("页面加载诊断依据无效。")
+        reuse_contract = ""
         if "reuse" in value:
             reuse = value["reuse"]
             if (
@@ -380,9 +410,10 @@ OR o.visit_id!=(SELECT MAX(id) FROM visits WHERE qq=o.qq) LIMIT 1""").fetchone()
                 or re.fullmatch(r"[0-9]{8}T[0-9]{6}Z-[0-9a-f]{8}", reuse["source_task"]) is None
                 or type(reuse["source_visit"]) is not int
                 or reuse["source_visit"] <= 0
-                or reuse["contract"] != EVIDENCE_CONTRACT
+                or reuse["contract"] not in ("qzone-dom-v1", EVIDENCE_CONTRACT)
             ):
                 raise InspectionError("历史观察来源无效。")
+            reuse_contract = reuse["contract"]
             reused_at = datetime.fromisoformat(_timestamp(reuse["reused_at"]))
             if (
                 not timedelta(0)
@@ -427,6 +458,18 @@ OR o.visit_id!=(SELECT MAX(id) FROM visits WHERE qq=o.qq) LIMIT 1""").fetchone()
         ):
             raise InspectionError("限制提示依据不完整。")
         nonfriend_page = value["notice_source"] == "qzone_nonfriend_page"
+        stable_profile = value["notice_source"] == "qzone_profile_stable"
+        if stable_profile and (
+            observation.status != UNCONFIRMED
+            or observation.reason != "no_restriction_notice_observed"
+            or type(diagnostics) is not dict
+            or diagnostics["reads"] < 2
+            or diagnostics["stable_profile_ms"] < 500
+            or diagnostics["profile_title"] is not True
+            or diagnostics["profile_logout"] is not True
+            or (reuse_contract and reuse_contract != EVIDENCE_CONTRACT)
+        ):
+            raise InspectionError("资料结构稳定的依据不完整。")
         if observation.status == UNCONFIRMED and (
             not page_url
             or not viewer
@@ -435,12 +478,14 @@ OR o.visit_id!=(SELECT MAX(id) FROM visits WHERE qq=o.qq) LIMIT 1""").fetchone()
             or value["notice_source"]
             not in {
                 "qzone_profile",
+                "qzone_profile_stable",
                 "qzone_permission_page",
                 "qzone_unopened_page",
                 "qzone_nonfriend_page",
             }
-            or value["ready_state"] != "complete"
-            or value["panel_count"] != (0 if value["notice_source"] == "qzone_profile" else 1)
+            or value["ready_state"] != ("interactive" if stable_profile else "complete")
+            or value["panel_count"]
+            != (0 if value["notice_source"] in {"qzone_profile", "qzone_profile_stable"} else 1)
             or value["report_icon_count"] != (1 if nonfriend_page else 0)
         ):
             raise InspectionError("未观察到提示的页面依据不完整，不能记作已完成。")

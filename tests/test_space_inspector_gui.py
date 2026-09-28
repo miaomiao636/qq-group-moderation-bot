@@ -30,6 +30,9 @@ class FakeService:
         self.record("groups")
         return [Group("23456789", "合成群", 2)]
 
+    def bind_stop(self, stop: threading.Event) -> None:
+        self.stop = stop
+
     def open_browser(self) -> None:
         self.record("browser")
 

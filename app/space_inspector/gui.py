@@ -344,7 +344,7 @@ class Window:
             self._defer_qq = ""
         self._busy = True
         self._scanning = kind in {"create", "scan"}
-        if self._scanning:
+        if self._scanning or kind == "viewer":
             self._stop.clear()
         self._status.set("正在检查，请等待……" if self._scanning else "正在处理，请等待……")
         self._controls()

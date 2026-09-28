@@ -201,6 +201,9 @@ class Service:
     def open_browser(self) -> None:
         self._browser.open()
 
+    def bind_stop(self, stop: threading.Event) -> None:
+        self._browser.bind_stop(stop)
+
     def viewer(self) -> str:
         return self._browser.viewer()
 

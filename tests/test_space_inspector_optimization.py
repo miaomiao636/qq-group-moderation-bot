@@ -349,6 +349,7 @@ def test_worker_passes_options_and_exposes_only_appropriate_recovery(failure):
 
     service = SimpleNamespace(
         current_folder=None,
+        bind_stop=lambda stop: None,
         create=lambda groups: received.append(groups),
         summary=lambda: {},
         rows=lambda: [],

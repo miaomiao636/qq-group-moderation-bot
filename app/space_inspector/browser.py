@@ -87,9 +87,13 @@ def classify_page(raw: object, qq: str, viewer_qq: str) -> Observation:
     ready = raw.get("ready")
     if ready in ("complete", "interactive", "loading"):
         evidence["ready_state"] = ready
+    viewers = raw.get("viewers")
+    if viewers == [viewer_qq]:
+        evidence["viewer_qq"] = viewer_qq
+    elif isinstance(viewers, list) and viewers:
+        return result(BLOCKED, "viewer_missing_or_changed")
     if ready != "complete":
         return result(BLOCKED, "page_incomplete")
-    viewers = raw.get("viewers")
     if viewers != [viewer_qq]:
         return result(BLOCKED, "viewer_missing_or_changed")
     evidence["viewer_qq"] = viewer_qq
@@ -167,10 +171,14 @@ SNAPSHOT_SCRIPT = r"""() => {
             return m ? m[1] : '';
         } catch { return ''; }
     }).filter(Boolean))];
+    const profile_markers = {
+        title: !!document.querySelector('#top_head_title'),
+        logout: !!document.querySelector('#tb_logout')
+    };
     return {
         url: location.href, ready: document.readyState, viewers,
-        normal_profile: !!document.querySelector('#top_head_title') &&
-            !!document.querySelector('#tb_logout'),
+        profile_markers,
+        normal_profile: profile_markers.title && profile_markers.logout,
         permission_panels: [...document.querySelectorAll('.page > .page_main > .main_content.main_login')]
             .filter(visible).slice(0, 2).map(panel => ({
                 tips: panel.querySelector(':scope > p.tips')?.textContent.trim().slice(0, 500) || '',
@@ -233,8 +241,7 @@ class Browser:
                 raise PlatformAccessBlocked(REASONS["platform_access_blocked"])
             viewers = raw.get("viewers")
             if (
-                raw.get("ready") != "complete"
-                or not isinstance(viewers, list)
+                not isinstance(viewers, list)
                 or len(viewers) != 1
                 or not isinstance(viewers[0], str)
                 or not re.fullmatch(r"[1-9][0-9]{4,11}", viewers[0])
@@ -243,6 +250,33 @@ class Browser:
             parsed = urlsplit(raw["url"])
             if parsed.scheme != "https" or parsed.netloc != "user.qzone.qq.com":
                 raise ValueError
+            if raw.get("ready") != "complete":
+                target = re.fullmatch(r"/([1-9][0-9]{4,11})(?:/main|/)?", parsed.path)
+                if (
+                    raw.get("ready") != "interactive"
+                    or not target
+                    or parsed.query
+                    or parsed.fragment
+                ):
+                    raise ValueError
+                generation = 0
+
+                def navigated(frame: Any) -> None:
+                    nonlocal generation
+                    if frame == self._page.main_frame:
+                        generation += 1
+
+                self._page.on("framenavigated", navigated)
+                try:
+                    observation = self._read_after_navigation(
+                        target[1], viewers[0], False, lambda: generation
+                    )
+                finally:
+                    self._page.remove_listener("framenavigated", navigated)
+                if observation.reason == "platform_access_blocked":
+                    raise PlatformAccessBlocked(REASONS["platform_access_blocked"])
+                if observation.status == BLOCKED or observation.evidence["viewer_qq"] != viewers[0]:
+                    raise ValueError
             return viewers[0]
         except PlatformAccessBlocked:
             raise
@@ -251,8 +285,12 @@ class Browser:
                 "尚未确认登录。请在专用浏览器完成登录，打开自己的空间后重试。"
             ) from None
 
-    def configure_scan(self, stop: threading.Event, lightweight: bool) -> None:
+    def bind_stop(self, stop: threading.Event) -> None:
+        """Share cancellation before login confirmation, not just during scanning."""
         self._stop = stop
+
+    def configure_scan(self, stop: threading.Event, lightweight: bool) -> None:
+        self.bind_stop(stop)
         if self._context is None:
             raise InspectionError("请先打开专用浏览器。")
         self.finish_scan()
@@ -289,12 +327,12 @@ class Browser:
         qq = numeric_id(qq)
         if self._page is None:
             raise InspectionError("专用浏览器未打开。")
-        committed = False
+        committed = 0
 
         def navigated(frame: Any) -> None:
             nonlocal committed
             if frame == self._page.main_frame:
-                committed = True
+                committed += 1
 
         self._page.on("framenavigated", navigated)
         try:
@@ -312,20 +350,94 @@ class Browser:
     ) -> Observation:
         # A load timeout can leave a readable WAF, login or completed member page.
         # Inspect that same document; never automatically navigate again after failure.
-        deadline = time.monotonic() + 8
+        started = time.monotonic()
+        deadline = started + 30
         signal = getattr(self, "_stop", threading.Event())
         last: Observation | None = None
+        stable_since: float | None = None
+        document = committed()
+        reads = context_retries = 0
+        markers: dict[str, bool] = {"title": False, "logout": False}
+
+        def finish(observation: Observation) -> Observation:
+            now = time.monotonic()
+            observation.evidence["load_diagnostics"] = {
+                "reads": reads,
+                "elapsed_ms": max(0, int((now - started) * 1000)),
+                "context_retries": context_retries,
+                "profile_title": markers["title"],
+                "profile_logout": markers["logout"],
+                "stable_profile_ms": 0
+                if stable_since is None
+                else max(0, int((now - stable_since) * 1000)),
+            }
+            return observation
+
         while True:
             try:
-                last = classify_page(self._page.evaluate(SNAPSHOT_SCRIPT), qq, viewer_qq)
-            except Exception:
+                reads += 1
+                raw = self._page.evaluate(SNAPSHOT_SCRIPT)
+                last = classify_page(raw, qq, viewer_qq)
+            except Exception as exc:
+                # Context replacement can interrupt evaluate during a legitimate
+                # redirect. No old snapshot survives it; closed pages never retry.
+                stable_since = None
+                last = None
+                markers = {"title": False, "logout": False}
+                message = str(exc)
+                if (
+                    message.startswith("Page.evaluate: Execution context was destroyed")
+                    and context_retries < 2
+                    and not signal.is_set()
+                    and time.monotonic() < deadline
+                ):
+                    context_retries += 1
+                    if not signal.wait(0.25):
+                        continue
                 break
+            if committed() != document:
+                document = committed()
+                stable_since = None
+            raw_markers = raw.get("profile_markers") if isinstance(raw, dict) else None
+            markers = {
+                key: isinstance(raw_markers, dict) and raw_markers.get(key) is True
+                for key in ("title", "logout")
+            }
             if navigation_failed and not committed():
                 if last.reason in {"platform_access_blocked", "login_required"}:
-                    return last
+                    return finish(last)
                 # A pre-existing same-account page is not a fresh observation.
                 last = None
                 break
+            candidate = (
+                last.reason == "page_incomplete"
+                and last.evidence["ready_state"] == "interactive"
+                and last.evidence["viewer_qq"] == viewer_qq
+                and last.evidence["page_url"] == f"https://user.qzone.qq.com/{qq}"
+                and isinstance(raw, dict)
+                and raw.get("normal_profile") is True
+                and all(markers.values())
+                and raw.get("panels") == []
+                and raw.get("permission_panels") == []
+            )
+            if candidate:
+                if stable_since is None:
+                    stable_since = time.monotonic()
+                elif time.monotonic() - stable_since >= 0.5 and not signal.is_set():
+                    # The parsed document's profile is stable while images/frames
+                    # may still load. This is not an account-health declaration.
+                    last.evidence["notice_source"] = "qzone_profile_stable"
+                    return finish(
+                        Observation(
+                            qq,
+                            UNCONFIRMED,
+                            "no_restriction_notice_observed",
+                            last.checked_at,
+                            last.evidence,
+                        )
+                    )
+            else:
+                stable_since = None
             # Qzone can finish the document before rendering its profile/system
             # template. Re-read this identified page within the same deadline;
             # never navigate again or turn an unknown template into a success.
@@ -336,14 +448,16 @@ class Browser:
                 and last.evidence.get("page_url") == f"https://user.qzone.qq.com/{qq}"
             )
             if last.reason != "page_incomplete" and not pending_structure:
-                return last
+                return finish(last)
             if signal.is_set() or time.monotonic() >= deadline or signal.wait(0.25):
-                return last
+                return finish(last)
         result = last or classify_page({}, qq, viewer_qq)
         if navigation_failed or last is None:
             result.evidence["notice_source"] = "navigation_failure"
-            return Observation(qq, BLOCKED, "navigation_failed", result.checked_at, result.evidence)
-        return result
+            return finish(
+                Observation(qq, BLOCKED, "navigation_failed", result.checked_at, result.evidence)
+            )
+        return finish(result)
 
     def close(self) -> None:
         try:

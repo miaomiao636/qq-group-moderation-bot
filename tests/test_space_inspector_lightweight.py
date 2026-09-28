@@ -6,6 +6,7 @@ The normal suite skips this when inspection dependencies or Edge are absent.
 
 from __future__ import annotations
 
+import contextlib
 import importlib.util
 import threading
 import unittest
@@ -20,6 +21,73 @@ from app.space_inspector.contracts import NOTICE, RESTRICTED, UNCONFIRMED
 
 @unittest.skipUnless(importlib.util.find_spec("playwright"), "optional inspection runtime absent")
 class LightweightBrowserTest(unittest.TestCase):
+    def test_stable_profile_is_read_while_an_image_keeps_document_interactive(self):
+        from playwright.sync_api import Error, sync_playwright
+
+        release = threading.Event()
+
+        class Handler(BaseHTTPRequestHandler):
+            def log_message(self, *_):
+                pass
+
+            def do_GET(self):
+                if self.path == "/pending.png":
+                    release.wait(15)
+                    body, kind = b"fixture", "image/png"
+                else:
+                    body = (
+                        '<div class="page"><div class="page_top">'
+                        '<a href="https://user.qzone.qq.com/98765432">合成查看账号</a>'
+                        '</div><div class="page_main"><h1 id="top_head_title">合成资料</h1>'
+                        '<a id="tb_logout">退出</a></div></div><img src="/pending.png">'
+                    ).encode()
+                    kind = "text/html; charset=utf-8"
+                self.send_response(200)
+                self.send_header("Content-Type", kind)
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                with contextlib.suppress(OSError):
+                    self.wfile.write(body)
+
+        with sync_playwright() as runtime:
+            try:
+                engine = runtime.chromium.launch(channel="msedge", headless=True)
+            except Error:
+                self.skipTest("local Edge not installed")
+            server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+            thread = threading.Thread(target=server.serve_forever, daemon=True)
+            thread.start()
+            context = engine.new_context()
+            page = context.new_page()
+            try:
+                origin = f"http://127.0.0.1:{server.server_port}"
+                page.goto(origin, wait_until="domcontentloaded")
+
+                class FixturePage:
+                    def evaluate(self, script):
+                        raw = page.evaluate(script)
+                        raw["url"] = "https://user.qzone.qq.com/12345678"
+                        return raw
+
+                browser = Browser(Path("unused-synthetic-profile"))
+                browser._page = FixturePage()
+                browser._stop = threading.Event()
+                result = browser._read_after_navigation("12345678", "98765432", False, lambda: 1)
+                self.assertEqual(result.status, UNCONFIRMED)
+                self.assertEqual(result.evidence["ready_state"], "interactive")
+                self.assertEqual(result.evidence["notice_source"], "qzone_profile_stable")
+                self.assertGreaterEqual(
+                    result.evidence["load_diagnostics"]["stable_profile_ms"], 500
+                )
+                self.assertEqual(page.evaluate("document.readyState"), "interactive")
+            finally:
+                release.set()
+                context.close()
+                engine.close()
+                server.shutdown()
+                server.server_close()
+                thread.join(timeout=5)
+
     def test_complete_document_waits_for_asynchronously_inserted_profile(self):
         from playwright.sync_api import Error, sync_playwright
 
