@@ -326,7 +326,16 @@ class Browser:
                 # A pre-existing same-account page is not a fresh observation.
                 last = None
                 break
-            if last.reason != "page_incomplete":
+            # Qzone can finish the document before rendering its profile/system
+            # template. Re-read this identified page within the same deadline;
+            # never navigate again or turn an unknown template into a success.
+            pending_structure = (
+                last.reason == "unrecognized_page"
+                and last.evidence.get("viewer_qq") == viewer_qq
+                and last.evidence.get("ready_state") == "complete"
+                and last.evidence.get("page_url") == f"https://user.qzone.qq.com/{qq}"
+            )
+            if last.reason != "page_incomplete" and not pending_structure:
                 return last
             if signal.is_set() or time.monotonic() >= deadline or signal.wait(0.25):
                 return last

@@ -1,5 +1,33 @@
 # 电脑 QQ 空间限制巡检
 
+<a id="space-ready-20260928"></a>
+## SPACE-READY-20260928：等待已加载文档内的异步页面结构
+
+负责人明确要求直接修复正常空间反复暂停。接手执行 `git pull --ff-only`、`git log -1 --format="%H %s"`、`git status --short --branch`，基线为干净且同步的 `9799e4d0433a147b5fdbab0adad285f144529c53`。其他项目任务空闲；根代理唯一写入，辅助仅审阅。
+
+只读诊断中，暂停记录为 `unrecognized_page`，依据显示目标/查看账号匹配、`ready_state=complete`、无已识别系统面板。旧等待器只重读 `page_incomplete`，遇到 complete 但页面结构尚未生成就立即退出。保存记录不能区分异步加载与未知模板；真实浏览器读取因工具不能可靠核对 URL 而停止，没有改用其他接口绕过限制，没有宣称取得该页面 DOM。
+
+修复仅对目标 URL、查看账号与 complete 状态已确认的未知页面，在同一已提交文档内继续补读，沿用原导航后观察预算和间隔，状态切换不重置期限，不增加导航或并发。随后满足原分类条件才完成观察；超时未知页仍 `BLOCKED`、成员仍待检查。登录、WAF、账号或地址错配仍停止。分类模板、正常页标志、缓存版本、数据库及主服务行为不变。
+
+新增内部 `tests/test_space_inspector_readiness.py`，固定时钟覆盖晚到结构、共享期限、取消、访问门禁、旧文档拒绝及最终观察保存；首批在上述旧源码上实际复现失败。`tests/test_space_inspector_lightweight.py` 仅追加独立 Edge 的 about:blank 异步 DOM 用例，页面网络全部阻断，不复用真实会话；原断言及外部主审探针不改。
+
+补丁源码与测试随本节所在提交入库。最终执行 SHA、命令、退出码、JUnit 汇总及精确 CI 统一以 `D:/qqbot-space-readiness-20260928/final-receipt.json` 为准；该收据不存在不表示验证完成。实际核验入口如下：
+
+```powershell
+uv run pytest tests/test_space_inspector_readiness.py -q -o addopts= --tb=short
+uv run pytest tests -k space_inspector -q --tb=short
+& 'C:/Users/81596/AppData/Local/QQSpaceInspector/runtime/Scripts/python.exe' -X utf8 -m unittest discover -s tests -p test_space_inspector_lightweight.py -v
+uv run python -X utf8 D:/qqbot-space-readiness-20260928/run_checks.py
+# 辅助脚本依次执行并记录于 checks.json / summary.json：
+uv run pytest --junitxml=D:/qqbot-space-readiness-20260928/full.xml
+uv run ruff check app tests alembic scripts
+uv run ruff format --check app tests alembic scripts
+uv run mypy app
+git diff --check
+```
+
+桌面运行环境已从真实安装位置导入修复源码；原窗口仍使用旧模块，需正常退出、从桌面重开、载入原任务后继续。没有代用户扫描、改写任务或关闭窗口。真实暂停位置续扫反馈仍待核对，不能以合成测试代替；整群可靠性及公司现场验收独立保留。公司旧交付 ZIP 不会随仓库自动更新，再交付须从最终固定提交重新构建并验包。
+
 **接收方手册入口**：[配套交付说明](../DELIVERY.md)、[巡检操作手册](delivery/space-inspector.md)、[群管理操作手册](delivery/group-management.md)。本文件保留开发与历史实测记录，不整份放入接收方候选包；搭配关系、安装和当前交付阻塞统一见上述新手册。
 
 任务：`SPACE-INSPECT-20260921`。负责人已接受首版只识别 QQ 空间明确限制提示，未命中保留待确认；正式使用不连接手机。此为明确追加的新功能，不是重开主审已关闭问题。

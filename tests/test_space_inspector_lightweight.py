@@ -20,6 +20,57 @@ from app.space_inspector.contracts import NOTICE, RESTRICTED, UNCONFIRMED
 
 @unittest.skipUnless(importlib.util.find_spec("playwright"), "optional inspection runtime absent")
 class LightweightBrowserTest(unittest.TestCase):
+    def test_complete_document_waits_for_asynchronously_inserted_profile(self):
+        from playwright.sync_api import Error, sync_playwright
+
+        with sync_playwright() as runtime:
+            try:
+                engine = runtime.chromium.launch(channel="msedge", headless=True)
+            except Error:
+                self.skipTest("local Edge not installed")
+            context = engine.new_context()
+            # Entirely synthetic about:blank document; no QQ/network request.
+            context.route("**/*", lambda route: route.abort())
+            page = context.new_page()
+            try:
+                page.set_content(
+                    '<div class="page"><div class="page_top">'
+                    '<a href="https://user.qzone.qq.com/98765432">合成查看账号</a>'
+                    '</div><div class="page_main"></div></div>'
+                )
+                snapshots = []
+
+                class FixturePage:
+                    def evaluate(self, script):
+                        raw = page.evaluate(script)
+                        snapshots.append(raw)
+                        # Map only the fixture URL, leaving the real DOM extraction intact.
+                        raw["url"] = "https://user.qzone.qq.com/12345678"
+                        if len(snapshots) == 1:
+                            page.evaluate(
+                                """() => setTimeout(() => {
+                                    document.querySelector('.page_main').innerHTML =
+                                        '<h1 id="top_head_title">合成空间</h1>' +
+                                        '<a id="tb_logout">退出</a>';
+                                }, 20)"""
+                            )
+                        return raw
+
+                browser = Browser(Path("unused-synthetic-profile"))
+                browser._page = FixturePage()
+                browser._stop = threading.Event()
+                observation = browser._read_after_navigation(
+                    "12345678", "98765432", False, lambda: True
+                )
+                self.assertEqual(snapshots[0]["ready"], "complete")
+                self.assertFalse(snapshots[0]["normal_profile"])
+                self.assertTrue(snapshots[-1]["normal_profile"])
+                self.assertEqual(observation.status, UNCONFIRMED)
+                self.assertEqual(observation.reason, "no_restriction_notice_observed")
+            finally:
+                context.close()
+                engine.close()
+
     def test_assets_blocked_but_styles_scripts_cached_and_evidence_unchanged(self):
         from playwright.sync_api import Error, sync_playwright
 

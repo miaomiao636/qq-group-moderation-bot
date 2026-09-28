@@ -98,6 +98,8 @@ QQ 群多模态智能管理机器人：**双通道**（OneBot/NapCat + QQ 官方
 
 ## 2. 状态快照（本轮与历史分开）
 
+**SPACE-READY-20260928**：独立巡检补同页异步结构等待，不改变判据或访问门禁。源码、入库回归、全量及精确 CI 证据见 [巡检记录](2026-09-21-space-inspector.md#space-ready-20260928) 的最终收据；原暂停位置续扫仍待重开核验，主服务不变。
+
 **COMPANION-READY-20260926**：配套安装与两类备份恢复已实现，许可按 D-035 统一 MIT；仅公司 ZIP，不公开 Release。完整验证与候选包来源见 [交付整改](2026-09-25-companion-delivery.md#companion-ready-20260926)，新现场验收仍未完成。以下前轮技术阻塞为历史。
 
 **COMPANION-DELIVERY-20260925**：负责人选定同仓库方案 A，群管理与巡检的接收方手册互相引用，固定提交允许清单打出候选包。主服务/扫描逻辑/生产配置未改；新机验收、服务安装模式、无 Git 备份、巡检备份、许可及正式发布仍未闭环。来源 SHA、命令、包核验与 CI 入口见 [本轮记录](2026-09-25-companion-delivery.md)。
@@ -430,6 +432,8 @@ A09 前 6 秒、历史授权快照、Windows 回滚全链实机演练、
 ---
 
 ## 9. 已知"登记式适配"清单（改测试前先读）
+
+**SPACE-READY-20260928**：新增内部 `test_space_inspector_readiness.py`，仅追加 `test_space_inspector_lightweight.py` 合成 DOM 用例，原断言不变。固定时钟、独立 about:blank 与临时任务库，无真实 QQ/会话；外部主审探针无适配。证据与命令见巡检记录。
 
 **COMPANION-READY-20260926**：新增内部 `test_bundle_backup_source.py`、`test_space_inspector_backup.py`、`test_service_installer.py`、`test_service_recovery.py`，补充既有内部打包收据断言。使用合成数据、假的 NSSM/Windows API 与隔离目录；主审探针未修改。CLI/干净发行包验收另留证，不冒充入库探针。精确 SHA、命令与计数见交付整改记录。
 
