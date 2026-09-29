@@ -40,3 +40,11 @@
 ### 回滚与后续核验
 
 若需回退，从本轮前基线 `11cf2b0` 生成仅撤销本次应用变更的正向提交，并重启 Web；无迁移，不以恢复整库覆盖上线后的自然消息。已归档案件不批量反转；已精简内容不会因改回期限自动恢复，须依据验证备份单独处理。下一次 04:00 维护的真实计数与归档 30 天后的自然精简须分别核对，不能把合成边界测试当作这两项已发生。
+
+### 7/30 授权上线（2026-09-30）
+
+- 部署源码：`e0b5b1dae79ae87d087588e9606f70bf0172cc3a`，已推送 `windows-deploy-2026-09-10`；[源码 CI](https://github.com/miaomiao636/qq-group-moderation-bot/actions/runs/36595359338) 的 Windows、Ubuntu、干净运行依赖三项全部 success。PR 合成树与部署提交同为 `607530badd687f93b86147d02c3da4eb3e764876`。本机 93 项专项及 2896 passed / 22 skipped、Ruff/格式/mypy 通过。
+- 上线前数据库在线备份为 `moderation-20260929T163530Z-70alke0h.db`，287502336 字节，完整性 ok、外键问题 0、revision `f3c8a9d12064`。SHA-256 `8db2798797fccbf66459b99e25e2530c49e0dabdbca719a85d1213daa93dface` 已由根代理独立复算一致；备份只在上述 D 盘私有目录保存。
+- 北京时间 00:35:35 启动新 Web 应用，00:36:21 部署核验成功。Web 服务 PID 32056 → 46092，监听进程 43880 属于新 Web；Runtime 保持 PID 23420。生产登录后的案件页、设置页都显示结案满7天、归档满30天；临时验证会话已退出。配置文件、群授权、路由、白名单、动态规则、急停和自动清理开关指纹不变。
+- 00:37:20 复核 health=ok、OneBot ready/online、自然消息已处理1条、失败0、队列0，心跳正常。既有1条长期EXECUTING撤回意图按原启动恢复机制转UNKNOWN，未重放；不是本次期限变更引入的卡住请求。未执行生产清理或迁移，当前1案达到归档年龄、0案达到精简年龄。
+- 收据：`checks.json`、`ci-source.json`、`backup-validation.json`、`deployment.json`、`before.json`、`after.json`、`ui-verification.json`、`postdeploy-sample-1.json`。后续上线记录提交仅改文档，应用代码与通过CI的部署源码一致；下一次04:00维护及归档30天后的真实精简仍按自然运行分别验收。
