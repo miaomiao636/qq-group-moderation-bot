@@ -24,6 +24,9 @@ from app.cases.models import Case, ViolationRecord
 from app.config import get_settings
 from app.models import ActionLog, ProcessedEvent
 
+CASE_ARCHIVE_AFTER_DAYS = 7
+CASE_ARCHIVE_RETENTION_DAYS = 30
+
 _PURGED_SNAPSHOT = '{"purged": true, "reason": "raw_retention_expired"}'
 _PURGED_REASON = "原始内容已按保留期清理"
 _RULE_METADATA = frozenset({"rule_id", "rule_name", "category", "confidence_delta"})
@@ -155,14 +158,14 @@ def _case_audit_metadata(audit: dict[str, Any], now: datetime) -> str:
 async def _purge_case_lifecycle(
     session: AsyncSession, *, now: datetime, raw_cutoff: datetime
 ) -> dict[str, int]:
-    """Hide completed cases after 30d; clear eligible content after 90d archived.
+    """Hide completed cases after 7d; clear eligible content after 30d archived.
 
     Case and violation IDs remain durable: both are referenced by audit/feedback,
     and SQLite may reuse a physically deleted maximum ID. Neither archive age
     nor a case's JSON list proves that a violation has no other live consumers.
     Raw-source redaction has its own TTL above and is never deferred here.
     """
-    archive_cutoff = now - timedelta(days=30)
+    archive_cutoff = now - timedelta(days=CASE_ARCHIVE_AFTER_DAYS)
     result = await session.execute(
         update(Case)
         .where(
@@ -185,7 +188,7 @@ async def _purge_case_lifecycle(
             select(Case).where(
                 Case.archived.is_(True),
                 Case.archived_at.is_not(None),
-                Case.archived_at < now - timedelta(days=90),
+                Case.archived_at <= now - timedelta(days=CASE_ARCHIVE_RETENTION_DAYS),
             )
         )
     ).all()

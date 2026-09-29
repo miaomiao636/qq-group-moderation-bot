@@ -26,7 +26,7 @@ from app.cases.models import Case, ViolationRecord
 from app.config import get_settings
 from app.db import SessionLocal
 from app.models import AdminAudit
-from app.reports.cleanup import purge_expired
+from app.reports.cleanup import CASE_ARCHIVE_AFTER_DAYS, CASE_ARCHIVE_RETENTION_DAYS, purge_expired
 from app.reports.service import build_daily, build_weekly
 from app.reports.stats import build_stats
 from app.web import auth, case_batch, case_selection
@@ -558,8 +558,8 @@ async def dashboard(
         else '<a class=btn href="/admin?archived=1">查看已归档案件</a>'
     )
     archive_note = (
-        "<p class=muted>已关闭案件仍在本列表，可用状态筛选只看待处理；结案满 30 天由维护任务自动归档，"
-        "随后可在已归档案件中查询。归档不是删除：归档满 90 天且关联安全时才清除非必要内容，"
+        f"<p class=muted>已关闭案件仍在本列表，可用状态筛选只看待处理；结案满 {CASE_ARCHIVE_AFTER_DAYS} 天由维护任务自动归档，"
+        f"随后可在已归档案件中查询。归档满 {CASE_ARCHIVE_RETENTION_DAYS} 天且关联安全时清除非必要内容，"
         "保留编号、最小违规记录与处理审计。未关闭案件不归档；原文另按 15 天上限清理。</p>"
     )
     # 负责人 2026-09-18：待人工清单默认折叠（条目多时页面过长；证据与操作在下方案件列表/详情页）。
@@ -3147,12 +3147,16 @@ async def settings_page(request: Request, notice: str = "") -> Response:
         f"{notice_html}"
         "<div class=card><h3>数据保留期（来自 .env，修改需重启）</h3>"
         f"<p>原始消息/媒体：<b>{settings.raw_retention_days}</b> 天　"
-        f"判定/反馈/动作记录：<b>{settings.decision_retention_days}</b> 天</p></div>"
+        f"判定/反馈/动作记录：<b>{settings.decision_retention_days}</b> 天</p>"
+        f"<p>案件：结案满 {CASE_ARCHIVE_AFTER_DAYS} 天自动归档；归档满 {CASE_ARCHIVE_RETENTION_DAYS} 天且关联安全时清除非必要内容。"
+        "保留编号、最小违规记录与处理审计；未关闭案件不归档。</p>"
+        "<p class=muted>原文按上述独立保留期清理，归档查看不延长原文保存期限。"
+        "通知只有已接手或已结束、且超过记录保留期时才清理；未接手且未结束的通知继续保留。</p></div>"
         "<div class=card><h3>存储路径</h3>"
         "<p>数据库位置由本机DATABASE_URL配置决定；备份存放在数据库同级backups目录。</p></div>"
         "<div class=card><h3>数据清理</h3>"
         f"<p>计划清理许可：{'已允许' if auto_on else '未允许'}。此开关不会创建Windows计划任务。</p>"
-        "<p class=muted>需在本机配置每6小时执行 uv run python -m app.reports.maintenance cleanup，并核对最近结果；程序未内置定时线程。</p>"
+        "<p class=muted>执行频率由本机 Windows 任务计划决定；任务运行 uv run python -m app.reports.maintenance cleanup。请核对最近结果；程序未内置定时线程。</p>"
         f"<p>最近尝试（UTC）：{_esc(last_cleanup_text)}；结果：{_esc(cleanup_status_text)}</p>"
         f'<form method=post action="/admin/settings/auto-cleanup" style="display:inline">{csrf}'
         f"<button class=btn>{'关闭自动清理' if auto_on else '开启自动清理'}</button></form>"
