@@ -29,7 +29,7 @@ async def test_spam_fixture_recorded_as_violation() -> None:
         assert record.message_id == marker
         detail = json.loads(record.detail_json)
         assert "kick" not in json.dumps(detail).lower()
-        assert detail["recommended_actions"] in ([], ["recall", "mute", "warn"])
+        assert detail["recommended_actions"] in ([], ["recall"])
 
 
 @pytest.mark.asyncio

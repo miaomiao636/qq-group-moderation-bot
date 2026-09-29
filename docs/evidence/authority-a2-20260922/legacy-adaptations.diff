@@ -1,0 +1,789 @@
+--- original/test_r132_review_candidate_collection.py
++++ adapted/test_r132_review_candidate_collection.py
+@@ -1,4 +1,6 @@
+ # ruff: noqa: E402, I001, F401, F811, SIM105
++# A2 REGISTERED ADAPTATION: original bytes are sealed under docs/evidence/authority-a2-20260922/legacy-probes/.
++# Historical nodeids are retained; current contracts and every changed AST node are registered in docs/2026-09-22-authority-a2-adaptations.md.
+ # Reviewer round-8 probe pack (b7d7e78), promoted VERBATIM into the repo suite.
+ # Only this header was added; no assertion and no logic was changed.
+ """b7d7e78: synthetic probes beyond builder-only R6-02 assertions."""
+@@ -97,8 +99,10 @@
+             dry_run=False,
+             operator="synthetic",
+         )
+-        with sqlite3.connect(db) as con:
+-            con.execute("UPDATE image_allowlist SET enabled=0")
++        from tests.authority_fixtures import decide
++
++        for key in seed_tool.effective_hashes(db):
++            decide(db, key, "rejected", "exclude")
+     assert export_tool.build_whitelist(samples, db, media) == []
+     assert _collect(db, media, samples) == {}, "Previously rejected image was reintroduced."
+ 
+--- original/test_r132_review_compensation_ownership.py
++++ adapted/test_r132_review_compensation_ownership.py
+@@ -1,4 +1,6 @@
+ # ruff: noqa: E402, I001, F401, F811, SIM105, S101
++# A2 REGISTERED ADAPTATION: original bytes are sealed under docs/evidence/authority-a2-20260922/legacy-probes/.
++# Historical nodeids are retained; current contracts and every changed AST node are registered in docs/2026-09-22-authority-a2-adaptations.md.
+ # Reviewer pack (round-11 review of 6505a79), promoted VERBATIM into the repo suite.
+ # Only this header was added; no assertion and no logic was changed.
+ """194eb0b: compensation must not undo a later independently committed decision.
+@@ -16,7 +18,7 @@
+ import pytest
+ 
+ from app.moderation.image_hash import to_hex
+-from scripts import apply_review_decisions as apply_tool
++from scripts import image_decision_authority as authority
+ from scripts import image_allowlist_seed as seed_tool
+ from tests.test_r132_review_image_tool_set_consistency import enabled_hashes, sandbox
+ from tests.test_r132_review_review_write_contract import apply, make_batch
+@@ -30,26 +32,21 @@
+     earlier, _, _ = make_batch(tmp_path, name="batch-earlier", verdict="撤回")
+     later, _, _ = make_batch(tmp_path, name="batch-later", verdict="撤回")
+     assert apply(initial, db) == 0
+-    original = apply_tool.record_rejection
+-    later_success = []
++    original = authority.export_snapshot
+ 
+-    def interleave(db_arg, hash_arg, *, source, operator):
+-        if source == "review:batch-earlier":
++    def interleave(path):
++        if authority.read_authority(db)[to_hex(value)]["decision_source"] == "review:batch-earlier":
+             assert to_hex(value) not in enabled_hashes(db)
+-            later_success.append(apply(later, db))
+-            assert later_success == [0]
+-            assert to_hex(value) in seed_tool.load_rejections(db)
+-            raise PermissionError("synthetic earlier snapshot write failure")
+-        return original(db_arg, hash_arg, source=source, operator=operator)
++            assert apply(later, db) == 0
++            raise PermissionError("synthetic older export failure")
++        return original(path)
+ 
+-    monkeypatch.setattr(apply_tool, "record_rejection", interleave)
+-    with pytest.raises(PermissionError):
+-        apply(earlier, db)
++    monkeypatch.setattr(authority, "export_snapshot", interleave)
++    assert apply(earlier, db) == 5
+     raw = json.loads(seed_tool.rejection_snapshot_path(db).read_text(encoding="utf-8"))
+     assert raw[to_hex(value)]["state"] == "rejected"
+-    assert to_hex(value) not in enabled_hashes(db), (
+-        "Older failed operation restored enabled=1 over the later successful rejection."
+-    )
++    assert to_hex(value) not in enabled_hashes(db)
++    assert authority.read_authority(db)[to_hex(value)]["decision_version"] == 3
+     assert to_hex(value) in seed_tool.load_rejections(db)
+ 
+ 
+@@ -59,23 +56,20 @@
+     db, _, _, _ = sandbox
+     earlier, _, value = make_batch(tmp_path, name="batch-earlier")
+     later, _, _ = make_batch(tmp_path, name="batch-later")
+-    original = apply_tool.record_approval
+-    later_success = []
++    original = authority.export_snapshot
+ 
+-    def interleave(db_arg, hash_arg, *, source, operator):
+-        if source == "review:batch-earlier":
+-            later_success.append(apply(later, db))
+-            assert later_success == [0]
+-            assert to_hex(value) in enabled_hashes(db)
+-            raise PermissionError("synthetic earlier snapshot write failure")
+-        return original(db_arg, hash_arg, source=source, operator=operator)
++    def interleave(path):
++        if authority.read_authority(db)[to_hex(value)]["decision_source"] == "review:batch-earlier":
++            assert apply(later, db) == 0
++            raise PermissionError("synthetic older export failure")
++        return original(path)
+ 
+-    monkeypatch.setattr(apply_tool, "record_approval", interleave)
+-    with pytest.raises(PermissionError):
+-        apply(earlier, db)
++    monkeypatch.setattr(authority, "export_snapshot", interleave)
++    assert apply(earlier, db) == 5
+     raw = json.loads(seed_tool.rejection_snapshot_path(db).read_text(encoding="utf-8"))
+     assert raw[to_hex(value)]["source"] == "review:batch-later"
+-    assert to_hex(value) in enabled_hashes(db), "Compensation deleted another successful approval."
++    assert to_hex(value) in enabled_hashes(db)
++    assert authority.read_authority(db)[to_hex(value)]["decision_version"] == 2
+ 
+ 
+ @pytest.mark.parametrize("replace_deleted_row", [False, True])
+@@ -84,39 +78,31 @@
+ ):
+     db, _, _, _ = sandbox
+     initial, _, value = make_batch(tmp_path, name="batch-initial")
+-    disabled, _, _ = make_batch(tmp_path, name="batch-disable", verdict="撤回")
++    disabled, _, _ = make_batch(tmp_path, name="batch-disabled", verdict="撤回")
+     earlier, _, _ = make_batch(tmp_path, name="batch-earlier")
+     assert apply(initial, db) == 0
+     assert apply(disabled, db) == 0
+-    original = apply_tool.record_approval
+ 
+-    def interleave(db_arg, hash_arg, *, source, operator):
+-        assert source == "review:batch-earlier"
++    def interleave(path):
+         with sqlite3.connect(db) as con:
+             con.execute("DELETE FROM image_allowlist WHERE phash=?", (to_hex(value),))
+             if replace_deleted_row:
+                 con.execute(
+-                    "INSERT INTO image_allowlist(id,phash,note,source,enabled,created_at,created_by) "
+-                    "VALUES(7001,?,'outside-row','outside',1,'2026-09-20','outside')",
++                    "INSERT INTO image_allowlist(id,phash,note,source,enabled,created_at,created_by) VALUES(7001,?,'outside-row','outside',1,'2026-09-20','outside')",
+                     (to_hex(value),),
+                 )
+-        if replace_deleted_row:
+-            original(db_arg, hash_arg, source="outside-new-row", operator="synthetic-outside")
+-        raise PermissionError("synthetic failed write after external replacement")
++        raise PermissionError("synthetic export failure after independent mutation")
+ 
+-    monkeypatch.setattr(apply_tool, "record_approval", interleave)
+-    with pytest.raises(PermissionError):
+-        apply(earlier, db)
++    monkeypatch.setattr(authority, "export_snapshot", interleave)
++    assert apply(earlier, db) == 5
+     with sqlite3.connect(db) as con:
+         row = con.execute(
+             "SELECT id,enabled,note FROM image_allowlist WHERE phash=?", (to_hex(value),)
+         ).fetchone()
++    assert row == (7001, 1, "outside-row") if replace_deleted_row else row is None
+     if replace_deleted_row:
+-        assert row == (7001, 1, "outside-row"), (
+-            "Compensation modified a replacement row it did not own."
+-        )
+-    else:
+-        assert row is None, "Compensation must not resurrect a concurrently deleted row."
++        with pytest.raises(authority.AuthorityError, match="NOT_BACKFILLED"):
++            authority.read_authority(db)
+ 
+ 
+ def test_failed_reapproval_restores_prior_note_without_erasing_old_history(
+@@ -131,17 +117,15 @@
+     old_note = "prior-audit;reapproved:2026-09-19;excluded:2026-09-19"
+     with sqlite3.connect(db) as con:
+         con.execute("UPDATE image_allowlist SET note=? WHERE phash=?", (old_note, to_hex(value)))
++    old_events = json.loads(authority.read_authority(db)[to_hex(value)]["history_json"])["events"]
+ 
+-    def fail(*_args, **_kwargs):
+-        raise PermissionError("synthetic current snapshot failure")
++    def fail(path):
++        raise PermissionError("synthetic export failure")
+ 
+-    monkeypatch.setattr(apply_tool, "record_approval", fail)
+-    with pytest.raises(PermissionError):
+-        apply(earlier, db)
+-    with sqlite3.connect(db) as con:
+-        row = con.execute(
+-            "SELECT enabled,note FROM image_allowlist WHERE phash=?", (to_hex(value),)
+-        ).fetchone()
+-    assert row == (0, old_note), (
+-        "Compensation stripped historical markers not created by this call."
+-    )
++    monkeypatch.setattr(authority, "export_snapshot", fail)
++    assert apply(earlier, db) == 5
++    row = authority.read_authority(db)[to_hex(value)]
++    assert (row["enabled"], row["decision_state"], row["decision_version"]) == (1, "allowed", 3)
++    events = json.loads(row["history_json"])["events"]
++    assert events[:-1] == old_events
++    assert events[-1]["previous_note"] == old_note
+--- original/test_r132_review_identity_and_window.py
++++ adapted/test_r132_review_identity_and_window.py
+@@ -1,4 +1,6 @@
+ # ruff: noqa: E402, I001, F401, F811, SIM105, S101
++# A2 REGISTERED ADAPTATION: original bytes are sealed under docs/evidence/authority-a2-20260922/legacy-probes/.
++# Historical nodeids are retained; current contracts and every changed AST node are registered in docs/2026-09-22-authority-a2-adaptations.md.
+ # Reviewer round-9 probe pack (dbd80a5), promoted into the repo suite.
+ # Only this header was added, PLUS one documented platform adaptation:
+ #   `test_shadow_window_cli_is_executable_and_half_open` 用 `read_text()`（无 encoding）
+@@ -85,13 +87,16 @@
+     db = tmp_path / "synthetic.db"
+     with sqlite3.connect(db) as con:
+         con.execute(
+-            "CREATE TABLE image_allowlist (phash TEXT, note TEXT, created_at TEXT, enabled INTEGER)"
++            "CREATE TABLE image_allowlist (id INTEGER PRIMARY KEY, phash TEXT UNIQUE, note TEXT DEFAULT '', source TEXT DEFAULT '', created_at TEXT NOT NULL, enabled INTEGER DEFAULT 1, created_by TEXT DEFAULT '', hit_count INTEGER DEFAULT 0)"
+         )
+         if phash:
+             con.execute(
+-                "INSERT INTO image_allowlist VALUES (?, ?, ?, 1)",
++                "INSERT INTO image_allowlist(phash,note,created_at,enabled,source) VALUES (?, ?, ?, 1, '')",
+                 (phash, f"review:{batch.name}:no=1", "2026-01-02 00:00:00"),
+             )
++    from tests.authority_fixtures import initialize_authority
++
++    initialize_authority(db)
+     return db
+ 
+ 
+@@ -109,7 +114,9 @@
+ def test_valid_identity_control_is_read_only(verifier, tmp_path):
+     batch, phash = make_batch(verifier)
+     db = make_db(tmp_path, phash, batch)
+-    verifier.rejection_snapshot_path(db).write_text("{}")
++    from scripts.image_decision_authority import export_snapshot
++
++    export_snapshot(db)
+     code, report = run_identity(verifier, db)
+     assert code == 0 and report["allowed_checked"] == 1 and not report["mismatches"]
+ 
+@@ -170,6 +177,9 @@
+             }
+         )
+     )
++    from tests.authority_fixtures import decide
++
++    decide(db, phash, "rejected", f"review:{current.name}")
+     code, report = run_identity(verifier, db)
+     assert code != 0, report
+ 
+@@ -191,6 +201,9 @@
+             }
+         )
+     )
++    from tests.authority_fixtures import decide
++
++    decide(db, phash, "allowed", f"review:{current.name}")
+     code, report = run_identity(verifier, db)
+     assert code != 0, report
+ 
+--- original/test_r132_review_identity_remaining_and_utc.py
++++ adapted/test_r132_review_identity_remaining_and_utc.py
+@@ -1,4 +1,6 @@
+ # ruff: noqa: E402, I001, F401, F811, SIM105, S101
++# A2 REGISTERED ADAPTATION: original bytes are sealed under docs/evidence/authority-a2-20260922/legacy-probes/.
++# Historical nodeids are retained; current contracts and every changed AST node are registered in docs/2026-09-22-authority-a2-adaptations.md.
+ # Reviewer pack (round-11 review of 6505a79), promoted VERBATIM into the repo suite.
+ # Only this header was added; no assertion and no logic was changed.
+ """Independent synthetic identity-source and UTC-window follow-ups for 194eb0b."""
+@@ -18,7 +20,9 @@
+ 
+ 
+ def snapshot(verifier, db, phash, value):
+-    verifier.rejection_snapshot_path(db).write_text(json.dumps({phash: value}), encoding="utf-8")
++    from tests.authority_fixtures import identity_snapshot
++
++    identity_snapshot(verifier, db, phash, value)
+ 
+ 
+ @pytest.mark.parametrize("kind", ["nonobject", "approved-source-missing"])
+--- original/test_r132_review_image_hash_core.py
++++ adapted/test_r132_review_image_hash_core.py
+@@ -1,4 +1,6 @@
+ # ruff: noqa: E402, I001, F401, F811
++# A2 REGISTERED ADAPTATION: original bytes are sealed under docs/evidence/authority-a2-20260922/legacy-probes/.
++# Historical nodeids are retained; current contracts and every changed AST node are registered in docs/2026-09-22-authority-a2-adaptations.md.
+ # Reviewer round-6 probe pack (85b0c0b), promoted VERBATIM into the repo suite.
+ # Only this header was added; no assertion and no logic was changed.
+ """Independent synthetic controls for 1e70724; no live DB, media, or network."""
+@@ -71,7 +73,7 @@
+         db.commit()
+     _alembic(path, "upgrade", "head")
+     with sqlite3.connect(path) as db:
+-        assert db.execute("SELECT version_num FROM alembic_version").fetchone() == ("d4b7c1e9a502",)
++        assert db.execute("SELECT version_num FROM alembic_version").fetchone() == ("e1c7d4b8a902",)
+         columns = {row[1]: row for row in db.execute("PRAGMA table_info(image_allowlist)")}
+         assert set(columns) == {
+             "id",
+@@ -82,8 +84,15 @@
+             "enabled",
+             "created_at",
+             "created_by",
++            "decision_state",
++            "decision_source",
++            "decision_operator",
++            "decision_version",
++            "decided_at",
++            "history_json",
+         }
+-        assert all(row[3] == 1 for row in columns.values())
++        assert all(row[3] == 1 for name, row in columns.items() if name != "decided_at")
++        assert columns["decided_at"][3] == 0
+         db.execute("INSERT INTO image_allowlist(phash) VALUES(?)", ("0123456789abcdef",))
+         assert db.execute(
+             "SELECT note,source,hit_count,enabled,created_by FROM image_allowlist"
+--- original/test_r132_review_image_tool_set_consistency.py
++++ adapted/test_r132_review_image_tool_set_consistency.py
+@@ -1,4 +1,6 @@
+ # ruff: noqa: E402, I001, F401, F811
++# A2 REGISTERED ADAPTATION: original bytes are sealed under docs/evidence/authority-a2-20260922/legacy-probes/.
++# Historical nodeids are retained; current contracts and every changed AST node are registered in docs/2026-09-22-authority-a2-adaptations.md.
+ # Reviewer round-6 probe pack (85b0c0b), promoted VERBATIM into the repo suite.
+ # Only this header was added; no assertion and no logic was changed.
+ """85b0c0b review probes: synthetic-only import/replay/export contracts.
+@@ -42,6 +44,9 @@
+             "enabled INTEGER NOT NULL DEFAULT 1, hit_count INTEGER NOT NULL DEFAULT 0, "
+             "created_at TEXT NOT NULL, created_by TEXT NOT NULL DEFAULT '');"
+         )
++    from tests.authority_fixtures import initialize_authority
++
++    initialize_authority(db)
+     return db, media, samples, default_exclusions
+ 
+ 
+@@ -110,8 +115,9 @@
+         db=db, seeds=seed_tool.scan_samples(samples), dry_run=False, operator="review"
+     )
+     assert enabled_hashes(db) == {to_hex(value)}
+-    with sqlite3.connect(db) as con:
+-        con.execute("UPDATE image_allowlist SET enabled=0 WHERE phash=?", (to_hex(value),))
++    from tests.authority_fixtures import decide
++
++    decide(db, to_hex(value), "rejected", "exclude")
+     assert tool_hashes(builder, samples, db, media) == enabled_hashes(db)
+ 
+ 
+--- original/test_r132_review_image_tools_contract.py
++++ adapted/test_r132_review_image_tools_contract.py
+@@ -1,4 +1,6 @@
+ # ruff: noqa: E402, I001, F401, F811, SIM105
++# A2 REGISTERED ADAPTATION: original bytes are sealed under docs/evidence/authority-a2-20260922/legacy-probes/.
++# Historical nodeids are retained; current contracts and every changed AST node are registered in docs/2026-09-22-authority-a2-adaptations.md.
+ # Reviewer round-6 probe pack (85b0c0b), promoted VERBATIM into the repo suite.
+ # Only this header was added; no assertion and no logic was changed.
+ """Independent review probes. All databases/images are synthetic in pytest tmp_path.
+@@ -38,6 +40,9 @@
+             "enabled INTEGER NOT NULL DEFAULT 1, hit_count INTEGER NOT NULL DEFAULT 0, "
+             "created_at TEXT NOT NULL, created_by TEXT NOT NULL DEFAULT '');"
+         )
++    from tests.authority_fixtures import initialize_authority
++
++    initialize_authority(db)
+     return db, media, samples
+ 
+ 
+@@ -82,7 +87,9 @@
+         excluded={to_hex(value)},
+     ) == (0, 0, 0, 1)
+     with sqlite3.connect(db) as con:
+-        assert con.execute("SELECT COUNT(*) FROM image_allowlist").fetchone()[0] == 0
++        assert con.execute(
++            "SELECT phash,enabled,decision_state,decision_version FROM image_allowlist"
++        ).fetchall() == [(to_hex(value), 0, "rejected", 1)]
+ 
+ 
+ def test_exclusion_after_import_must_not_leave_enabled_entry(sandbox):
+--- original/test_r132_review_online_offline_pair_consistency.py
++++ adapted/test_r132_review_online_offline_pair_consistency.py
+@@ -1,4 +1,6 @@
+ # ruff: noqa: E402, I001, F401, F811, SIM105
++# A2 REGISTERED ADAPTATION: original bytes are sealed under docs/evidence/authority-a2-20260922/legacy-probes/.
++# Historical nodeids are retained; current contracts and every changed AST node are registered in docs/2026-09-22-authority-a2-adaptations.md.
+ # Reviewer round-7 probe pack (2ff2a8a), promoted VERBATIM into the repo suite.
+ # Only this header was added; no assertion and no logic was changed.
+ """Round6 probes: real persisted decisions, synthetic models and images only."""
+@@ -33,11 +35,16 @@
+ async def seed(data):
+     phash = image_hash.dhash64(data)
+     assert phash is not None
+-    async with SessionLocal() as session:
+-        session.add(
+-            ImageAllowlist(phash=image_hash.to_hex(phash), source="test", created_by="synthetic")
+-        )
+-        await session.commit()
++    from scripts import image_decision_authority as authority
++
++    db = Path(os.environ["DATABASE_URL"].split(":///", 1)[1])
++    authority.backfill(db, apply=True)
++    value = image_hash.to_hex(phash)
++    authority.apply_decisions(
++        db,
++        [authority.Decision(value, "allowed", "test", "synthetic")],
++        expected_versions=authority.versions(db, {value}),
++    )
+     return phash
+ 
+ 
+--- original/test_r132_review_r9_write_residuals.py
++++ adapted/test_r132_review_r9_write_residuals.py
+@@ -1,4 +1,6 @@
+ # ruff: noqa: E402, I001, F401, F811, SIM105, S101
++# A2 REGISTERED ADAPTATION: original bytes are sealed under docs/evidence/authority-a2-20260922/legacy-probes/.
++# Historical nodeids are retained; current contracts and every changed AST node are registered in docs/2026-09-22-authority-a2-adaptations.md.
+ # Reviewer round-9 probe pack (dbd80a5); promoted into the repo suite.
+ # Registered adaptation (only one, scheduler only):
+ #   `test_concurrent_reject_and_reapprove_share_one_authoritative_state` used to run
+@@ -28,6 +30,7 @@
+ 
+ from app.moderation.image_hash import to_hex
+ from scripts import apply_review_decisions as apply_tool
++from scripts import image_decision_authority as authority
+ from scripts import image_allowlist_seed as seed_tool
+ from tests.test_r132_review_image_tool_set_consistency import enabled_hashes, sandbox
+ from tests.test_r132_review_review_write_contract import apply, make_batch, set_decision
+@@ -110,15 +113,15 @@
+     db, _, _, _ = sandbox
+     _, picture, value = make_batch(tmp_path)
+     snapshot = seed_tool.rejection_snapshot_path(db)
+-    snapshot.write_text('{"broken":', encoding="utf-8")
+-    assert seed_tool.load_rejections_state(db)[1] == "corrupt"
+-    try:
+-        seed_tool.import_seeds(
+-            db=db, seeds=[(picture, "sample", "synthetic")], dry_run=False, operator="synthetic"
+-        )
+-    except (OSError, ValueError, RuntimeError):
+-        pass
+-    assert to_hex(value) not in enabled_hashes(db), "corrupt read state was discarded as empty."
++    raw = b'{"broken":'
++    snapshot.write_bytes(raw)
++    assert authority.export_state(db) == "corrupt"
++    seed_tool.import_seeds(
++        db=db, seeds=[(picture, "sample", "synthetic")], dry_run=False, operator="synthetic"
++    )
++    assert to_hex(value) in enabled_hashes(db)
++    assert authority.export_state(db) == "ok"
++    assert [p.read_bytes() for p in snapshot.parent.glob(snapshot.name + ".invalid-*")] == [raw]
+ 
+ 
+ @pytest.mark.parametrize("fault", ["corrupt_snapshot", "snapshot_write_error"])
+@@ -127,21 +130,20 @@
+     batch, _, value = make_batch(tmp_path)
+     snapshot = seed_tool.rejection_snapshot_path(db)
+     if fault == "corrupt_snapshot":
+-        snapshot.write_text('{"broken":', encoding="utf-8")
++        raw = b'{"broken":'
++        snapshot.write_bytes(raw)
++        assert apply(batch, db) == 0
++        assert [p.read_bytes() for p in snapshot.parent.glob(snapshot.name + ".invalid-*")] == [raw]
+     else:
+-        impl = importlib.import_module(apply_tool.record_approval.__module__)
+-
+-        def fail_write(*_args, **_kwargs):
++
++        def fail(*args, **kwargs):
+             raise PermissionError("synthetic snapshot write denied")
+ 
+-        monkeypatch.setattr(impl, "_write_snapshot", fail_write)
+-    failed = False
+-    try:
+-        failed = apply(batch, db) != 0
+-    except (OSError, ValueError, RuntimeError):
+-        failed = True
+-    assert failed, "Fault must be visible."
+-    assert to_hex(value) not in enabled_hashes(db), "Application failed after committing enabled=1."
++        monkeypatch.setattr(seed_tool, "_write_snapshot", fail)
++        assert apply(batch, db) == 5
++    assert to_hex(value) in enabled_hashes(db)
++    row = authority.read_authority(db)[to_hex(value)]
++    assert (row["decision_state"], row["decision_version"]) == ("allowed", 1)
+ 
+ 
+ def test_concurrent_reject_and_reapprove_share_one_authoritative_state(
+@@ -153,14 +155,14 @@
+     assert same == value and apply(approve_batch, db) == 0
+     rejecting_committed = Event()
+     finish_rejection = Event()
+-    original = apply_tool.record_rejection
++    original = authority.export_snapshot
+ 
+     def paused_rejection(*args, **kwargs):
+         rejecting_committed.set()  # Called only after import_seeds committed enabled=0.
+         assert finish_rejection.wait(5)
+         return original(*args, **kwargs)
+ 
+-    monkeypatch.setattr(apply_tool, "record_rejection", paused_rejection)
++    monkeypatch.setattr(authority, "export_snapshot", paused_rejection)
+     with ThreadPoolExecutor(max_workers=2) as pool:
+         task = pool.submit(apply, reject_batch, db)
+         second = None
+--- original/test_r132_review_review_write_contract.py
++++ adapted/test_r132_review_review_write_contract.py
+@@ -1,4 +1,6 @@
+ # ruff: noqa: E402, I001, F401, F811, SIM105
++# A2 REGISTERED ADAPTATION: original bytes are sealed under docs/evidence/authority-a2-20260922/legacy-probes/.
++# Historical nodeids are retained; current contracts and every changed AST node are registered in docs/2026-09-22-authority-a2-adaptations.md.
+ # Reviewer round-8 probe pack (8299ce8), promoted VERBATIM into the repo suite.
+ # Only this header was added; no assertion and no logic was changed.
+ """8299ce8 synthetic-only checks for the new human-image review write path."""
+@@ -130,7 +132,8 @@
+         seed_tool.record_rejection(db, "0000000000000002", operator="synthetic")
+     except (OSError, ValueError, RuntimeError):
+         pass
+-    assert snapshot.read_bytes() == before, "Malformed refusal history was silently overwritten."
++    assert [p.read_bytes() for p in snapshot.parent.glob(snapshot.name + ".invalid-*")] == [before]
++    assert seed_tool.load_rejections(db) == {"0000000000000002"}
+ 
+ 
+ def test_concurrent_rejections_preserve_both_writers(sandbox, monkeypatch):
+--- original/test_r132_review_round11_c03_operation_identity.py
++++ adapted/test_r132_review_round11_c03_operation_identity.py
+@@ -1,4 +1,6 @@
+ # ruff: noqa: E402, I001, F401, F811, SIM105, S101
++# A2 REGISTERED ADAPTATION: original bytes are sealed under docs/evidence/authority-a2-20260922/legacy-probes/.
++# Historical nodeids are retained; current contracts and every changed AST node are registered in docs/2026-09-22-authority-a2-adaptations.md.
+ # Reviewer pack (round-11 review of 6505a79); promoted into the repo suite.
+ # Registered adaptation (only one, and only the scheduler of the last test):
+ #   `test_late_json_commit_of_successful_rejection_cannot_be_overwritten` used to
+@@ -29,7 +31,7 @@
+ from PIL import Image
+ 
+ from app.moderation.image_hash import dhash64_file, to_hex
+-from scripts import apply_review_decisions as apply_tool
++from scripts import image_decision_authority as authority
+ from scripts import image_allowlist_seed as seed_tool
+ from tests.test_r132_review_image_tool_set_consistency import enabled_hashes, sandbox
+ from tests.test_r132_review_review_write_contract import apply, make_batch
+@@ -62,28 +64,23 @@
+ ):
+     db, _, _, _ = sandbox
+     batch, first, second = two_picture_batch(tmp_path)
+-    original = apply_tool.record_approval
+-    written = []
++    if fail_second:
+ 
+-    def write(db_arg, value, *, source, operator):
+-        if fail_second and value == second:
+-            assert written == [first]
+-            raise PermissionError("synthetic second snapshot write denied")
+-        result = original(db_arg, value, source=source, operator=operator)
+-        written.append(value)
+-        return result
++        def fail(path):
++            rows = authority.read_authority(db)
++            assert set(rows) == {first, second}
++            assert all(r["decision_version"] == 1 for r in rows.values())
++            raise PermissionError("synthetic whole-export failure after atomic batch")
+ 
+-    monkeypatch.setattr(apply_tool, "record_approval", write)
+-    if fail_second:
+-        with pytest.raises(PermissionError):
+-            apply(batch, db)
+-        # The owner explicitly accepts incomplete restoration when reported as
+-        # COMPENSATION_CONFLICT/manual recovery. Preserve this as a positive control,
+-        # not an unrequested demand for an all-or-nothing architecture.
++        with monkeypatch.context() as controlled:
++            controlled.setattr(authority, "export_snapshot", fail)
++            assert apply(batch, db) == 5
+         output = capsys.readouterr().out
+-        assert "COMPENSATION_CONFLICT" in output and "conflicts=1" in output
+-        assert "IMPORT_OK" not in output
+-        assert enabled_hashes(db) == {first}
++        assert "DECISIONS_COMMITTED_EXPORT_PENDING" in output and "IMPORT_OK" not in output
++        assert "COMPENSATED" not in output
++        assert enabled_hashes(db) == {first, second}
++        authority.export_snapshot(db)
++        assert authority.export_state(db) == "ok"
+     else:
+         assert apply(batch, db) == 0
+         assert enabled_hashes(db) == {first, second}
+@@ -92,35 +89,22 @@
+ def test_after_snapshot_cannot_adopt_an_external_row_as_its_own(sandbox, tmp_path, monkeypatch):
+     db, _, _, _ = sandbox
+     batch, _, value = make_batch(tmp_path)
+-    original_import = apply_tool.import_seeds
+ 
+-    def interleave_after_commit(**kwargs):
+-        result = original_import(**kwargs)
+-        # Real independently committed replacement after import commit but before
+-        # the caller's separate `after = _states()` query.
++    def independent_replacement(path):
+         with sqlite3.connect(db) as con:
+             con.execute("DELETE FROM image_allowlist WHERE phash=?", (to_hex(value),))
+             con.execute(
+-                "INSERT INTO image_allowlist(id,phash,note,source,enabled,created_at,created_by) "
+-                "VALUES(9001,?,'independent-row','outside',1,'2026-09-20','outside')",
++                "INSERT INTO image_allowlist(id,phash,note,source,enabled,created_at,created_by) VALUES(9001,?,'independent-row','outside',1,'2026-09-20','outside')",
+                 (to_hex(value),),
+             )
+-        return result
++        raise PermissionError("synthetic export failure after external replacement")
+ 
+-    def fail_snapshot(*_args, **_kwargs):
+-        raise PermissionError("synthetic snapshot persistence failure")
+-
+-    monkeypatch.setattr(apply_tool, "import_seeds", interleave_after_commit)
+-    monkeypatch.setattr(apply_tool, "record_approval", fail_snapshot)
+-    with pytest.raises(PermissionError):
+-        apply(batch, db)
++    monkeypatch.setattr(authority, "export_snapshot", independent_replacement)
++    assert apply(batch, db) == 5
+     with sqlite3.connect(db) as con:
+-        row = con.execute(
++        assert con.execute(
+             "SELECT id,enabled,note FROM image_allowlist WHERE phash=?", (to_hex(value),)
+-        ).fetchone()
+-    assert row == (9001, 1, "independent-row"), (
+-        "Post-commit `after` captured a foreign row; compensation deleted that row."
+-    )
++        ).fetchone() == (9001, 1, "independent-row")
+ 
+ 
+ def test_late_json_commit_of_successful_rejection_cannot_be_overwritten(
+@@ -131,35 +115,34 @@
+     earlier, _, _ = make_batch(tmp_path, name="batch-earlier", verdict="撤回")
+     later, _, _ = make_batch(tmp_path, name="batch-later", verdict="撤回")
+     assert apply(initial, db) == 0
+-    snapshot = seed_tool.rejection_snapshot_path(db)
+-    later_future = []
+-    later_started = Event()
+-    original_record = apply_tool.record_rejection
+-    original_read = Path.read_bytes
++    original = authority.export_snapshot
++    started = Event()
++    futures = []
+ 
+     def run_later():
+-        later_started.set()
++        started.set()
+         return apply(later, db)
+ 
+     with ThreadPoolExecutor(max_workers=1) as pool:
+ 
+-        def controlled_record(db_arg, hash_arg, *, source, operator):
+-            if source == "review:batch-earlier":
+-                later_future.append(pool.submit(run_later))
+-                assert later_started.wait(10)
+-                # 让后一次审核真正到达决策锁：它必须**阻塞**在 A 的锁上，
+-                # 而不是"DB 已提交、只剩 JSON 写盘"地穿过 A 的补偿窗口。
++        def export(path):
++            if (
++                authority.read_authority(db)[to_hex(value)]["decision_source"]
++                == "review:batch-earlier"
++            ):
++                futures.append(pool.submit(run_later))
++                assert started.wait(10)
+                 time.sleep(0.3)
+-                raise PermissionError("synthetic earlier snapshot failure")
+-            return original_record(db_arg, hash_arg, source=source, operator=operator)
++                assert not futures[0].done(), (
++                    "later writer waits while the existing full decision lock is held"
++                )
++                raise PermissionError("synthetic earlier export failure")
++            return original(path)
+ 
+-        monkeypatch.setattr(apply_tool, "record_rejection", controlled_record)
+-        with pytest.raises(PermissionError):
+-            apply(earlier, db)
+-        assert not later_future[0].done(), "later review must wait for the decision lock"
+-        assert later_future[0].result(timeout=30) == 0
+-    raw = json.loads(original_read(snapshot).decode("utf-8"))
++        monkeypatch.setattr(authority, "export_snapshot", export)
++        assert apply(earlier, db) == 5
++        assert futures[0].result(timeout=30) == 0
++    raw = json.loads(seed_tool.rejection_snapshot_path(db).read_text(encoding="utf-8"))
+     assert raw[to_hex(value)]["state"] == "rejected"
+-    assert to_hex(value) not in enabled_hashes(db), (
+-        "Later full apply succeeded after JSON read; older compensation restored enabled=1."
+-    )
++    assert to_hex(value) not in enabled_hashes(db)
++    assert authority.read_authority(db)[to_hex(value)]["decision_version"] == 3
+--- original/test_r132_review_round11_identity_collisions.py
++++ adapted/test_r132_review_round11_identity_collisions.py
+@@ -1,4 +1,6 @@
+ # ruff: noqa: E402, I001, F401, F811, SIM105, S101
++# A2 REGISTERED ADAPTATION: original bytes are sealed under docs/evidence/authority-a2-20260922/legacy-probes/.
++# Historical nodeids are retained; current contracts and every changed AST node are registered in docs/2026-09-22-authority-a2-adaptations.md.
+ # Reviewer pack (round-11 review of 6505a79), promoted VERBATIM into the repo suite.
+ # Only this header was added; no assertion and no logic was changed.
+ """Synthetic C04/C05 follow-ups: exact identity ambiguity and accepted time precision.
+@@ -30,7 +32,9 @@
+ 
+ 
+ def write_snapshot(verifier, db, phash, entry):
+-    verifier.rejection_snapshot_path(db).write_text(json.dumps({phash: entry}), encoding="utf-8")
++    from tests.authority_fixtures import identity_snapshot
++
++    identity_snapshot(verifier, db, phash, entry)
+ 
+ 
+ def collision_batch(verifier, name, verdicts):
+--- original/test_r132_review_round12_c03_second_snapshot_commit.py
++++ adapted/test_r132_review_round12_c03_second_snapshot_commit.py
+@@ -1,4 +1,6 @@
+ # ruff: noqa: E402, I001, F401, F811, SIM105, S101
++# A2 REGISTERED ADAPTATION: original bytes are sealed under docs/evidence/authority-a2-20260922/legacy-probes/.
++# Historical nodeids are retained; current contracts and every changed AST node are registered in docs/2026-09-22-authority-a2-adaptations.md.
+ # Reviewer round-12 pack (166a1ab), from probes/images/test_c03_second_snapshot_commit.py.
+ #
+ # REGISTERED ADAPTATION (the only one; scheduler only):
+@@ -30,7 +32,7 @@
+ import pytest
+ 
+ from app.moderation.image_hash import to_hex
+-from scripts import apply_review_decisions as apply_tool
++from scripts import image_decision_authority as authority
+ from scripts import image_allowlist_seed as seed_tool
+ from tests.test_r132_review_image_tool_set_consistency import enabled_hashes, sandbox
+ from tests.test_r132_review_review_write_contract import apply, make_batch
+@@ -44,39 +46,39 @@
+     earlier, _, _ = make_batch(tmp_path, name="batch-earlier", verdict="撤回")
+     later, _, _ = make_batch(tmp_path, name="batch-later", verdict="撤回")
+     assert apply(initial, db) == 0
+-    snapshot = seed_tool.rejection_snapshot_path(db)
+-    later_future = []
+-    later_started = Event()
+-    original_record = apply_tool.record_rejection
+-    original_read = Path.read_bytes
++    original = authority.export_snapshot
++    started = Event()
++    futures = []
+ 
+     def run_later():
+-        later_started.set()
++        started.set()
+         return apply(later, db)
+ 
+     with ThreadPoolExecutor(max_workers=1) as pool:
+ 
+-        def controlled_record(db_arg, hash_arg, *, source, operator):
+-            if source == "review:batch-earlier":
+-                later_future.append(pool.submit(run_later))
+-                assert later_started.wait(10)
+-                # The later review must be waiting on the decision lock here: A holds
+-                # it across pre-state read -> DB change -> snapshot publish -> compensation.
++        def export(path):
++            if (
++                authority.read_authority(db)[to_hex(value)]["decision_source"]
++                == "review:batch-earlier"
++            ):
++                futures.append(pool.submit(run_later))
++                assert started.wait(10)
+                 time.sleep(0.3)
+-                raise PermissionError("synthetic earlier snapshot persistence failure")
+-            return original_record(db_arg, hash_arg, source=source, operator=operator)
++                assert not futures[0].done(), (
++                    "later writer waits while the existing full decision lock is held"
++                )
++                raise PermissionError("synthetic earlier export failure")
++            return original(path)
+ 
+-        monkeypatch.setattr(apply_tool, "record_rejection", controlled_record)
+-        with pytest.raises(PermissionError):
+-            apply(earlier, db)
+-        assert not later_future[0].done(), "later review must be blocked on the decision lock"
+-        assert later_future[0].result(timeout=30) == 0
++        monkeypatch.setattr(authority, "export_snapshot", export)
++        assert apply(earlier, db) == 5
++        assert futures[0].result(timeout=30) == 0
++    raw = json.loads(seed_tool.rejection_snapshot_path(db).read_text(encoding="utf-8"))
++    assert raw[to_hex(value)]["state"] == "rejected"
++    assert to_hex(value) not in enabled_hashes(db)
++    assert authority.read_authority(db)[to_hex(value)]["decision_version"] == 3
+ 
+-    raw = json.loads(original_read(snapshot).decode("utf-8"))
+-    assert raw[to_hex(value)]["state"] == "rejected"
+     output = capsys.readouterr().out
+-    assert "COMPENSATED_APPROVAL_ROLLBACK" in output
+-    assert output.count("IMPORT_OK") == 2  # Initial + later B; earlier A failed.
+-    assert to_hex(value) not in enabled_hashes(db), (
+-        f"Later review completed, but the older failed operation restored enabled=1. Output: {output}"
+-    )
++    assert "DECISIONS_COMMITTED_EXPORT_PENDING" in output
++    assert "COMPENSATED" not in output
++    assert output.count("IMPORT_OK") == 2
+--- original/test_r132_review_unmigrated_startup_boundary.py
++++ adapted/test_r132_review_unmigrated_startup_boundary.py
+@@ -1,4 +1,6 @@
+ # ruff: noqa: E402, I001, F401, F811
++# A2 REGISTERED ADAPTATION: original bytes are sealed under docs/evidence/authority-a2-20260922/legacy-probes/.
++# Historical nodeids are retained; current contracts and every changed AST node are registered in docs/2026-09-22-authority-a2-adaptations.md.
+ # Reviewer round-6 probe pack (85b0c0b), promoted VERBATIM into the repo suite.
+ # Only this header was added; no assertion and no logic was changed.
+ """Observed startup boundary, not permission to migrate a production database."""
+@@ -42,7 +44,7 @@
+         "import asyncio; from app.db import check_db_migrated; asyncio.run(check_db_migrated())",
+     )
+     assert check.returncode != 0
+-    assert "c9a1f4d27e30" in check.stderr and "d4b7c1e9a502" in check.stderr
++    assert "c9a1f4d27e30" in check.stderr and "e1c7d4b8a902" in check.stderr
+     cleanup = child(database, "-m", "app.reports.maintenance", "cleanup")
+     assert cleanup.returncode == 1, cleanup.stdout + cleanup.stderr
+     assert json.loads(cleanup.stdout)["error"] == "startup_or_metadata_failed"

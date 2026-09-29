@@ -79,7 +79,7 @@ FORBIDDEN_PATTERN_MARKERS = (
     "\\",
 )
 HIGH_THRESHOLD = 0.90
-HIGH_ACTIONS = ["recall", "mute", "warn"]
+HIGH_ACTIONS = ["recall"]
 
 
 def _utcnow() -> datetime:

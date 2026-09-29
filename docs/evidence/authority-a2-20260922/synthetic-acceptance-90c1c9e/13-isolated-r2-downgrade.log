@@ -1,0 +1,4 @@
+
+INFO  [alembic.runtime.migration] Context impl SQLiteImpl.
+INFO  [alembic.runtime.migration] Will assume non-transactional DDL.
+INFO  [alembic.runtime.migration] Running downgrade e1c7d4b8a902 -> d4b7c1e9a502, A2 additive decision authority; data backfill remains an explicit offline step.

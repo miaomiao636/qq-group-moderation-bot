@@ -1,0 +1,287 @@
+{
+  "task": "CAMPUS-SCOPE-20260922",
+  "sealed_at": "2026-09-22T04:03:36.124225+00:00",
+  "implementation_sha": "212488fb46a9b405bba4f3908b73d20a6223f138",
+  "deployed_sha": "8f4617edf6f73d8b98683994d575b022b9f2a0e4",
+  "base_sha": "6ef867aafea654e5e9f9ad667dc3ee17d664602f",
+  "local_validation": {
+    "source_sha": "212488fb46a9b405bba4f3908b73d20a6223f138",
+    "at": "2026-09-22T03:34:10.652372+00:00",
+    "runs": [
+      {
+        "sha": "212488fb46a9b405bba4f3908b73d20a6223f138",
+        "command": [
+          "<production .venv Python>",
+          "-m",
+          "pytest",
+          "-o",
+          "addopts=",
+          "-q",
+          "--tb=short"
+        ],
+        "environment": {
+          "PYTHONUTF8": "1",
+          "PYTHONIOENCODING": "utf-8"
+        },
+        "exit_code": 0,
+        "summary": "2275 passed, 4 skipped in 212.02s (0:03:32)",
+        "log_sha256": "81fe5def4026d30a575ee792c1a86ab45750e97d89524e09207cf52fca586c3a"
+      },
+      {
+        "sha": "212488fb46a9b405bba4f3908b73d20a6223f138",
+        "command": [
+          "<production .venv Python>",
+          "-m",
+          "pytest",
+          "tests",
+          "-k",
+          "r132_review",
+          "-o",
+          "addopts=",
+          "-q",
+          "--tb=short"
+        ],
+        "environment": {
+          "PYTHONUTF8": "1",
+          "PYTHONIOENCODING": "utf-8"
+        },
+        "exit_code": 0,
+        "summary": "262 passed, 2017 deselected in 18.48s",
+        "log_sha256": "d40e67581bc26b3ee7e247ef6253d8b8789cadab4a366bb9ae5066a51ca90366"
+      },
+      {
+        "sha": "212488fb46a9b405bba4f3908b73d20a6223f138",
+        "command": [
+          "<production .venv Python>",
+          "-m",
+          "ruff",
+          "check",
+          "app",
+          "tests",
+          "alembic",
+          "scripts"
+        ],
+        "at": "2026-09-22T03:25:22.990326+00:00",
+        "exit_code": 0,
+        "log_sha256": "82b3e6a6c090a57601d22943bd23fca9218d1031dbe5a7b754092f9a156b4f18",
+        "tail": [
+          "All checks passed!"
+        ]
+      },
+      {
+        "sha": "212488fb46a9b405bba4f3908b73d20a6223f138",
+        "command": [
+          "<production .venv Python>",
+          "-m",
+          "ruff",
+          "format",
+          "--check",
+          "app",
+          "tests",
+          "alembic",
+          "scripts"
+        ],
+        "at": "2026-09-22T03:25:23.066159+00:00",
+        "exit_code": 0,
+        "log_sha256": "967359e84cb4f61d5370dd8c04ba6aeadf54eda71b56570e49a0ed8f417d704b",
+        "tail": [
+          "357 files already formatted"
+        ]
+      },
+      {
+        "sha": "212488fb46a9b405bba4f3908b73d20a6223f138",
+        "command": [
+          "<production .venv Python>",
+          "-m",
+          "mypy",
+          "app"
+        ],
+        "at": "2026-09-22T03:25:24.152097+00:00",
+        "exit_code": 0,
+        "log_sha256": "e509cf06dfb5ef5f00cf2da26c7be255c93571e444f55faf9a6d027032226c31",
+        "tail": [
+          "Success: no issues found in 112 source files"
+        ]
+      },
+      {
+        "sha": "212488fb46a9b405bba4f3908b73d20a6223f138",
+        "command": [
+          "<production .venv Python>",
+          "-m",
+          "pytest",
+          "tests/test_campus_source_policy.py",
+          "-o",
+          "addopts=",
+          "-q"
+        ],
+        "at": "2026-09-22T03:25:25.375323+00:00",
+        "exit_code": 0,
+        "log_sha256": "d93b04de41cb54b5c8b03bbe1d516d0f90fa22457940b8992d21e1b1e2a3c628",
+        "tail": [
+          ".....................                                                    [100%]",
+          "21 passed in 0.75s"
+        ]
+      }
+    ],
+    "initial_environment_failure": "First full run set PYTHONIOENCODING=utf-8 without PYTHONUTF8; GBK subprocess reader errors caused 4 migration-test failures and 32 warnings. Identical source was rerun with PYTHONUTF8=1, all passed. Original failure log retained."
+  },
+  "deployed_ci": {
+    "at": "2026-09-22T04:01:24.839498+00:00",
+    "head_sha": "8f4617edf6f73d8b98683994d575b022b9f2a0e4",
+    "url": "https://github.com/miaomiao636/qq-group-moderation-bot/actions/runs/35684323434",
+    "conclusion": "success",
+    "jobs": [
+      {
+        "name": "Lint, Type-check & Test (ubuntu-latest)",
+        "id": 106607804294,
+        "conclusion": "success"
+      },
+      {
+        "name": "Lint, Type-check & Test (windows-latest)",
+        "id": 106607804442,
+        "conclusion": "success"
+      },
+      {
+        "name": "Runtime deps regression (clean install)",
+        "id": 106607804540,
+        "conclusion": "success"
+      }
+    ],
+    "pytest_summary_lines": [
+      "Lint, Type-check & Test (ubuntu-latest)\tTest (pytest)\t2026-09-22T03:49:09.6477283Z 2276 passed, 3 skipped in 202.34s (0:03:22)",
+      "Lint, Type-check & Test (windows-latest)\tTest (pytest)\t2026-09-22T03:55:11.3596243Z 2276 passed, 3 skipped in 551.57s (0:09:11)"
+    ],
+    "checkout_sha_candidates": [
+      "f9149dc8d93b42f663a567237c0dd9a36b34f783"
+    ],
+    "metadata_sha256": "e76d001dfefb9ee3e447f349f2e05dccf36e439e85b2f302529ad0d9400b93a1",
+    "log_sha256": "a699b1411664f0745a90469d6e1aa273f25c2d290b83131f2dfb80f8e92a4c20",
+    "retrieval_commands": [
+      [
+        "gh",
+        "run",
+        "view",
+        "35684323434",
+        "--json",
+        "headSha,status,conclusion,url,jobs"
+      ],
+      [
+        "gh",
+        "run",
+        "view",
+        "35684323434",
+        "--log"
+      ]
+    ]
+  },
+  "deployment": {
+    "command": "<production .venv Python> -B <private deployment directory>/deploy.py preflight; elevated pwsh -NoProfile -File <private deployment directory>/deploy-services.ps1; <production .venv Python> -B <private deployment directory>/deploy.py verify",
+    "execution_sha": "8f4617edf6f73d8b98683994d575b022b9f2a0e4",
+    "script_sha256": "c2fa4efa93274c12c6505b14f339e56784be5c0778a3dbd0a968ecc9db7111f1",
+    "service_script_sha256": "37952456d44e0bcb68aebcbaf83aca497017e2a44962dcac49b739c2c523ab45",
+    "backup_sha256": "10dcb9399672984ce1af0be1d88d79d840323cf7d27a7d8786cd7207d7e19b5a",
+    "backup_integrity": "ok",
+    "revision": "e1c7d4b8a902",
+    "timeline": [
+      {
+        "Stage": "quiet",
+        "Time": "2026-09-22T03:59:59.7926418Z"
+      },
+      {
+        "Stage": "stopped QQBotRuntime",
+        "Time": "2026-09-22T04:00:00.1785755Z"
+      },
+      {
+        "Stage": "stopped QQBotWeb",
+        "Time": "2026-09-22T04:00:01.5845652Z"
+      },
+      {
+        "Stage": "backup",
+        "Time": "2026-09-22T04:00:03.1892833Z"
+      },
+      {
+        "Stage": "configure",
+        "Time": "2026-09-22T04:00:04.5052951Z"
+      },
+      {
+        "Stage": "started QQBotWeb",
+        "Time": "2026-09-22T04:00:06.1890529Z"
+      },
+      {
+        "Stage": "started QQBotRuntime",
+        "Time": "2026-09-22T04:00:07.8586872Z"
+      }
+    ],
+    "services": [
+      {
+        "Name": "QQBotRuntime",
+        "State": "Running",
+        "ProcessId": 18516
+      },
+      {
+        "Name": "QQBotWeb",
+        "State": "Running",
+        "ProcessId": 28556
+      }
+    ],
+    "prompt_version": "t204-v17",
+    "builtin_version": "t204-v17",
+    "rules_sha256": "0aec750444770dd64ba47b56ddf883ba651ff7cb7b6a4bc13823d5be21cc0cc8",
+    "policy_except_prompt_version_unchanged": true,
+    "health_status": 200,
+    "onebot_state": "ready",
+    "onebot_connected": true,
+    "natural_new_records": {
+      "onebot_inbox": 24,
+      "onebot_inbox_states": {
+        "DONE": 24
+      },
+      "shadow_decisions": 24,
+      "action_intents": 6,
+      "action_intents_states": {
+        "SUCCEEDED": 6
+      }
+    },
+    "vision_observations": [
+      {
+        "prompt_version": "t204-v17",
+        "new_source_field_present": true,
+        "campus_confirmed": false
+      },
+      {
+        "prompt_version": "t204-v17",
+        "new_source_field_present": true,
+        "campus_confirmed": false
+      },
+      {
+        "prompt_version": "t204-v17",
+        "new_source_field_present": true,
+        "campus_confirmed": false
+      },
+      {
+        "prompt_version": "t204-v17",
+        "new_source_field_present": true,
+        "campus_confirmed": false
+      },
+      {
+        "prompt_version": "t204-v17",
+        "new_source_field_present": true,
+        "campus_confirmed": false
+      },
+      {
+        "prompt_version": "t204-v17",
+        "new_source_field_present": true,
+        "campus_confirmed": false
+      }
+    ],
+    "observed_at": "2026-09-22T04:03:26.319154+00:00",
+    "test_message_sent": false,
+    "historical_replay": false
+  },
+  "unverified": [
+    "Actual screenshot accuracy with remote model",
+    "WeChat AppID authentication",
+    "Long-term visual source accuracy and forgery resistance"
+  ],
+  "adaptations": "original-tests.json"
+}

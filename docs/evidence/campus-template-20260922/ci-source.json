@@ -1,0 +1,81 @@
+{
+  "at": "2026-09-22T08:16:10.195130+00:00",
+  "run_id": "35702856001",
+  "head_sha": "ff4d1a2aa79f3ff2f6e88a1ef5acafe262fc731e",
+  "checkout_sha": "07eea15c61d69ca899b284831f2f1968e75094d6",
+  "checkout_parents": [
+    "68a94b9602e6bb4ba1e4aab65f1ea01b4b2c26c6",
+    "ff4d1a2aa79f3ff2f6e88a1ef5acafe262fc731e"
+  ],
+  "conclusion": "success",
+  "url": "https://github.com/miaomiao636/qq-group-moderation-bot/actions/runs/35702856001",
+  "evidence_commands": [
+    "gh run view 35702856001 --json headSha,status,conclusion,jobs,url,startedAt,updatedAt",
+    "gh run view 35702856001 --job <job_id> --log"
+  ],
+  "run_json_sha256": "dcdcb93e69886c1789e1dcc753a47d9cff86c90ac4a5e12b931c5a16c157b831",
+  "checkout_commit_json_sha256": "009e405386ae471cd1e1aa82ed4c05c7387c8e2a8a680b5ee49a34ebc8df049d",
+  "runtime_dev_dependency_absence_assertion_verified": true,
+  "private_summary_sha256": "7a8abf4a0de37df72e5f3c50cbf2b66a4e1d8e6bd141f32803fe7aa988fd636e",
+  "jobs": [
+    {
+      "name": "Runtime deps regression (clean install)",
+      "job_id": "106664719528",
+      "conclusion": "success",
+      "url": "https://github.com/miaomiao636/qq-group-moderation-bot/actions/runs/35702856001/job/106664719528",
+      "checkout_sha": "07eea15c61d69ca899b284831f2f1968e75094d6",
+      "log_sha256": "5f461133af08daaf2de2c04554e23e75479f71576f67a17556f55815a79a5588",
+      "commands": [
+        "uv sync --locked --no-dev",
+        "uv run --no-sync python -c \"from app.main import app; print('runtime import OK')\"",
+        "if uv run --no-sync python -c \"import pytest\" 2>/dev/null; then\n  echo \"FAIL: dev 依赖 pytest 被误装回运行时环境\"\n  exit 1\nfi\necho \"OK: dev 依赖未安装，运行时环境干净\""
+      ],
+      "results": [
+        "runtime import OK",
+        "pytest absent as expected"
+      ]
+    },
+    {
+      "name": "Lint, Type-check & Test (windows-latest)",
+      "job_id": "106664719755",
+      "conclusion": "success",
+      "url": "https://github.com/miaomiao636/qq-group-moderation-bot/actions/runs/35702856001/job/106664719755",
+      "checkout_sha": "07eea15c61d69ca899b284831f2f1968e75094d6",
+      "log_sha256": "74acbf03780713d3b118a03bbb8b70e7dec548f070c535323cc81dc54cf8ffb6",
+      "commands": [
+        "uv sync --locked --all-groups",
+        "uv run ruff check app tests alembic",
+        "uv run ruff format --check app tests alembic",
+        "uv run mypy app",
+        "uv run pytest"
+      ],
+      "results": [
+        "All checks passed!",
+        "334 files already formatted",
+        "Success: no issues found in 113 source files",
+        "2334 passed, 3 skipped"
+      ]
+    },
+    {
+      "name": "Lint, Type-check & Test (ubuntu-latest)",
+      "job_id": "106664719762",
+      "conclusion": "success",
+      "url": "https://github.com/miaomiao636/qq-group-moderation-bot/actions/runs/35702856001/job/106664719762",
+      "checkout_sha": "07eea15c61d69ca899b284831f2f1968e75094d6",
+      "log_sha256": "d4f85d31d7c1937dd0f27404459e768a6b8e7f5577079ee8ce00d48dacbf962a",
+      "commands": [
+        "uv sync --locked --all-groups",
+        "uv run ruff check app tests alembic",
+        "uv run ruff format --check app tests alembic",
+        "uv run mypy app",
+        "uv run pytest"
+      ],
+      "results": [
+        "All checks passed!",
+        "334 files already formatted",
+        "Success: no issues found in 113 source files",
+        "2334 passed, 3 skipped"
+      ]
+    }
+  ]
+}

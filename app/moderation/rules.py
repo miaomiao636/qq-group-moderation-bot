@@ -2,7 +2,7 @@
 
 置信度模型（可解释、确定性，不使用大模型自由文本控制处罚）：
 - 每条命中规则贡献 confidence_delta；总分 >= HIGH_THRESHOLD(0.90) 且命中
-  两条以上独立信号（或命中明确黑名单词）=> violation_high（建议撤回+禁言+警告）；
+  两条以上独立信号（或命中明确黑名单词）=> violation_high（仅建议撤回）；
 - 有信号但未达阈值 => record_only（只记录转人工）；
 - 无信号 => allow。
 
@@ -19,9 +19,14 @@ from typing import TYPE_CHECKING, Any
 from app.core.contracts import StandardMessage
 from app.moderation.decision import (
     ALLOWLIST_ALLOW_RULE_ID,
+    ALLOWLIST_MEMBER_ALLOW_RULE_ID,
     ALLOWLIST_NON_EXEMPT_CATEGORIES,
     CERTIFICATE_AD_ALLOW_RULE_ID,
+    FORWARD_RECORD_RECALL_RULE_ID,
+    FULL_ALLOW_NO_UPGRADE_RULE_IDS,
+    GROUP_CARD_RECALL_RULE_ID,
     PROTECTED_CARD_ALLOW_RULE_ID,
+    WECHAT_MINIPROGRAM_RECALL_RULE_ID,
     ModerationDecision,
     RuleHit,
 )
@@ -230,10 +235,10 @@ SOFT_SIGNALS: tuple[str, ...] = (
 )
 
 FLOOD_WINDOW_SECONDS = 60.0
-FLOOD_MAX_MESSAGES = 3  # 负责人确认：连续发3条一模一样即撤回+禁言
+FLOOD_MAX_MESSAGES = 3  # 负责人确认：连续发3条一模一样即撤回
 FLOOD_CONFIDENCE = 0.95  # 刷屏为负责人明确的确定性规则，单条规则即高置信
 
-_HIGH_ACTIONS: tuple[str, ...] = ("recall", "mute", "warn")  # 永远不含 kick
+_HIGH_ACTIONS: tuple[str, ...] = ("recall",)
 
 
 def _fingerprint(msg: StandardMessage) -> str:
@@ -378,8 +383,25 @@ def _has_ad_intent(text: str) -> bool:
     return any(marker in text for marker in AD_INTENT_MARKERS)
 
 
+def _match_allow_member(
+    provider: str, external_user_id: str, members: frozenset[tuple[str, str]]
+) -> str | None:
+    """成员白名单精确匹配 ``(provider, QQ号)``：命中返回 QQ 号，未命中返回 None。
+
+    纯函数、零 DB 依赖。**绝不做归一化**——QQ 号是精确身份，与关键词白名单的
+    谐音/大小写变体匹配语义完全不同（权威实现同语义见
+    ``app.moderation.allowlist.match_allowlist_member``）。
+    """
+    user_id = str(external_user_id).strip()
+    if not user_id or not members:
+        return None
+    return user_id if (str(provider), user_id) in members else None
+
+
 def _is_share_source_allowed(msg: StandardMessage) -> bool:
-    if msg.kind != "share_card":
+    # 主审二轮（P2）：与 D-032/D-038 同源——按**卡片结构**判断，而不是顶部 kind。
+    # 否则"允许来源的卡片 + 一句普通文字"（kind=mixed）会被当成未知来源卡片转人工。
+    if msg.share_card is None:
         return False
     card = msg.share_card
     source_text = " ".join(
@@ -442,12 +464,14 @@ class TextRuleEngine:
         extra_blacklist: tuple[str, ...] = (),
         rule_snapshot: RuleSnapshot | None = None,
         allow_terms: frozenset[str] | None = None,
+        allow_members: frozenset[tuple[str, str]] | None = None,
     ) -> None:
         self._high_threshold = high_threshold
         self._blacklist = BLACKLIST_EXPLICIT + tuple(extra_blacklist)
         self.frequency = frequency_tracker or FrequencyTracker()
         self._rule_snapshot = rule_snapshot
         self._allow_terms: frozenset[str] = allow_terms or frozenset()
+        self._allow_members: frozenset[tuple[str, str]] = allow_members or frozenset()
 
     def set_rule_snapshot(self, rule_snapshot: RuleSnapshot | None) -> None:
         """替换运行时动态规则快照，同时保留刷屏等进程内状态。"""
@@ -456,6 +480,10 @@ class TextRuleEngine:
     def set_allowlist(self, allow_terms: frozenset[str]) -> None:
         """替换运行时全局白名单（每消息从库直读；其他进程内状态保留）。"""
         self._allow_terms = allow_terms
+
+    def set_allowlist_members(self, allow_members: frozenset[tuple[str, str]]) -> None:
+        """替换运行时成员白名单（(provider, QQ号) 精确集合；每消息从库直读）。"""
+        self._allow_members = allow_members
 
     def evaluate(
         self,
@@ -486,7 +514,12 @@ class TextRuleEngine:
         actions: list[str] = []
         reason = ""
 
-        share_card = msg.kind == "share_card"
+        # 主审 F04（2026-09-18）：卡片判定不能只看顶层 kind——"文字/图片 + 卡片"的
+        # 混合消息 kind=mixed，会让 D-038 群名片撤回与 R006 未知来源卡片**双双被绕过**
+        # （实测：群卡前加一句"看看"即 allow）。改为按**卡片结构**判定（parser 已把
+        # 卡片的 ShareCardInfo 挂到 msg.share_card），覆盖 text+卡 / image+卡 / 多卡。
+        # 注意：**不是**"所有 mixed 都撤回"——仅当消息确实含卡片结构时才走卡片分支。
+        share_card = msg.kind == "share_card" or msg.share_card is not None
         share_source_allowed = _is_share_source_allowed(msg)
         if share_card and not share_source_allowed:
             hits.append(
@@ -503,7 +536,35 @@ class TextRuleEngine:
         has_hard_blacklist = any(h.rule_id == "R001" for h in hits)
 
         allowlist_hit = _match_allowlist(msg.text, self._allow_terms)
-        if protected and share_card:
+        member_hit = _match_allow_member(msg.provider, msg.external_user_id, self._allow_members)
+        forward_record = msg.kind == "forward_record" or any(
+            seg.kind == "forward_record" for seg in msg.segments
+        )
+        group_card = share_card and msg.share_card is not None and msg.share_card.is_group_card
+        wechat_card = (
+            share_card and msg.share_card is not None and msg.share_card.is_wechat_miniprogram
+        )
+        if member_hit:
+            # 负责人 2026-09-18（成员白名单）：优先级最高（高于关键词白名单与保护角色
+            # 分支），**全类别完全放行**——负责人明确选择"不守 B-2 底线"（诈骗/色情/
+            # 暴力/刷屏同样放行）。已纳入 POLICY_ALLOW_RULE_IDS：AI/动态规则/媒体层
+            # 一律不得升级或转人工（防 R-113 式事故复发）。
+            verdict = "allow"
+            confidence = 0.0
+            actions = []
+            reason = "成员白名单命中，全部放行"
+            hits.append(
+                RuleHit(
+                    rule_id=ALLOWLIST_MEMBER_ALLOW_RULE_ID,
+                    rule_name="allowlist_member",
+                    category="ad",
+                    confidence_delta=0.0,
+                    evidence_masked=(
+                        f"成员白名单命中：{member_hit}（全类别完全放行，负责人 2026-09-18）"
+                    ),
+                )
+            )
+        elif protected and share_card:
             # 负责人 2026-09-16 口径：群主/管理员分享的卡片**完全放行**
             # （不处罚、不转人工）。AI/动态规则/媒体层据此标记不得升级。
             verdict = "allow"
@@ -522,6 +583,60 @@ class TextRuleEngine:
         elif protected:
             verdict = "record_only"
             reason = "保护角色（群主/管理员）：命中信号仅记录，不处罚"
+        elif forward_record:
+            # 负责人 2026-09-18：合并转发（聊天记录）**一律撤回**——无需展开内容
+            # （不调用 get_forward_msg），纯本地确定性规则。保护角色与成员白名单已在
+            # 上面分支排除。高置信违规只建议撤回，与实际动作保持一致。
+            verdict = "violation_high"
+            confidence = max(confidence, 0.95)
+            actions = list(_HIGH_ACTIONS)
+            reason = "合并转发（聊天记录）一律撤回"
+            hits.append(
+                RuleHit(
+                    rule_id=FORWARD_RECORD_RECALL_RULE_ID,
+                    rule_name="forward_record",
+                    category="ad",
+                    confidence_delta=0.0,
+                    evidence_masked=(
+                        "合并转发一律撤回（负责人 2026-09-18）；群主/管理员与成员白名单成员不撤回"
+                    ),
+                )
+            )
+        elif group_card:
+            # 负责人 2026-09-18：群名片（分享群卡片）**一律撤回**。识别不出来为群
+            # 名片的卡片仍走下方既有分支（允许来源放行 / 未知来源转人工），避免把
+            # 音乐、新闻、小程序卡片误撤；真实样本到位后可收窄识别条件。
+            verdict = "violation_high"
+            confidence = max(confidence, 0.95)
+            actions = list(_HIGH_ACTIONS)
+            reason = "群名片（分享群卡片）一律撤回"
+            hits.append(
+                RuleHit(
+                    rule_id=GROUP_CARD_RECALL_RULE_ID,
+                    rule_name="group_card",
+                    category="ad",
+                    confidence_delta=0.0,
+                    evidence_masked=(
+                        "群名片一律撤回（负责人 2026-09-18）；群主/管理员与成员白名单成员不撤回"
+                    ),
+                )
+            )
+        elif wechat_card:
+            # CARD-RECALL-20260923: explicit owner policy; protected roles and
+            # member allowlisting above remain authoritative. Image QR policy is separate.
+            verdict = "violation_high"
+            confidence = max(confidence, 0.95)
+            actions = list(_HIGH_ACTIONS)
+            reason = "微信小程序分享卡一律撤回"
+            hits.append(
+                RuleHit(
+                    rule_id=WECHAT_MINIPROGRAM_RECALL_RULE_ID,
+                    rule_name="wechat_miniprogram_card",
+                    category="ad",
+                    confidence_delta=0.0,
+                    evidence_masked="微信小程序分享卡撤回；群主/管理员与成员白名单成员不撤回",
+                )
+            )
         elif (
             allowlist_hit
             and (category is None or category == "ad")
@@ -639,9 +754,10 @@ class TextRuleEngine:
             return base
         # 2026-09-16 口径 A：办证豁免（allow）时，办证类动态规则只记录——
         # 不得升级为违规或转人工（R-113 事故防再犯；非办证类显式 DR 照常生效）。
-        # D-032 群主/管理员卡片：全类别不升级（负责人确认的完全放行）。
+        # D-032 群主/管理员卡片 + D-037 成员白名单：全类别完全放行，
+        # 任何动态规则（含显式 DR）都不得升级或转人工，仅并入证据。
         if base.verdict == "allow" and any(
-            h.rule_id == PROTECTED_CARD_ALLOW_RULE_ID for h in base.rule_hits
+            h.rule_id in FULL_ALLOW_NO_UPGRADE_RULE_IDS for h in base.rule_hits
         ):
             return base.model_copy(
                 update={

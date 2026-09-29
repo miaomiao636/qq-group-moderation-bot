@@ -45,7 +45,7 @@ def primary_high(
             )
         ],
         reason="主通道判定",
-        recommended_actions=["recall", "mute", "warn"],
+        recommended_actions=["recall"],
     )
 
 
@@ -63,7 +63,7 @@ def test_review_gate_passes_blacklist_evidence() -> None:
     text = "招募兼职刷单，日结，加我微信 abc12345"
     decision = gate.review(make_msg(text), primary_high(text, ["刷单"], rule_id="R001"))
     assert decision.verdict == "violation_high"
-    assert set(decision.recommended_actions) == {"recall", "mute", "warn"}
+    assert decision.recommended_actions == ["recall"]
 
 
 def test_review_gate_passes_contact_evidence() -> None:

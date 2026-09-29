@@ -1,0 +1,230 @@
+{
+  "execution_sha": "06324fedab4baf8d0ee14e09991c5385627a01ed",
+  "observed_utc": "2026-09-22T09:46:04.750789+00:00",
+  "commands": [
+    "git rev-parse HEAD",
+    "PowerShell here-string containing ops_snapshot.py source | .venv/Scripts/python.exe -B -"
+  ],
+  "script_sha256": "1f9b867363f7ad4cc8736bbd13de46a51add78127f9a0e6096a59cbf48b41fb0",
+  "raw_evidence_sha256": {
+    "summary.json": "8c8e17533728e8f98730ec065fb1b7266263064ddbf92d8bb3439f5bb9dab207",
+    "windows-state.json": "75b21cf8917465ee7efc1f9e58ea49088d7ca2e33af25a9b51b778d9672d4a81",
+    "followup.json": "734d8585fb594b4507fdb94b7b935101f841b3cf81d3f89bfe037ae6a6179507"
+  },
+  "services": [
+    {
+      "Name": "QQBotRuntime",
+      "State": "Running",
+      "StartMode": "Auto",
+      "ProcessId": 29184,
+      "StartName": "LocalSystem"
+    },
+    {
+      "Name": "QQBotWeb",
+      "State": "Running",
+      "StartMode": "Auto",
+      "ProcessId": 30596,
+      "StartName": "LocalSystem"
+    }
+  ],
+  "rotation": [
+    {
+      "service": "QQBotWeb",
+      "rotate_files": 1,
+      "rotate_bytes": 10485760,
+      "rotate_online": 1,
+      "repo_match": true
+    },
+    {
+      "service": "QQBotRuntime",
+      "rotate_files": 1,
+      "rotate_bytes": 10485760,
+      "rotate_online": 1,
+      "repo_match": true
+    }
+  ],
+  "tasks": [
+    {
+      "name": "QQBotAutoCleanup",
+      "path": "\\",
+      "state": "Ready",
+      "last_run": "2026-09-22T04:00:00+08:00",
+      "last_result": 0,
+      "next_run": "2026-09-23T04:00:00+08:00",
+      "missed": 0,
+      "interval": [
+        null
+      ]
+    }
+  ],
+  "health": {
+    "status": "ok",
+    "onebot": {
+      "state": "ready",
+      "connected": true,
+      "login_state": "online",
+      "connect_count": 1,
+      "disconnect_count": 0,
+      "last_connect_at": "2026-09-22T09:17:49.961060+00:00",
+      "last_disconnect_at": null,
+      "last_heartbeat_at": "2026-09-22T09:45:45.810495+00:00",
+      "heartbeat_age_seconds": 19.3,
+      "heartbeat_timeout_seconds": 90.0,
+      "last_event_at": "2026-09-22T09:45:36.757392+00:00",
+      "queue_backlog": 0,
+      "queue_max": 500,
+      "storage_available": true,
+      "processed_total": 60,
+      "skipped_total": 0,
+      "failed_total": 0,
+      "invalid_total": 0,
+      "ignored_total": 45
+    },
+    "media_storage": {
+      "state": "ok",
+      "used_bytes": 2618773894,
+      "quota_bytes": 21474836480,
+      "remaining_bytes": 18856062586,
+      "disk_free_bytes": 746119778304,
+      "warning_percent": 80
+    }
+  },
+  "database": {
+    "revision": [
+      [
+        "e1c7d4b8a902"
+      ]
+    ],
+    "settings": [
+      [
+        "auto_cleanup_enabled",
+        "1"
+      ],
+      [
+        "image_decision_authority_version",
+        "1"
+      ],
+      [
+        "last_cleanup_at",
+        "2026-09-21T20:00:05.532190+00:00"
+      ],
+      [
+        "last_cleanup_error",
+        ""
+      ],
+      [
+        "last_cleanup_result",
+        "{\"action_logs_deleted\":0,\"ai_cache_deleted\":825,\"ai_usage_logs_deleted\":0,\"candidate_patterns_purged\":0,\"candidates_expired\":0,\"case_reasons_purged\":0,\"cases_archived\":0,\"cases_cleanup_deferred\":0,\"cases_purged\":0,\"feedback_content_purged\":0,\"inbox_payloads_purged\":0,\"inbox_records_deleted\":0,\"managed_copy_bytes_freed\":0,\"managed_copy_dirs_removed\":0,\"managed_copy_files_deleted\":0,\"media_files_deleted\":0,\"notification_deliveries_deleted\":0,\"notification_notices_deleted\":0,\"processed_events_deleted\":0,\"shadow_content_purged\":0,\"violation_evidence_purged\":0,\"violation_records_purged\":0,\"violation_snapshots_purged\":0}"
+      ],
+      [
+        "last_cleanup_status",
+        "succeeded"
+      ],
+      [
+        "runtime_emergency_stop",
+        "true"
+      ]
+    ],
+    "cases": [
+      [
+        "CLOSED",
+        1,
+        "2026-09-14 09:28:56.575554",
+        "2026-09-14 09:28:56.575554"
+      ],
+      [
+        "PENDING_REVIEW",
+        892,
+        "2026-09-14 07:04:47.387214",
+        "2026-09-22 05:15:49.752586"
+      ]
+    ]
+  },
+  "storage": {
+    "media": {
+      "files": 11026,
+      "bytes": 2618773894,
+      "links_skipped": 0,
+      "errors": 0,
+      "oldest_mtime_utc": "2026-09-08T12:02:33.308393+00:00",
+      "newest_mtime_utc": "2026-09-22T09:45:37.472802+00:00"
+    },
+    "backups": {
+      "files": 20,
+      "bytes": 906642375,
+      "links_skipped": 0,
+      "errors": 0,
+      "oldest_mtime_utc": "2026-09-08T11:55:41.851950+00:00",
+      "newest_mtime_utc": "2026-09-22T09:17:21.984299+00:00"
+    },
+    "data_total": {
+      "files": 11881,
+      "bytes": 3849147556,
+      "links_skipped": 0,
+      "errors": 0,
+      "oldest_mtime_utc": "2026-08-14T03:05:34+00:00",
+      "newest_mtime_utc": "2026-09-22T09:45:58.285840+00:00"
+    }
+  },
+  "db_files": {
+    "moderation.db": {
+      "bytes": 117374976,
+      "mtime_utc": "2026-09-22T09:43:03.414705+00:00"
+    },
+    "moderation.db-wal": {
+      "bytes": 4276592,
+      "mtime_utc": "2026-09-22T09:45:58.285840+00:00"
+    },
+    "moderation.db-shm": {
+      "bytes": 32768,
+      "mtime_utc": "2026-09-22T09:17:25.029885+00:00"
+    }
+  },
+  "logs": {
+    "files": 14,
+    "bytes": 4742134,
+    "largest_bytes": 4307518,
+    "active_known_files": {
+      "runner.err.log": 0,
+      "runner.out.log": 55790,
+      "service_QQBotRuntime.err.log": 165575,
+      "service_QQBotRuntime.log": 155105,
+      "service_QQBotWeb.err.log": 45476,
+      "service_QQBotWeb.log": 4307518
+    }
+  },
+  "external_backup": {
+    "path": "E:/qqbot-backups",
+    "files": 3,
+    "bytes": 50892800,
+    "newest_mtime_utc": "2026-09-18T06:34:23.9389218Z",
+    "db_files": 1,
+    "db_bytes": 50860032,
+    "revision": "b8d4f2a05e31",
+    "quick_check": "ok",
+    "D_disk_number": 0,
+    "E_disk_number": 1,
+    "limitations": "Different physical local disk, not a verified off-machine copy; no current-revision restore test performed",
+    "commands": [
+      "Get-ChildItem -LiteralPath E:/qqbot-backups -File (metadata aggregation)",
+      "Get-Partition -DriveLetter D,E | Select DriveLetter,DiskNumber,Size",
+      "sqlite3.connect(<E backup URI>+'?mode=ro',uri=True); PRAGMA query_only=ON; SELECT version_num FROM alembic_version; PRAGMA quick_check"
+    ]
+  },
+  "task_discovery_scope": "Get-ScheduledTask; match TaskName+TaskPath+Actions.Execute+Actions.Arguments against qq.?bot|qq-group-moderation|ops[_-]?probe|health[_-]?probe|notifications.probe|CodeBuddy|D:\\\\QQ; only QQBotAutoCleanup matched",
+  "loaded_version_receipt": {
+    "source": "C:\\Users\\81596\\AppData\\Local\\QQBotDeploy\\campus-template-deploy-20260922-02\\live-verified.json",
+    "sha256": "0ca9f97a2013df72326d60d65c3b8445971319a55bbe3fa8138e7f073cf5290b",
+    "execution_sha": "06324fedab4baf8d0ee14e09991c5385627a01ed",
+    "prompt_version": "t204-v18",
+    "health_status": 200,
+    "command": [
+      "C:/Users/81596/AppData/Local/QQBotDeploy/campus-template-deploy-20260922-02/deploy.py",
+      "verify"
+    ],
+    "at": "2026-09-22T09:21:06.527148+00:00"
+  },
+  "limitations": "Live metadata-only inventory; mtime is not retention authority. No backup contents, encryption, restoreability or off-device copies verified.",
+  "production_mutations": false,
+  "raw_member_or_message_content_exported": false
+}

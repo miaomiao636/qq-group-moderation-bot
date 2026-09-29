@@ -13,7 +13,6 @@ from __future__ import annotations
 from app.adapters.qq_official.actions import ActionNotConfiguredError, OfficialActionAdapter
 from app.adapters.qq_official.auth import TokenManager
 from app.config import Settings
-from app.core.contracts import ModerationActionClient
 
 __all__ = [
     "ActionNotConfiguredError",
@@ -27,9 +26,11 @@ def official_client_configured(settings: Settings) -> bool:
     return bool(settings.qq_app_id.strip() and settings.qq_app_secret.strip())
 
 
-def build_official_action_client(settings: Settings) -> ModerationActionClient:
+def build_official_action_client(settings: Settings) -> OfficialActionAdapter:
     """构建官方动作客户端；缺少凭据时抛 ``ActionNotConfiguredError``。"""
     if not official_client_configured(settings):
         raise ActionNotConfiguredError("缺少 QQ_APP_ID / QQ_APP_SECRET，官方动作出口未配置")
     token_manager = TokenManager(settings.qq_app_id, settings.qq_app_secret)
-    return OfficialActionAdapter(token_manager, api_base=settings.qq_api_base)
+    return OfficialActionAdapter(
+        token_manager, api_base=settings.qq_api_base, owns_token_manager=True
+    )

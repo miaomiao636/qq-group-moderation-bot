@@ -232,7 +232,7 @@ async def test_unrouted_group_keeps_official_behavior() -> None:
             settings=_official_settings(),
         )
 
-    assert [call[0] for call in official.calls] == ["recall", "mute", "warn"]
-    assert [i.status for i in intents] == ["SUCCEEDED", "SUCCEEDED", "SUCCEEDED"]
+    assert [call[0] for call in official.calls] == ["recall"]
+    assert [i.status for i in intents] == ["SUCCEEDED"]
     assert intents[0].provider == "qq_official"
     assert intents[0].external_group_id == group

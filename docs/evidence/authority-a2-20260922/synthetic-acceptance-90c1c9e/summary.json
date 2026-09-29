@@ -1,0 +1,424 @@
+{
+  "01-legacy-schema": {
+    "command": [
+      "D:\\CodeBuddy工作空间\\CB 项目\\qq-group-moderation-bot\\.venv\\Scripts\\python.exe",
+      "-B",
+      "C:\\Users\\<local-user>\\AppData\\Local\\Temp\\qqbot-a2-frozen-acceptance-7ae7d444ffc7\\a2_acceptance.py",
+      "--child",
+      "migrate",
+      "C:\\Users\\<local-user>\\AppData\\Local\\Temp\\qqbot-a2-frozen-acceptance-7ae7d444ffc7\\run-90c1c9e5d7cc-af07e34e",
+      "C:\\Users\\<local-user>\\AppData\\Local\\Temp\\qqbot-a2-frozen-acceptance-7ae7d444ffc7\\run-90c1c9e5d7cc-af07e34e\\source-new",
+      "C:\\Users\\<local-user>\\AppData\\Local\\Temp\\qqbot-a2-frozen-acceptance-7ae7d444ffc7\\run-90c1c9e5d7cc-af07e34e\\working\\moderation.db",
+      "upgrade",
+      "d4b7c1e9a502"
+    ],
+    "result": {
+      "revision": "d4b7c1e9a502"
+    },
+    "returncode": 0
+  },
+  "02-synthetic-wal-backup": {
+    "command": [
+      "D:\\CodeBuddy工作空间\\CB 项目\\qq-group-moderation-bot\\.venv\\Scripts\\python.exe",
+      "-B",
+      "C:\\Users\\<local-user>\\AppData\\Local\\Temp\\qqbot-a2-frozen-acceptance-7ae7d444ffc7\\a2_acceptance.py",
+      "--child",
+      "seed_and_backup",
+      "C:\\Users\\<local-user>\\AppData\\Local\\Temp\\qqbot-a2-frozen-acceptance-7ae7d444ffc7\\run-90c1c9e5d7cc-af07e34e",
+      "C:\\Users\\<local-user>\\AppData\\Local\\Temp\\qqbot-a2-frozen-acceptance-7ae7d444ffc7\\run-90c1c9e5d7cc-af07e34e\\source-new",
+      "C:\\Users\\<local-user>\\AppData\\Local\\Temp\\qqbot-a2-frozen-acceptance-7ae7d444ffc7\\run-90c1c9e5d7cc-af07e34e\\working\\moderation.db"
+    ],
+    "result": {
+      "backup": "C:\\Users\\<local-user>\\AppData\\Local\\Temp\\qqbot-a2-frozen-acceptance-7ae7d444ffc7\\run-90c1c9e5d7cc-af07e34e\\working\\backups\\moderation-20260921T164159Z-98wuh2lj.db",
+      "committed_wal_included": true,
+      "json_sha256": "674b794851fc25c2aaac7aadb509783c2e6f7ba7d9d9c4ed6dccebac31ee281b",
+      "main_file_copy_lost_sentinel": true,
+      "review_file_sha256": "eb1774a1eecb50cec18c39a1f2be1f667d1d66ae9eb8d5318205501566d93640",
+      "sha256": "d00ed3138d065b277e123fa9616f4cb6c799d8972be20bb502d62c407cb7d5ee"
+    },
+    "returncode": 0
+  },
+  "03-old-schema-writer-reject": {
+    "command": [
+      "D:\\CodeBuddy工作空间\\CB 项目\\qq-group-moderation-bot\\.venv\\Scripts\\python.exe",
+      "-B",
+      "C:\\Users\\<local-user>\\AppData\\Local\\Temp\\qqbot-a2-frozen-acceptance-7ae7d444ffc7\\a2_acceptance.py",
+      "--child",
+      "authority_unavailable",
+      "C:\\Users\\<local-user>\\AppData\\Local\\Temp\\qqbot-a2-frozen-acceptance-7ae7d444ffc7\\run-90c1c9e5d7cc-af07e34e",
+      "C:\\Users\\<local-user>\\AppData\\Local\\Temp\\qqbot-a2-frozen-acceptance-7ae7d444ffc7\\run-90c1c9e5d7cc-af07e34e\\source-new",
+      "C:\\Users\\<local-user>\\AppData\\Local\\Temp\\qqbot-a2-frozen-acceptance-7ae7d444ffc7\\run-90c1c9e5d7cc-af07e34e\\working\\moderation.db",
+      "AUTHORITY_UNAVAILABLE"
+    ],
+    "result": {
+      "expected_failure": "AUTHORITY_UNAVAILABLE: migrate the database explicitly"
+    },
+    "returncode": 0
+  },
+  "04-new-runtime-old-schema-reject": {
+    "command": [
+      "D:\\CodeBuddy工作空间\\CB 项目\\qq-group-moderation-bot\\.venv\\Scripts\\python.exe",
+      "-B",
+      "C:\\Users\\<local-user>\\AppData\\Local\\Temp\\qqbot-a2-frozen-acceptance-7ae7d444ffc7\\a2_acceptance.py",
+      "--child",
+      "startup_check",
+      "C:\\Users\\<local-user>\\AppData\\Local\\Temp\\qqbot-a2-frozen-acceptance-7ae7d444ffc7\\run-90c1c9e5d7cc-af07e34e",
+      "C:\\Users\\<local-user>\\AppData\\Local\\Temp\\qqbot-a2-frozen-acceptance-7ae7d444ffc7\\run-90c1c9e5d7cc-af07e34e\\source-new",
+      "C:\\Users\\<local-user>\\AppData\\Local\\Temp\\qqbot-a2-frozen-acceptance-7ae7d444ffc7\\run-90c1c9e5d7cc-af07e34e\\working\\moderation.db",
+      "reject"
+    ],
+    "result": {
+      "head": "e1c7d4b8a902",
+      "reason": "数据库迁移版本 'd4b7c1e9a502' 与当前代码要求的 Alembic head 'e1c7d4b8a902' 不一致。请运行 `uv run alembic upgrade head` 将数据库升级到最新版本。",
+      "startup_gate": "rejected_as_expected"
+    },
+    "returncode": 0
+  },
+  "05-upgrade": {
+    "command": [
+      "D:\\CodeBuddy工作空间\\CB 项目\\qq-group-moderation-bot\\.venv\\Scripts\\python.exe",
+      "-B",
+      "C:\\Users\\<local-user>\\AppData\\Local\\Temp\\qqbot-a2-frozen-acceptance-7ae7d444ffc7\\a2_acceptance.py",
+      "--child",
+      "migrate",
+      "C:\\Users\\<local-user>\\AppData\\Local\\Temp\\qqbot-a2-frozen-acceptance-7ae7d444ffc7\\run-90c1c9e5d7cc-af07e34e",
+      "C:\\Users\\<local-user>\\AppData\\Local\\Temp\\qqbot-a2-frozen-acceptance-7ae7d444ffc7\\run-90c1c9e5d7cc-af07e34e\\source-new",
+      "C:\\Users\\<local-user>\\AppData\\Local\\Temp\\qqbot-a2-frozen-acceptance-7ae7d444ffc7\\run-90c1c9e5d7cc-af07e34e\\working\\moderation.db",
+      "upgrade",
+      "head"
+    ],
+    "result": {
+      "revision": "e1c7d4b8a902"
+    },
+    "returncode": 0
+  },
+  "06-not-backfilled-reject": {
+    "command": [
+      "D:\\CodeBuddy工作空间\\CB 项目\\qq-group-moderation-bot\\.venv\\Scripts\\python.exe",
+      "-B",
+      "C:\\Users\\<local-user>\\AppData\\Local\\Temp\\qqbot-a2-frozen-acceptance-7ae7d444ffc7\\a2_acceptance.py",
+      "--child",
+      "authority_unavailable",
+      "C:\\Users\\<local-user>\\AppData\\Local\\Temp\\qqbot-a2-frozen-acceptance-7ae7d444ffc7\\run-90c1c9e5d7cc-af07e34e",
+      "C:\\Users\\<local-user>\\AppData\\Local\\Temp\\qqbot-a2-frozen-acceptance-7ae7d444ffc7\\run-90c1c9e5d7cc-af07e34e\\source-new",
+      "C:\\Users\\<local-user>\\AppData\\Local\\Temp\\qqbot-a2-frozen-acceptance-7ae7d444ffc7\\run-90c1c9e5d7cc-af07e34e\\working\\moderation.db",
+      "AUTHORITY_NOT_BACKFILLED"
+    ],
+    "result": {
+      "expected_failure": "AUTHORITY_NOT_BACKFILLED"
+    },
+    "returncode": 0
+  },
+  "07-backfill-conflicts": {
+    "command": [
+      "D:\\CodeBuddy工作空间\\CB 项目\\qq-group-moderation-bot\\.venv\\Scripts\\python.exe",
+      "-B",
+      "C:\\Users\\<local-user>\\AppData\\Local\\Temp\\qqbot-a2-frozen-acceptance-7ae7d444ffc7\\a2_acceptance.py",
+      "--child",
+      "negative_backfills",
+      "C:\\Users\\<local-user>\\AppData\\Local\\Temp\\qqbot-a2-frozen-acceptance-7ae7d444ffc7\\run-90c1c9e5d7cc-af07e34e",
+      "C:\\Users\\<local-user>\\AppData\\Local\\Temp\\qqbot-a2-frozen-acceptance-7ae7d444ffc7\\run-90c1c9e5d7cc-af07e34e\\source-new",
+      "C:\\Users\\<local-user>\\AppData\\Local\\Temp\\qqbot-a2-frozen-acceptance-7ae7d444ffc7\\run-90c1c9e5d7cc-af07e34e\\working\\moderation.db"
+    ],
+    "result": {
+      "rejected_atomically": {
+        "empty_entry_conflict": "BACKFILL_CONFLICT: 0000000000000001",
+        "history_invalid": "BACKFILL_CONFLICT: invalid legacy history",
+        "invalid_nonempty_at": "BACKFILL_CONFLICT: 0000000000000004",
+        "state_conflict": "BACKFILL_CONFLICT: 0000000000000001",
+        "unknown_marker": "BACKFILL_CONFLICT: unsupported authority version"
+      }
+    },
+    "returncode": 0
+  },
+  "08-backfill-export-orm": {
+    "command": [
+      "D:\\CodeBuddy工作空间\\CB 项目\\qq-group-moderation-bot\\.venv\\Scripts\\python.exe",
+      "-B",
+      "C:\\Users\\<local-user>\\AppData\\Local\\Temp\\qqbot-a2-frozen-acceptance-7ae7d444ffc7\\a2_acceptance.py",
+      "--child",
+      "backfill",
+      "C:\\Users\\<local-user>\\AppData\\Local\\Temp\\qqbot-a2-frozen-acceptance-7ae7d444ffc7\\run-90c1c9e5d7cc-af07e34e",
+      "C:\\Users\\<local-user>\\AppData\\Local\\Temp\\qqbot-a2-frozen-acceptance-7ae7d444ffc7\\run-90c1c9e5d7cc-af07e34e\\source-new",
+      "C:\\Users\\<local-user>\\AppData\\Local\\Temp\\qqbot-a2-frozen-acceptance-7ae7d444ffc7\\run-90c1c9e5d7cc-af07e34e\\working\\moderation.db"
+    ],
+    "result": {
+      "apply": {
+        "changed": 3,
+        "decisions": [
+          {
+            "phash": "0000000000000001",
+            "source": "review:batch-synthetic",
+            "state": "allowed",
+            "version": 1
+          },
+          {
+            "phash": "0000000000000002",
+            "source": "exclude",
+            "state": "rejected",
+            "version": 1
+          },
+          {
+            "phash": "0000000000000003",
+            "source": "exclude",
+            "state": "rejected",
+            "version": 1
+          }
+        ],
+        "enabled_digest": "86c8b1ed2566b6d78b23beb38355312204406a9284ce97112e57be461772291a",
+        "rows": 3,
+        "status": "applied"
+      },
+      "dry_run": {
+        "changed": 3,
+        "decisions": [
+          {
+            "phash": "0000000000000001",
+            "source": "review:batch-synthetic",
+            "state": "allowed",
+            "version": 1
+          },
+          {
+            "phash": "0000000000000002",
+            "source": "exclude",
+            "state": "rejected",
+            "version": 1
+          },
+          {
+            "phash": "0000000000000003",
+            "source": "exclude",
+            "state": "rejected",
+            "version": 1
+          }
+        ],
+        "enabled_digest": "86c8b1ed2566b6d78b23beb38355312204406a9284ce97112e57be461772291a",
+        "rows": 3,
+        "status": "dry_run"
+      },
+      "enabled_after_explicit_decision": [
+        "0000000000000001",
+        "0000000000000002"
+      ],
+      "enabled_after_initial_backfill": [
+        "0000000000000001"
+      ],
+      "idempotent_after_new_decision": true,
+      "orm_dates_readable": true,
+      "other_tables_unchanged": true
+    },
+    "returncode": 0
+  },
+  "09-new-startup-gate": {
+    "command": [
+      "D:\\CodeBuddy工作空间\\CB 项目\\qq-group-moderation-bot\\.venv\\Scripts\\python.exe",
+      "-B",
+      "C:\\Users\\<local-user>\\AppData\\Local\\Temp\\qqbot-a2-frozen-acceptance-7ae7d444ffc7\\a2_acceptance.py",
+      "--child",
+      "startup_check",
+      "C:\\Users\\<local-user>\\AppData\\Local\\Temp\\qqbot-a2-frozen-acceptance-7ae7d444ffc7\\run-90c1c9e5d7cc-af07e34e",
+      "C:\\Users\\<local-user>\\AppData\\Local\\Temp\\qqbot-a2-frozen-acceptance-7ae7d444ffc7\\run-90c1c9e5d7cc-af07e34e\\source-new",
+      "C:\\Users\\<local-user>\\AppData\\Local\\Temp\\qqbot-a2-frozen-acceptance-7ae7d444ffc7\\run-90c1c9e5d7cc-af07e34e\\working\\moderation.db",
+      "accept",
+      "0000000000000001,0000000000000002"
+    ],
+    "result": {
+      "enabled": [
+        [
+          1,
+          1
+        ],
+        [
+          2,
+          2
+        ]
+      ],
+      "head": "e1c7d4b8a902",
+      "orm_rows": 3,
+      "startup_gate": "accepted"
+    },
+    "returncode": 0
+  },
+  "10-ready-backup": {
+    "command": [
+      "D:\\CodeBuddy工作空间\\CB 项目\\qq-group-moderation-bot\\.venv\\Scripts\\python.exe",
+      "-B",
+      "C:\\Users\\<local-user>\\AppData\\Local\\Temp\\qqbot-a2-frozen-acceptance-7ae7d444ffc7\\a2_acceptance.py",
+      "--child",
+      "backup_ready",
+      "C:\\Users\\<local-user>\\AppData\\Local\\Temp\\qqbot-a2-frozen-acceptance-7ae7d444ffc7\\run-90c1c9e5d7cc-af07e34e",
+      "C:\\Users\\<local-user>\\AppData\\Local\\Temp\\qqbot-a2-frozen-acceptance-7ae7d444ffc7\\run-90c1c9e5d7cc-af07e34e\\source-new",
+      "C:\\Users\\<local-user>\\AppData\\Local\\Temp\\qqbot-a2-frozen-acceptance-7ae7d444ffc7\\run-90c1c9e5d7cc-af07e34e\\working\\moderation.db"
+    ],
+    "result": {
+      "backup": "C:\\Users\\<local-user>\\AppData\\Local\\Temp\\qqbot-a2-frozen-acceptance-7ae7d444ffc7\\run-90c1c9e5d7cc-af07e34e\\working\\backups\\moderation-20260921T164204Z-xufvqb1n.db",
+      "json": "C:\\Users\\<local-user>\\AppData\\Local\\Temp\\qqbot-a2-frozen-acceptance-7ae7d444ffc7\\run-90c1c9e5d7cc-af07e34e\\working\\backups\\moderation-20260921T164204Z-xufvqb1n.rejections.json",
+      "json_sha256": "5224feabbc8f0a6bb952620fc66de784bb308b55ff32a8dce5712eafc0403424",
+      "sha256": "f3ab9ad61e939f4cb5f27fe7da13d442ca7edf5bd44d3ec96caba346f1e7088e"
+    },
+    "returncode": 0
+  },
+  "11-old-code-new-schema-reject": {
+    "command": [
+      "D:\\CodeBuddy工作空间\\CB 项目\\qq-group-moderation-bot\\.venv\\Scripts\\python.exe",
+      "-B",
+      "C:\\Users\\<local-user>\\AppData\\Local\\Temp\\qqbot-a2-frozen-acceptance-7ae7d444ffc7\\a2_acceptance.py",
+      "--child",
+      "startup_check",
+      "C:\\Users\\<local-user>\\AppData\\Local\\Temp\\qqbot-a2-frozen-acceptance-7ae7d444ffc7\\run-90c1c9e5d7cc-af07e34e",
+      "C:\\Users\\<local-user>\\AppData\\Local\\Temp\\qqbot-a2-frozen-acceptance-7ae7d444ffc7\\run-90c1c9e5d7cc-af07e34e\\source-old",
+      "C:\\Users\\<local-user>\\AppData\\Local\\Temp\\qqbot-a2-frozen-acceptance-7ae7d444ffc7\\run-90c1c9e5d7cc-af07e34e\\restored-a2\\moderation.db",
+      "reject"
+    ],
+    "result": {
+      "head": "d4b7c1e9a502",
+      "reason": "数据库迁移版本 'e1c7d4b8a902' 与当前代码要求的 Alembic head 'd4b7c1e9a502' 不一致。请运行 `uv run alembic upgrade head` 将数据库升级到最新版本。",
+      "startup_gate": "rejected_as_expected"
+    },
+    "returncode": 0
+  },
+  "12-bridge-new-schema-check": {
+    "command": [
+      "D:\\CodeBuddy工作空间\\CB 项目\\qq-group-moderation-bot\\.venv\\Scripts\\python.exe",
+      "-B",
+      "C:\\Users\\<local-user>\\AppData\\Local\\Temp\\qqbot-a2-frozen-acceptance-7ae7d444ffc7\\a2_acceptance.py",
+      "--child",
+      "startup_check",
+      "C:\\Users\\<local-user>\\AppData\\Local\\Temp\\qqbot-a2-frozen-acceptance-7ae7d444ffc7\\run-90c1c9e5d7cc-af07e34e",
+      "C:\\Users\\<local-user>\\AppData\\Local\\Temp\\qqbot-a2-frozen-acceptance-7ae7d444ffc7\\run-90c1c9e5d7cc-af07e34e\\source-bridge",
+      "C:\\Users\\<local-user>\\AppData\\Local\\Temp\\qqbot-a2-frozen-acceptance-7ae7d444ffc7\\run-90c1c9e5d7cc-af07e34e\\restored-a2\\moderation.db",
+      "accept",
+      "0000000000000001,0000000000000002"
+    ],
+    "result": {
+      "enabled": [
+        [
+          1,
+          1
+        ],
+        [
+          2,
+          2
+        ]
+      ],
+      "head": "e1c7d4b8a902",
+      "orm_rows": 3,
+      "startup_gate": "accepted"
+    },
+    "returncode": 0
+  },
+  "13-isolated-r2-downgrade": {
+    "command": [
+      "D:\\CodeBuddy工作空间\\CB 项目\\qq-group-moderation-bot\\.venv\\Scripts\\python.exe",
+      "-B",
+      "C:\\Users\\<local-user>\\AppData\\Local\\Temp\\qqbot-a2-frozen-acceptance-7ae7d444ffc7\\a2_acceptance.py",
+      "--child",
+      "migrate",
+      "C:\\Users\\<local-user>\\AppData\\Local\\Temp\\qqbot-a2-frozen-acceptance-7ae7d444ffc7\\run-90c1c9e5d7cc-af07e34e",
+      "C:\\Users\\<local-user>\\AppData\\Local\\Temp\\qqbot-a2-frozen-acceptance-7ae7d444ffc7\\run-90c1c9e5d7cc-af07e34e\\source-new",
+      "C:\\Users\\<local-user>\\AppData\\Local\\Temp\\qqbot-a2-frozen-acceptance-7ae7d444ffc7\\run-90c1c9e5d7cc-af07e34e\\r2-downgrade\\moderation.db",
+      "downgrade",
+      "d4b7c1e9a502"
+    ],
+    "result": {
+      "revision": "d4b7c1e9a502"
+    },
+    "returncode": 0
+  },
+  "14-r2-old-startup-gate": {
+    "command": [
+      "D:\\CodeBuddy工作空间\\CB 项目\\qq-group-moderation-bot\\.venv\\Scripts\\python.exe",
+      "-B",
+      "C:\\Users\\<local-user>\\AppData\\Local\\Temp\\qqbot-a2-frozen-acceptance-7ae7d444ffc7\\a2_acceptance.py",
+      "--child",
+      "startup_check",
+      "C:\\Users\\<local-user>\\AppData\\Local\\Temp\\qqbot-a2-frozen-acceptance-7ae7d444ffc7\\run-90c1c9e5d7cc-af07e34e",
+      "C:\\Users\\<local-user>\\AppData\\Local\\Temp\\qqbot-a2-frozen-acceptance-7ae7d444ffc7\\run-90c1c9e5d7cc-af07e34e\\source-old",
+      "C:\\Users\\<local-user>\\AppData\\Local\\Temp\\qqbot-a2-frozen-acceptance-7ae7d444ffc7\\run-90c1c9e5d7cc-af07e34e\\r2-downgrade\\moderation.db",
+      "accept",
+      "0000000000000001,0000000000000002"
+    ],
+    "result": {
+      "enabled": [
+        [
+          1,
+          1
+        ],
+        [
+          2,
+          2
+        ]
+      ],
+      "head": "d4b7c1e9a502",
+      "orm_rows": 3,
+      "startup_gate": "accepted"
+    },
+    "returncode": 0
+  },
+  "15-pre-migration-restore-check": {
+    "command": [
+      "D:\\CodeBuddy工作空间\\CB 项目\\qq-group-moderation-bot\\.venv\\Scripts\\python.exe",
+      "-B",
+      "C:\\Users\\<local-user>\\AppData\\Local\\Temp\\qqbot-a2-frozen-acceptance-7ae7d444ffc7\\a2_acceptance.py",
+      "--child",
+      "startup_check",
+      "C:\\Users\\<local-user>\\AppData\\Local\\Temp\\qqbot-a2-frozen-acceptance-7ae7d444ffc7\\run-90c1c9e5d7cc-af07e34e",
+      "C:\\Users\\<local-user>\\AppData\\Local\\Temp\\qqbot-a2-frozen-acceptance-7ae7d444ffc7\\run-90c1c9e5d7cc-af07e34e\\source-old",
+      "C:\\Users\\<local-user>\\AppData\\Local\\Temp\\qqbot-a2-frozen-acceptance-7ae7d444ffc7\\run-90c1c9e5d7cc-af07e34e\\restored-pre-migration\\moderation.db",
+      "accept",
+      "0000000000000001"
+    ],
+    "result": {
+      "enabled": [
+        [
+          1,
+          1
+        ]
+      ],
+      "head": "d4b7c1e9a502",
+      "orm_rows": 2,
+      "startup_gate": "accepted"
+    },
+    "returncode": 0
+  },
+  "final_invariants": {
+    "ddl_preserved_legacy_data": true,
+    "integrity": {
+      "current": {
+        "foreign_keys": [],
+        "integrity": [
+          [
+            "ok"
+          ]
+        ]
+      },
+      "r2": {
+        "foreign_keys": [],
+        "integrity": [
+          [
+            "ok"
+          ]
+        ]
+      },
+      "restored-a2": {
+        "foreign_keys": [],
+        "integrity": [
+          [
+            "ok"
+          ]
+        ]
+      },
+      "restored-legacy": {
+        "foreign_keys": [],
+        "integrity": [
+          [
+            "ok"
+          ]
+        ]
+      }
+    },
+    "pre_migration_restore_exact": true,
+    "r1_preserved_new_revision_and_history": true,
+    "r2_full_authority_retained_in_a2_backup": true,
+    "r2_preserved_old_columns_and_other_tables": true
+  }
+}

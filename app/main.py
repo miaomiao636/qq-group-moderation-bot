@@ -89,6 +89,14 @@ def create_app() -> FastAPI:
             "env": settings.app_env,
             "mode": settings.run_mode,
         }
+        import asyncio
+
+        from app.adapters.qq_official.media import capacity_status
+        from app.runtime.pipeline import MEDIA_DIR
+
+        payload["media_storage"] = await asyncio.to_thread(
+            capacity_status, MEDIA_DIR, quota_bytes=settings.media_quota_bytes
+        )
         if settings.onebot_ws_enabled:
             from app.runtime.onebot_ws import onebot_status
 

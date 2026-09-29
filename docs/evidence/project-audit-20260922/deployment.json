@@ -1,0 +1,161 @@
+{
+  "execution_sha": "1c17ba09e5bef268a6162864830396e8d36c6107",
+  "base_sha": "06324fedab4baf8d0ee14e09991c5385627a01ed",
+  "verified_at": "2026-09-22T10:24:12.151321+00:00",
+  "approval": "Owner explicitly chose A: deploy these audit fixes now, preserve emergency stop.",
+  "commands": [
+    "python -B deploy.py preflight",
+    "Start-Process powershell.exe -Verb RunAs -WindowStyle Hidden -ArgumentList -NoProfile,-ExecutionPolicy,Bypass,-File,deploy-services.ps1",
+    "deploy.py quiet / backup / configure (service script)",
+    "git merge --ff-only 1c17ba09e5bef268a6162864830396e8d36c6107",
+    "python -B verify-configured-endpoint.py verify"
+  ],
+  "private_attempt_directory": "C:\\Users\\81596\\AppData\\Local\\QQBotDeploy\\project-audit-deploy-20260922-02",
+  "service_stages": [
+    {
+      "Stage": "quiet",
+      "Time": "2026-09-22T10:22:03.3638527Z"
+    },
+    {
+      "Stage": "stopped QQBotRuntime",
+      "Time": "2026-09-22T10:22:03.7301867Z"
+    },
+    {
+      "Stage": "stopped QQBotWeb",
+      "Time": "2026-09-22T10:22:04.6091464Z"
+    },
+    {
+      "Stage": "backup",
+      "Time": "2026-09-22T10:22:06.2221243Z"
+    },
+    {
+      "Stage": "configure",
+      "Time": "2026-09-22T10:22:07.5462004Z"
+    },
+    {
+      "Stage": "started QQBotWeb",
+      "Time": "2026-09-22T10:22:09.2444419Z"
+    },
+    {
+      "Stage": "started QQBotRuntime",
+      "Time": "2026-09-22T10:22:10.9082305Z"
+    }
+  ],
+  "services_after": [
+    {
+      "Name": "QQBotRuntime",
+      "State": "Running",
+      "ProcessId": 13160
+    },
+    {
+      "Name": "QQBotWeb",
+      "State": "Running",
+      "ProcessId": 31940
+    }
+  ],
+  "backup": {
+    "execution_sha": "06324fedab4baf8d0ee14e09991c5385627a01ed",
+    "at": "2026-09-22T10:22:06.032324+00:00",
+    "sha256": "58437fe1c1aaf1faad28a5950f63524893931b7a7f36e8c872c7785fc4bb110d",
+    "integrity": "ok",
+    "revision": "e1c7d4b8a902",
+    "foreign_key_check": "no violations"
+  },
+  "preserved": {
+    "configuration": true,
+    "prompt_rules": true,
+    "group_authorization": true,
+    "action_switches": true,
+    "notifications": true,
+    "emergency_stop": true,
+    "prompt_version": "t204-v18",
+    "schema_revision": "e1c7d4b8a902"
+  },
+  "live": {
+    "admin_login_status": 200,
+    "configured_web_port": 8001,
+    "health_status": 200,
+    "new": {
+      "onebot_inbox": 4,
+      "onebot_inbox_states": {
+        "DONE": 4
+      },
+      "shadow_decisions": 4,
+      "action_intents": 4,
+      "action_intents_states": {
+        "SKIPPED": 4
+      }
+    },
+    "vision_observations": [
+      {
+        "prompt_version": "t204-v18",
+        "new_source_field_present": true,
+        "template_observation_present": false,
+        "template_status": null,
+        "campus_confirmed": false,
+        "local_campus_policy_present": false
+      },
+      {
+        "prompt_version": "t204-v18",
+        "new_source_field_present": true,
+        "template_observation_present": false,
+        "template_status": null,
+        "campus_confirmed": false,
+        "local_campus_policy_present": false
+      }
+    ],
+    "new_mixed_sources": [],
+    "code_file_sha256": {
+      "app/actions/official_wiring.py": "e9bf73c7d3e73c5267f00f874b159930258320c218fd06d8d81780660b563502",
+      "app/actions/orchestrator.py": "ff052e4b0e3c7e98090163835704843b3573bbf620b84f680f2de4d2395c4439",
+      "app/adapters/qq_official/actions.py": "bf07279cfd4b4d5b608a1c93a51f818df3c7fe0b9fecde20a72e5dd06543f47d",
+      "app/moderation/media_engine.py": "5f8bbf4dd77d15803c38cbdaade6a7d9e94e137cbed450f4443a73b8d9a2faa1",
+      "app/reports/backup.py": "6fb08f436e0861ca8f409b8fa97c60588fd17c51a5a2184207acbdfd5956f39f",
+      "app/reports/cleanup.py": "0a65b48b716c9d7a1a84bfc8e0579078d786dbe78dddc8ed3aa5545c81a7df01",
+      "app/reports/service.py": "cbea999e282d856dabd15bf103999e613804aaa93cb46cf928ec17e2099ad3c5",
+      "app/reports/snapshot.py": "947053c3003ffde33e38a08c8cfd5ab1f031e69f2cea491ee0837b2d6a076a10",
+      "app/reports/stats.py": "ea5c7b61a62223d1ee7e79f63543eb31ef8776a39b997bc2e73797448efb979a",
+      "app/runtime/onebot_wiring.py": "2bf89457442e2a01dbfe62a14e148f5e31767ebaf04924556dd8ff2191811e7b",
+      "app/runtime/onebot_ws.py": "3b144afe04a53ccfcccabe8e23d08b8e3f3ca13df943b0278c387ae4b5f1fbc6",
+      "app/runtime/pipeline.py": "1bdbb06b2df9a8f8c762e764262540ce3c41cd7938ea019e5cefa036ccac810d",
+      "app/web/auth.py": "23599cca03631ea2c4d76ba37e83efd999ca68661144d091f14f1f29f72123cb",
+      "app/web/confirm.py": "79771cac3eb567078ee4120f68b4c4516548009699f4c6b866a7af444497bad2",
+      "app/web/routes.py": "57f0989bf7381d05be80b8c170ad732e3d22d45b55536a0f8e323afc089e9762"
+    }
+  },
+  "onebot": {
+    "state": "ready",
+    "connected": true,
+    "login_state": "online",
+    "queue_backlog": 0
+  },
+  "limitations": [
+    "Emergency stop remains true; real enforcement was not resumed.",
+    "No qualifying mixed campus source or subsequent exemption pair observed in this deployment sample.",
+    "No migration, historical action replay, evidence cleanup, ACL change or scheduled task change."
+  ],
+  "attempts": [
+    {
+      "id": "01",
+      "result": "UTF-8 plan decoded with Windows PowerShell legacy default encoding; failure before any service stop or code switch; original service PIDs stayed running."
+    },
+    {
+      "id": "02",
+      "result": "Explicit UTF-8 plan/preflight reads; deployment succeeded. Initial verify helper assumed admin port 8000; corrected verification-only copy uses unchanged configured web_port 8001. Original scripts and failed verification logs retained."
+    }
+  ],
+  "private_artifact_sha256": {
+    "plan.json": "87573bc3205999e4a42aebf78e127f3328700a1f96059e836417d9ad4e59270c",
+    "deploy.py": "b41427e008275a19cef91b5ac482d84385b0210df93cb4ad7260e819519afd3f",
+    "deploy-services.ps1": "ff7f302b69ebc0e1ac9e119608071ee7a0c6ca42888fa0e3ec51111a3372e8ac",
+    "preflight.json": "94d70b59258f3f0dd6ac64db878d511e0af78447f38ac1edb36a17cb6262b2c0",
+    "quiet.json": "b31f1431a32a770ae9ee0621d091d6030148130e43ca8115945025b77fb835ee",
+    "backup.json": "bc4e47feee9c185c1b838507ce70a1999c0cc3c2cc54a38a84395b2e30d40ef7",
+    "configured.json": "76fe3adb9480dfa6426e3e99c519253a5e5ad13a57ce39e038f8ddb4c26e66ae",
+    "service-state.json": "0501cbeb219de08b9843db8197fd0dd1d853701f82d1f6e8e84ac0fd63b027e3",
+    "live-verified.json": "8d2fa4817bb245cc87df1b1c24a9cd5df4c7a2142ac023e5b12ef70573a773c5",
+    "verify-configured-endpoint.py": "426e9c5e85b96a9407c987c5a39b790cd131aa78210baa7550955aabab06a887",
+    "verification-helper-correction.json": "4cf02992e28531f86822b546aa47aba42a8a2381a5295d46ff32a0ccfcb0ecf1",
+    "verification-helper-hash-clarification.json": "2e6ab3b0e4d98550a19b44a93369e6a90782e3b756bf7f1e8aa8e497d9ef58bc"
+  }
+}

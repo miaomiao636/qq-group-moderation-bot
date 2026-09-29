@@ -17,7 +17,7 @@
 
 暴露的小而稳定接口（seam）：
 - ``MessageSource``：入站 Adapter 实现，把传输层原始事件转换为 ``StandardMessage``。
-- ``ModerationActionClient``：出站动作 Adapter 实现，按中立 ID 执行撤回/禁言/警告。
+- ``ModerationActionClient``：出站动作 Adapter 实现，按中立 ID 执行撤回。
 """
 
 from __future__ import annotations
@@ -48,7 +48,7 @@ MessageKind = Literal[
 
 SenderRole = Literal["owner", "admin", "member", "unknown"]
 
-# 中立动作名（动作结构中永不存在 kick；unmute 供运维解除禁言）。
+# 兼容历史动作审计；新自动审核仅可创建 recall，unmute 供人工补救旧禁言。
 ActionName = Literal["recall", "mute", "unmute", "warn"]
 
 
@@ -76,7 +76,12 @@ class Attachment(BaseModel):
 
 
 class ShareCardInfo(BaseModel):
-    """分享卡片摘要。"""
+    """分享卡片摘要。
+
+    ``is_group_card``（负责人 2026-09-18）：该卡片是否为 QQ **群名片**（分享群卡片）。
+    规则引擎据此执行"群名片一律撤回"的结构性确定性规则；无法识别时保持 False，
+    按普通卡片走既有分支，避免误伤音乐/新闻/小程序卡片。
+    """
 
     source: str = ""
     title: str = ""
@@ -84,6 +89,10 @@ class ShareCardInfo(BaseModel):
     tag: str = ""
     preview_url: str = ""
     source_logo_url: str = ""
+    is_group_card: bool = False
+    # CARD-RECALL-20260923: a structurally identified WeChat mini-program share,
+    # never inferred from image QR codes, free text, or generic QQ mini-programs.
+    is_wechat_miniprogram: bool = Field(default=False, strict=True)
 
 
 class MessageSegment(BaseModel):
@@ -106,6 +115,7 @@ class StandardMessage(BaseModel):
     - ``external_group_id``：供应商侧群标识（官方=group_openid，OneBot=数字群号字符串）；
     - ``external_user_id``：供应商侧成员标识（官方=member_openid，OneBot=数字QQ字符串）；
     - ``external_message_id``：供应商侧消息标识。
+    - ``external_self_id``：适配器明确提供的接收账号；缺失不推断跨账号确认。
 
     旧字段 ``group_openid``/``group_id`` 与 ``sender.member_openid`` 在 expand 阶段
     保留并与中立字段双向同步（镜像视图），既有官方 Adapter、审核、案件、报告与
@@ -120,6 +130,7 @@ class StandardMessage(BaseModel):
     external_group_id: str = ""
     external_user_id: str = ""
     external_message_id: str = ""
+    external_self_id: str = ""  # Receiving account, explicitly supplied by the adapter.
     sender: Sender
     sent_at: datetime | None = None
     received_at: datetime | None = None
@@ -213,7 +224,7 @@ class MessageSource(Protocol):
 
 @runtime_checkable
 class ModerationActionClient(Protocol):
-    """出站动作 Adapter seam：按中立 ID 执行撤回/禁言/警告。
+    """出站自动审核动作 Adapter seam：按中立 ID 只执行撤回。
 
     位置限定参数（``/``）使实现方自由命名形参；协议不含踢人，任何实现
     都不得添加自动踢人路径（踢人必须人工审批，T-304）。
@@ -223,29 +234,4 @@ class ModerationActionClient(Protocol):
         self, external_group_id: str, external_message_id: str, /, *, actor: str = "system"
     ) -> ActionResult:
         """撤回一条消息。"""
-        ...
-
-    async def mute(
-        self,
-        external_group_id: str,
-        external_user_id: str,
-        seconds: int,
-        /,
-        *,
-        actor: str = "system",
-    ) -> ActionResult:
-        """禁言一名成员。"""
-        ...
-
-    async def warn(
-        self,
-        external_group_id: str,
-        reply_to_message_id: str,
-        text: str,
-        /,
-        *,
-        msg_seq: int = 1,
-        actor: str = "system",
-    ) -> ActionResult:
-        """发送一次被动警告回复。"""
         ...

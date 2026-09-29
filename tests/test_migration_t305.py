@@ -96,7 +96,8 @@ async def test_hybrid_version_rows_are_visible_to_neutral_queries() -> None:
             {
                 "gid": group,
                 "mid": marker,
-                "created": datetime.now(UTC) - timedelta(days=1),
+                # Match sqlite3's old adapter representation explicitly.
+                "created": (datetime.now(UTC) - timedelta(days=1)).isoformat(" "),
             },
         )
         await session.commit()

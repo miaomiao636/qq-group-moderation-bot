@@ -1,0 +1,30 @@
+
+INFO  [alembic.runtime.migration] Context impl SQLiteImpl.
+INFO  [alembic.runtime.migration] Will assume non-transactional DDL.
+INFO  [alembic.runtime.migration] Running upgrade  -> 3a9c0c662c2e, init system_meta
+INFO  [alembic.runtime.migration] Running upgrade 3a9c0c662c2e -> c7d2e8f91a03, t102 event dedup and action audit tables
+INFO  [alembic.runtime.migration] Running upgrade c7d2e8f91a03 -> e8f4a1b26c57, t104 violations and cases tables
+INFO  [alembic.runtime.migration] Running upgrade e8f4a1b26c57 -> b12f6d84aa77, t403 shadow decisions table
+INFO  [alembic.runtime.migration] Running upgrade b12f6d84aa77 -> f2a9c3d47b18, t301 member aliases
+INFO  [alembic.runtime.migration] Running upgrade f2a9c3d47b18 -> a4c8e1f30d92, shadow sender_name
+INFO  [alembic.runtime.migration] Running upgrade a4c8e1f30d92 -> c6d9f2a51b34, group aliases
+INFO  [alembic.runtime.migration] Running upgrade c6d9f2a51b34 -> d2b1f9a60e45, r102 processed_events status
+INFO  [alembic.runtime.migration] Running upgrade d2b1f9a60e45 -> 15f0e4b7a901, r103 event processing leases
+INFO  [alembic.runtime.migration] Running upgrade 15f0e4b7a901 -> 2c8a41d9f0b7, admin audit for csrf-protected mutations
+INFO  [alembic.runtime.migration] Running upgrade 2c8a41d9f0b7 -> 8ab12f3d9c60, t105 dynamic rules
+INFO  [alembic.runtime.migration] Running upgrade 8ab12f3d9c60 -> 44de03b8a12f, t204 ai cache
+INFO  [alembic.runtime.migration] Running upgrade 44de03b8a12f -> 73cf49a201e8, t205 feedback learning
+INFO  [alembic.runtime.migration] Running upgrade 73cf49a201e8 -> a0b4d72e5f31, t106 action intents
+INFO  [alembic.runtime.migration] Running upgrade a0b4d72e5f31 -> b8e2f6a4c1d9, t305 neutral identity expand/migrate
+INFO  [alembic.runtime.migration] Running upgrade b8e2f6a4c1d9 -> d4f7a9c2e601, t305 provider-aware group route key
+INFO  [alembic.runtime.migration] Running upgrade d4f7a9c2e601 -> f6a2c7e91b40, T-306 shadow decision external message identity.
+INFO  [alembic.runtime.migration] Running upgrade f6a2c7e91b40 -> e1a4b8c2d3f5, group_settings + system_settings tables
+INFO  [alembic.runtime.migration] Running upgrade e1a4b8c2d3f5 -> b1d3f5a7c909, R-105 expand provider settings, action ownership and human change plans.
+INFO  [alembic.runtime.migration] Running upgrade b1d3f5a7c909 -> c2e4f6a8b010, R-105 durable OneBot inbox (additive, raw payload retention is enforced at runtime).
+INFO  [alembic.runtime.migration] Running upgrade c2e4f6a8b010 -> d3f5a7b9c111, R-106 additive notification notices, delivery outbox and collector watermarks.
+INFO  [alembic.runtime.migration] Running upgrade d3f5a7b9c111 -> 736da9b1cedb, add hidden_groups
+INFO  [alembic.runtime.migration] Running upgrade 736da9b1cedb -> af66bc20f1ed, case archive fields
+INFO  [alembic.runtime.migration] Running upgrade af66bc20f1ed -> a7c3e91f0b24, add allowlist_terms
+INFO  [alembic.runtime.migration] Running upgrade a7c3e91f0b24 -> b8d4f2a05e31, allowlist: no id reuse (AUTOINCREMENT) + normalized unique
+INFO  [alembic.runtime.migration] Running upgrade b8d4f2a05e31 -> c9a1f4d27e30, add allowlist_members（成员白名单，负责人 2026-09-18）
+INFO  [alembic.runtime.migration] Running upgrade c9a1f4d27e30 -> d4b7c1e9a502, add image_allowlist（图片感知哈希白名单，负责人 2026-09-19）

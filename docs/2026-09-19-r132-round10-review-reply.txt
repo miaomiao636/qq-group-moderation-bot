@@ -1,0 +1,49 @@
+r132 第八批复核整改回评（受审 SHA dbd80a5，基线 8299ce8）
+
+一、证据
+- 您本轮 38 项探针先原样入库（入库时可复现 25 failed / 13 passed），整改后 38/38 通过；三批入库探针合计 151/0 failed（65+22+26+38）。
+- 仓库全量 1786 用例 / 0 failed / 0 error / 15 skipped；ruff check + format --check（292 文件）、mypy（89 源文件）通过。
+- 同 SHA CI（dbd80a5）run 35451072498：Ubuntu jobId=105918202246、Windows jobId=105918202333、clean runtime-deps jobId=105918202302，三 job 全部 success。
+- 本材料提交 e3f321c 的 CI run 35451698502：Windows jobId=105919868577、Ubuntu jobId=105919868783、clean jobId=105919868729，同样三 job 全 success。
+
+二、R9 整改映射
+- R9-01（provider-qualified 身份）：普查、前态、UPDATE、审计、生成回滚全部按 (provider, external_group_id) 限定；同号另一 provider 行不受影响。
+- R9-02（先提交后审计）：改为审计先落盘、后提交；审计写失败即回滚，不留"已开启但无证据"的群；每次执行唯一 op id，plan/applied 两份文件只增不改；输出区分未提交 / 已提交但导出失败（exit 3）/ 完整成功。
+- R9-03（账号与阶段未绑定）：普查只使用 onebot11_<ONEBOT_SELF_ID>.json（取不到即拒绝取数），并同时写出结构化 JSON 快照，执行侧不再解析可能被群名污染的显示文本；阶段读 环境变量→.env，不是 recall_only 即拒绝执行；审计写 stage_declared 并显式标 stage_runtime_proven=false，不用常量冒充运行阶段。
+- R9-09（虚报已开启）：前态只认数据库现值（旧普查"是"不再覆盖）；UPDATE 校验 rowcount，0 行命中即报错；新建 settings 行要求路由就绪（与运行时 resolve_action_provider 同语义），未就绪即阻塞、不开、且绝不自动建立跨通道映射；"配置位已开"与"执行就绪"分列输出。
+- R9-04 / R9-07（批准不绑身份、漏处理报成功）：批准按清单完整 SHA-256 与 dHash 校验磁盘字节（同一份字节算哈希）；原图缺失、编号未知、结论未定、清单里有图没给结论，一律 APPLY_FAILED、非零退出、零写入；编号改为正整数，第 100 张起不再漏渲染/漏落库。
+- R9-05（最新决定语义）：区分普通重复导入与显式重新批准——普通导入尊重既有拒绝，只有显式重新批准才重新启用既有行（并保留撤回历史）。
+- R9-06（快照损坏/并发/回放漏读）：拒绝快照改锁内读改写 + 原子替换；损坏时抛错并保留原件（不再当空集覆盖）；区分 missing / corrupt；导入、回放、导出共用同一份拒绝记录。
+- R9-08（直判阈值读了不存在的属性）：新增 AIReviewService.policy_snapshot()，持久化与 shadow 判据同源读取真实字段（此前 getattr(ai_service, "direct_threshold", 0.90) 永远取默认 0.90）；另写 review_policy_source 标注来源（service / assumed_defaults），:481 处同一 bug 一并修掉。
+- R9-10（shadow 汇总口径）：报告如实标注"全库留存累计（未按时间/账号/版本分离），不得用作同窗覆盖率分母"，并支持 --since/--until 真窗口；unavailable 原因分布单列；首帧（frame_scope=first_frame）逐行与摘要披露；删除"会进入 enforce 放行"的表述。
+- D01（文案）：送审文档口径改为 11/14 AST 一致 + 3 处差异逐处明示；window_stats 的 action_scope 改为 global_all_providers_retained，并删除与全局保留实现矛盾的旧描述。
+
+三、一处探针平台适配（请确认）
+- groups 探针 test_group_survey_uses_configured_account_not_first_config_file 的注入条件是 str(self) == "D:/QQ/config"，而 Windows 上 str(pathlib.Path("D:/QQ/config")) 是反斜杠形式，注入永远不生效，导致该探针在 Windows 上"因错误原因失败"（首轮 CI 813cade 的 Windows job 即因此变红）。
+- 我只把注入条件改为 str(pathlib.Path(survey.ONEBOT_CONFIG_DIR))（平台无关、语义等价），断言与意图逐字未改，并在文件头与送审文档登记为第 3 处差异。
+- 另加平台无关回归 tests/test_r132_review_group_survey_account_binding.py，保证 Windows 本机也真正验证"普查必须绑定配置的 self_id"。
+
+四、运行态（本批唯一生产变更是负责人授权的 B 方案）
+- 更正上批口径：我此前写"真实动作群 13 → 67"是过度陈述。经只读核对，当时 67 个已开群里只有 13 个有归属/路由、真正可执行；另 54 个既无 group_action_owners 也无 group_provider_routes 行，resolve_action_provider 返回 None（fail-closed，不会外发动作）。
+- 负责人 2026-09-19 明确选择 B："补齐 owner/route 让它们真正生效"（决策 D-033）。新增 scripts/authorize_group_routes.py：provider 限定、--authorized-by 必填留档、dry-run 预览、一致性备份、审计先落盘、提交前用与运行时同语义的 route_ready 逐群复核、附逐行回滚 SQL。
+- 执行结果：op_id=658e9770b7f7，新增归属 54 行 + 路由 54 行；备份 data/backups/moderation-20260919T145306Z-923oh8zi.db；审计 docs/evidence/stats/authorize-groups-20260919T145306Z-658e9770b7f7.plan.json 与 …applied.json。
+- 复核方式为运行时真实函数：resolve_action_provider(session, 'onebot', 群) 对全部 67 个已开群返回 onebot（此前 13/67）。provider_group_settings 仍只有 onebot（67 开 / 3 关），其它 provider 行数为 0，无跨 provider 影响；路由在每次动作前从数据库读取，无需重启服务。
+- 不变量：ONEBOT_ACTION_STAGE 仍为 recall_only（只撤回）；IMAGE_HASH_MODE=shadow；enforce 未实现、未复验、未授权。
+
+五、您要求的图片批准身份关联（已完成）
+- 新增 scripts/verify_approved_identity.py（只读、可复算、任一条对不上即非零退出），逐条连接：生效名单 → 批次清单行 → 文件名 / 完整 SHA-256 / dHash → 磁盘实际字节 → DECISIONS.json 人工结论。
+- 结果：IDENTITY_OK allowed=68 (mismatch 0) rejected=1 (mismatch 0) snapshot_state=ok；报告 docs/evidence/image-review/identity-20260919T152313Z.md（与同名 .json）。即 68 条生效哈希全部可追溯到您所审的那张图（字节 SHA-256 与清单一致、dHash 与生效条目一致、结论为放行），1 条拒绝同样可追溯到一条"撤回"结论行。
+- shadow 观察现状：观察 223 条 / 命中 5 条 / would_allow 0 条 / unavailable 0 条（报告 shadow-20260919T152319Z.md，口径已校准）。
+
+六、仍未证明（不在本批声称已解决）
+- A09 前 6 秒（17:01:22→17:01:28）逐条版本归属；历史授权快照未绑定（越界核查只与导出时刻对比，按 NOT_PROVEN 处理）；导出多查询无显式一致性读事务、行级原件待一致性快照重出；Windows 回滚全链未实机演练（B 的回滚 SQL 已生成但未在生产演练）；一次未复现的失败；enforce 最终批准与阈值校准；B 的实际执行效果（67 群可路由不等于已产生真实动作，需下一批固定 UTC 窗口的动作统计原件验证）。
+
+七、请重点复核
+1) R9-02 的审计顺序（审计文件先落盘 → 再 commit；结果文件导出失败则 exit 3 并保留 op_id）是否满足"未提交 / 已提交但导出失败 / 完整成功"三分要求。
+2) 新建行"路由未就绪即阻塞、不开、不自动建路由"的处理，是否符合您"不为跑绿自动扩大授权"的口径。
+3) B 的执行边界（只补 onebot 归属/路由、配置位不变、同群已有别的 provider 归属或路由则跳过并报告，本次实测 0 冲突）是否构成越权。
+4) R9-08 中服务未暴露阈值时记 review_policy_source=assumed_defaults（等价于判据函数里文档化的默认值）并标注来源，而不是留空 unknown——留空会让您上一轮已接受的"离线与在线一致"探针失效，这个折中是否可接受。
+5) 第三处探针差异（Windows 注入条件平台适配）是否可接受；新增回归 test_r132_review_group_survey_account_binding.py 是否也需交您审核。
+
+八、边界
+- 本批未启用 enforce、未执行任何回滚、未改动判定逻辑、未扩大授权到其它 provider；主审侧未改应用/PR/Windows，本回复亦仅为整改与只读取证结果。

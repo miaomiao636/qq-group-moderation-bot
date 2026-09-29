@@ -106,38 +106,12 @@ def test_non_numeric_message_id_is_failed() -> None:
     assert client._caller.calls == []
 
 
-def test_non_numeric_group_id_is_failed() -> None:
-    client = OneBotActionClient(_FakeCaller(response={"status": "ok", "retcode": 0}))
-    result = asyncio.run(client.mute("xyz", "200", 3600))
-    assert not result.ok
-
-
-def test_mute_out_of_range_seconds_is_failed() -> None:
-    client = OneBotActionClient(_FakeCaller(response={"status": "ok", "retcode": 0}))
-    assert not asyncio.run(client.mute("100", "200", 0)).ok
-    assert not asyncio.run(client.mute("100", "200", 30 * 24 * 3600 + 1)).ok
-
-
-def test_mute_sends_set_group_ban_with_int_ids() -> None:
+def test_onebot_action_client_exposes_only_automatic_recall() -> None:
     caller = _FakeCaller(response={"status": "ok", "retcode": 0})
-    asyncio.run(OneBotActionClient(caller).mute("100", "200", 3600))
-    assert caller.calls == [("set_group_ban", {"group_id": 100, "user_id": 200, "duration": 3600})]
-
-
-def test_warn_sends_send_group_msg_with_reply_and_text() -> None:
-    caller = _FakeCaller(response={"status": "ok", "retcode": 0})
-    asyncio.run(OneBotActionClient(caller).warn("100", "999", "stop"))
-    assert caller.calls and caller.calls[0][0] == "send_group_msg"
-    params = caller.calls[0][1]
-    assert params["group_id"] == 100
-    msg = params["message"]
-    assert msg[0] == {"type": "reply", "data": {"id": 999}}
-    assert msg[1] == {"type": "text", "data": {"text": "stop"}}
-
-
-def test_warn_empty_text_is_failed() -> None:
-    client = OneBotActionClient(_FakeCaller(response={"status": "ok", "retcode": 0}))
-    assert not asyncio.run(client.warn("100", "999", "   ")).ok
+    client = OneBotActionClient(caller)
+    assert not hasattr(client, "mute")
+    assert not hasattr(client, "warn")
+    assert caller.calls == []
 
 
 def test_invalid_response_missing_status_propagates() -> None:
@@ -339,6 +313,30 @@ class _FakeOneBotClient:
         return ActionResult(action="warn", ok=True, status_code=0, attempts=1)
 
 
+class _ConfirmedOneBotClient(_FakeOneBotClient):
+    """Explicit notice delivery, not a blanket bypass of confirmation checks."""
+
+    async def recall(self, group, mid, /, *, actor="system") -> ActionResult:
+        from datetime import UTC, datetime
+
+        from app.actions.recall_confirmation import RecallNotice, accept_notice
+
+        result = await super().recall(group, mid, actor=actor)
+        async with SessionLocal() as session:
+            assert await accept_notice(
+                session,
+                RecallNotice(
+                    account_id="10000001",
+                    group_id=group,
+                    user_id="1001",
+                    message_id=mid,
+                    operator_id="10000001",
+                    occurred_at=datetime.now(UTC),
+                ),
+            )
+        return result
+
+
 def _official_onebot_settings() -> Settings:
     return Settings(
         app_env="prod",
@@ -347,7 +345,7 @@ def _official_onebot_settings() -> Settings:
         qq_app_secret="SECRET",
         action_mode="OFFICIAL",
         onebot_actions_enabled=True,
-        onebot_action_stage="full",
+        onebot_action_stage="recall_only",
         onebot_self_id="10000001",
         _env_file=None,
     )
@@ -442,11 +440,15 @@ async def test_official_onebot_actions_disabled_is_skipped() -> None:
 
 
 @pytest.mark.asyncio
-async def test_official_onebot_success_executes_recall_mute_warn() -> None:
-    client = _FakeOneBotClient()
-    group = f"OB_OK_{uuid.uuid4().hex[:6]}"
+async def test_official_onebot_success_executes_recall_only() -> None:
+    from datetime import UTC, datetime
+
+    client = _ConfirmedOneBotClient()
+    group = str(uuid.uuid4().int)[:10]
     mid = str(uuid.uuid4().int)[:12]
     msg = _ob_msg(group, "1001", mid=mid)
+    msg.external_self_id = "10000001"
+    msg.sent_at = datetime.now(UTC)
     async with SessionLocal() as session:
         await _setup_onebot_group(session, group)
         intents = await orchestrate_actions(
@@ -457,9 +459,9 @@ async def test_official_onebot_success_executes_recall_mute_warn() -> None:
             settings=_official_onebot_settings(),
         )
     statuses = {i.action: i.status for i in intents}
-    assert statuses == {"recall": "SUCCEEDED", "mute": "SUCCEEDED", "warn": "SUCCEEDED"}
+    assert statuses == {"recall": "SUCCEEDED"}
     actions_called = [c[0] for c in client.calls]
-    assert actions_called == ["recall", "mute", "warn"]
+    assert actions_called == ["recall"]
 
 
 @pytest.mark.asyncio
@@ -569,12 +571,16 @@ async def test_no_route_fail_closed() -> None:
 
 @pytest.mark.asyncio
 async def test_action_logs_written_for_audit() -> None:
+    from datetime import UTC, datetime
+
     from app.models import ActionLog
 
-    client = _FakeOneBotClient()
-    group = f"OB_AL_{uuid.uuid4().hex[:6]}"
+    client = _ConfirmedOneBotClient()
+    group = str(uuid.uuid4().int)[:10]
     mid = str(uuid.uuid4().int)[:12]
     msg = _ob_msg(group, "1001", mid=mid)
+    msg.external_self_id = "10000001"
+    msg.sent_at = datetime.now(UTC)
     async with SessionLocal() as session:
         await _setup_onebot_group(session, group)
         await orchestrate_actions(
@@ -596,6 +602,6 @@ async def test_action_logs_written_for_audit() -> None:
             .scalars()
             .all()
         )
-    assert len(logs) == 3
-    assert {log.action for log in logs} == {"recall", "mute", "warn"}
+    assert len(logs) == 1
+    assert {log.action for log in logs} == {"recall"}
     assert all(log.ok for log in logs)

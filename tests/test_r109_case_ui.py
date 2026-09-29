@@ -77,6 +77,19 @@ def _login(client: TestClient) -> str:
 _DEFAULT_SNAPSHOT = object()
 
 
+def test_case_retention_policy_is_visible_in_cases_and_settings(client: TestClient) -> None:
+    _login(client)
+    cases = client.get("/admin/")
+    settings = client.get("/admin/settings")
+    assert cases.status_code == settings.status_code == 200
+    for page in (cases, settings):
+        assert "结案满 7 天" in page.text
+        assert "归档满 30 天" in page.text
+        assert "原文" in page.text
+    assert "每6小时" not in settings.text
+    assert "执行频率由本机 Windows 任务计划决定" in settings.text
+
+
 def _seed(
     *, archived: bool = True, snapshot: Any = _DEFAULT_SNAPSHOT, purged: bool = False
 ) -> _CaseData:

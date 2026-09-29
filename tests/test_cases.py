@@ -1,7 +1,8 @@
-"""T-104 测试：两次违规状态机、30天窗口、白名单保护、误判撤销、案件双出口互斥。"""
+"""T-104 测试：仅自动撤回、再犯待审、违规历史与案件审计。"""
 
 from __future__ import annotations
 
+import json
 import uuid
 
 import pytest
@@ -61,16 +62,16 @@ async def test_first_strike_plan() -> None:
         )
         assert isinstance(outcome, ViolationOutcome)
         assert outcome.strike_no == 1
-        actions = {p.action for p in outcome.planned_actions}
-        assert actions == {"recall", "mute", "warn"}
+        actions = [p.action for p in outcome.planned_actions]
+        assert actions == ["recall"]
         assert outcome.case is None
-        mute = next(p for p in outcome.planned_actions if p.action == "mute")
-        assert mute.params["seconds"] == 3600
 
 
 @pytest.mark.asyncio
-async def test_second_strike_creates_case_and_no_kick() -> None:
+async def test_second_strike_only_recalls_and_creates_review_case() -> None:
+    from app.cases.models import Case
     from app.db import SessionLocal
+    from sqlalchemy import func, select
 
     group, member = _ids()
     async with SessionLocal() as session:
@@ -85,12 +86,173 @@ async def test_second_strike_creates_case_and_no_kick() -> None:
             high_decision("CASE_MSG_S2_2", group, member),
         )
         assert outcome.strike_no == 2
-        actions = {p.action for p in outcome.planned_actions}
-        assert "warn" not in actions  # 第二次不警告
-        assert "kick" not in actions  # 永不自动踢人
+        actions = [p.action for p in outcome.planned_actions]
+        assert actions == ["recall"]
         assert outcome.case is not None
         assert outcome.case.status == "PENDING_REVIEW"
-        assert outcome.case.case_no.startswith("R")
+        assert outcome.violation.case_id == outcome.case.id
+        assert (
+            await session.execute(
+                select(func.count()).select_from(Case).where(Case.group_openid == group)
+            )
+        ).scalar_one() == 1
+
+
+@pytest.mark.asyncio
+async def test_after_manual_close_next_violation_gets_new_case_with_only_new_evidence() -> None:
+    from app.db import SessionLocal
+
+    group, member = _ids()
+    async with SessionLocal() as session:
+        first = await record_violation(
+            session,
+            make_message("CASE_REOPEN_1", group, member),
+            high_decision("CASE_REOPEN_1", group, member),
+        )
+        second = await record_violation(
+            session,
+            make_message("CASE_REOPEN_2", group, member),
+            high_decision("CASE_REOPEN_2", group, member),
+        )
+        assert second.case is not None
+        old_case_id = second.case.id
+        await transition_case(session, old_case_id, "KEEP", operator="admin_test")
+        await transition_case(session, old_case_id, "CLOSED", operator="admin_test")
+
+        later = await record_violation(
+            session,
+            make_message("CASE_REOPEN_3", group, member),
+            high_decision("CASE_REOPEN_3", group, member),
+        )
+        assert later.case is not None and later.case.id != old_case_id
+        assert later.case.status == "PENDING_REVIEW"
+        assert later.planned_actions[0].action == "recall"
+        assert len(later.planned_actions) == 1
+        assert json.loads(later.case.violation_ids_json) == [later.violation.id]
+        assert later.violation.case_id == later.case.id
+        assert first.violation.case_id == old_case_id
+        old = await session.get(type(later.case), old_case_id)
+        assert old is not None and old.status == "CLOSED"
+
+
+@pytest.mark.asyncio
+async def test_closed_case_reoffense_after_window_or_archive_still_creates_case() -> None:
+    from datetime import UTC, datetime, timedelta
+
+    from app.cases.models import Case
+    from app.db import SessionLocal
+
+    group, member = _ids()
+    async with SessionLocal() as session:
+        session.add(
+            Case(
+                case_no=f"OLD-{uuid.uuid4().hex[:12]}",
+                group_openid=group,
+                member_openid=member,
+                status="CLOSED",
+                archived=True,
+                closed_at=datetime.now(UTC) - timedelta(days=45),
+                audit_json=json.dumps({"transitions": [{"to": "KEEP"}]}),
+            )
+        )
+        await session.commit()
+        outcome = await record_violation(
+            session,
+            make_message("CASE_ARCHIVED_REOFFEND", group, member),
+            high_decision("CASE_ARCHIVED_REOFFEND", group, member),
+        )
+        assert outcome.strike_no == 1
+        assert outcome.case is not None and outcome.case.status == "PENDING_REVIEW"
+        assert json.loads(outcome.case.violation_ids_json) == [outcome.violation.id]
+
+
+@pytest.mark.asyncio
+async def test_false_positive_closed_case_does_not_trigger_first_new_violation() -> None:
+    from app.cases.models import Case
+    from app.db import SessionLocal
+
+    group, member = _ids()
+    async with SessionLocal() as session:
+        session.add(
+            Case(
+                case_no=f"FALSE-{uuid.uuid4().hex[:12]}",
+                group_openid=group,
+                member_openid=member,
+                status="CLOSED",
+                audit_json=json.dumps({"revoked_by": "admin_test"}),
+            )
+        )
+        await session.commit()
+        outcome = await record_violation(
+            session,
+            make_message("CASE_FALSE_REOFFEND", group, member),
+            high_decision("CASE_FALSE_REOFFEND", group, member),
+        )
+        assert outcome.strike_no == 1 and outcome.case is None
+
+
+@pytest.mark.asyncio
+async def test_reoffense_ignores_damaged_closed_audit_and_finds_earlier_confirmation() -> None:
+    from datetime import UTC, datetime, timedelta
+
+    from app.cases.models import Case
+    from app.db import SessionLocal
+
+    group, member = _ids()
+    async with SessionLocal() as session:
+        session.add_all(
+            [
+                Case(
+                    case_no=f"CONFIRMED-{uuid.uuid4().hex[:12]}",
+                    group_openid=group,
+                    member_openid=member,
+                    status="CLOSED",
+                    closed_at=datetime.now(UTC) - timedelta(days=50),
+                    audit_json=json.dumps({"transitions": [{"to": "KEEP"}]}),
+                ),
+                Case(
+                    case_no=f"DAMAGED-{uuid.uuid4().hex[:12]}",
+                    group_openid=group,
+                    member_openid=member,
+                    status="CLOSED",
+                    closed_at=datetime.now(UTC) - timedelta(days=40),
+                    audit_json="{",
+                ),
+            ]
+        )
+        await session.commit()
+        outcome = await record_violation(
+            session,
+            make_message("CASE_DAMAGED_AUDIT", group, member),
+            high_decision("CASE_DAMAGED_AUDIT", group, member),
+        )
+        assert outcome.case is not None
+        assert outcome.case.status == "PENDING_REVIEW"
+
+
+@pytest.mark.asyncio
+async def test_revoking_one_of_multiple_case_violations_keeps_case_pending() -> None:
+    from app.db import SessionLocal
+
+    group, member = _ids()
+    async with SessionLocal() as session:
+        first = await record_violation(
+            session,
+            make_message("CASE_PARTIAL_REVOKE_1", group, member),
+            high_decision("CASE_PARTIAL_REVOKE_1", group, member),
+        )
+        second = await record_violation(
+            session,
+            make_message("CASE_PARTIAL_REVOKE_2", group, member),
+            high_decision("CASE_PARTIAL_REVOKE_2", group, member),
+        )
+        assert second.case is not None
+        await revoke_violation(session, first.violation.id, "误判一条", "admin_test")
+        case = await session.get(type(second.case), second.case.id)
+        assert case is not None and case.status == "PENDING_REVIEW"
+        await revoke_violation(session, second.violation.id, "全部误判", "admin_test")
+        await session.refresh(case)
+        assert case.status == "CLOSED"
 
 
 @pytest.mark.asyncio
@@ -193,8 +355,19 @@ async def test_revoke_all_case_violations_closes_case() -> None:
             make_message("CASE_MSG_C2", group, member),
             high_decision("CASE_MSG_C2", group, member),
         )
-        assert o2.case is not None
-        case_id = o2.case.id
+        # Existing cases remain readable and correctable after automatic case creation stops.
+        case = Case(
+            case_no=f"LEGACY-{uuid.uuid4().hex[:12]}",
+            group_openid=group,
+            member_openid=member,
+            violation_ids_json=json.dumps([o1.violation.id, o2.violation.id]),
+        )
+        session.add(case)
+        await session.flush()
+        o1.violation.case_id = case.id
+        o2.violation.case_id = case.id
+        await session.commit()
+        case_id = case.id
         await revoke_violation(session, o1.violation.id, "误判A", operator="admin_test")
         await revoke_violation(session, o2.violation.id, "误判B", operator="admin_test")
         case = await session.get(Case, case_id)
@@ -276,18 +449,14 @@ async def test_case_transition_via_service_audited() -> None:
 
     group, member = _ids()
     async with SessionLocal() as session:
-        await record_violation(
-            session,
-            make_message("CASE_MSG_T1", group, member),
-            high_decision("CASE_MSG_T1", group, member),
+        historical = Case(
+            case_no=f"LEGACY-{uuid.uuid4().hex[:12]}",
+            group_openid=group,
+            member_openid=member,
         )
-        o2 = await record_violation(
-            session,
-            make_message("CASE_MSG_T2", group, member),
-            high_decision("CASE_MSG_T2", group, member),
-        )
-        assert o2.case is not None
-        case_id = o2.case.id
+        session.add(historical)
+        await session.commit()
+        case_id = historical.id
         case = await transition_case(session, case_id, "APPROVED_MANUAL", operator="admin_test")
         assert case.status == "APPROVED_MANUAL"
         case = await transition_case(session, case_id, "MANUAL_PENDING", operator="admin_test")

@@ -1,0 +1,25 @@
+{
+  "scope": "Local username redaction and UTF-8/LF normalization only; originals unchanged in TEMP. Embedded artifact hashes describe local originals.",
+  "records": [
+    {
+      "file": "run-metadata.json",
+      "local_original_sha256": "24c40eda787aee677d9d14f711dbda33111baa289f710f204bdb3b1801742761",
+      "published_sha256": "bd4877d7b9a9b5480182d4f3aebcdb17cf2cc8d466b9c8d3b82b27f2026a2b6f"
+    },
+    {
+      "file": "ruff-check.log",
+      "local_original_sha256": "a4443afdcfb6d7363adb285762515ccf7cf50473b1a05c20c1a50f6bed4d26b0",
+      "published_sha256": "82b3e6a6c090a57601d22943bd23fca9218d1031dbe5a7b754092f9a156b4f18"
+    },
+    {
+      "file": "ruff-format.log",
+      "local_original_sha256": "fdc3f680e5e0b24373941f3828745b85df2bd7161fa8d9ee10888e666f91767e",
+      "published_sha256": "8275fe0f3831075a46b3ce81c1f4b3841fb4c8709d86db0be6d687ca42d31253"
+    },
+    {
+      "file": "mypy.log",
+      "local_original_sha256": "020a7b875d28c9d735226bb0c8bd487f45a1c471b6333ec2fc90282695db94f0",
+      "published_sha256": "fdac9028099af3d1af03b385379d26b4edebadf935fa7565d4d0fd38310e6db6"
+    }
+  ]
+}

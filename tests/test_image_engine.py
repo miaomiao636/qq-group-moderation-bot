@@ -188,7 +188,7 @@ def test_merge_media_violation_escalates() -> None:
     decision = _text_decision("allow")
     merged = merge_decisions(decision, MediaAnalysis("violation_high", 0.95, reason="黑名单图"))
     assert merged.verdict == "violation_high"
-    assert set(merged.recommended_actions) == {"recall", "mute", "warn"}
+    assert merged.recommended_actions == ["recall"]
     assert "kick" not in merged.model_dump_json().lower()
 
 

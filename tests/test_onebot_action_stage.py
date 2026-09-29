@@ -1,6 +1,7 @@
 """W5 staged rollout: recall-only is the first live OneBot stage, never full by default."""
 
 import uuid
+from datetime import UTC, datetime
 
 import pytest
 from app.actions.orchestrator import orchestrate_actions
@@ -8,7 +9,7 @@ from app.config import Settings
 from app.db import SessionLocal
 
 from tests.test_onebot_actions import (
-    _FakeOneBotClient,
+    _ConfirmedOneBotClient,
     _high_decision,
     _ob_msg,
     _official_onebot_settings,
@@ -24,7 +25,7 @@ def test_onebot_stage_defaults_to_recall_only_and_actions_remain_disabled(monkey
     assert settings.onebot_actions_enabled is False
 
 
-@pytest.mark.parametrize("value", ["", "all", "mute", "FULL"])
+@pytest.mark.parametrize("value", ["", "all", "mute", "FULL", "full"])
 def test_invalid_onebot_stage_fails_configuration(value):
     with pytest.raises(ValueError, match="ONEBOT_ACTION_STAGE"):
         Settings(ONEBOT_ACTION_STAGE=value, _env_file=None)
@@ -33,10 +34,13 @@ def test_invalid_onebot_stage_fails_configuration(value):
 @pytest.mark.asyncio
 @pytest.mark.parametrize("stage", ["recall_only", "full"])
 async def test_stage_controls_two_strikes_without_replaying_old_actions(stage):
-    client = _FakeOneBotClient()
-    group = f"stage-{uuid.uuid4().hex}"
+    client = _ConfirmedOneBotClient()
+    group = str(uuid.uuid4().int)[:10]
     settings = _official_onebot_settings().model_copy(update={"onebot_action_stage": stage})
     messages = [_ob_msg(group, "1001") for _ in range(2)]
+    for msg in messages:
+        msg.external_self_id = "10000001"
+        msg.sent_at = datetime.now(UTC)
     intents = []
     async with SessionLocal() as session:
         await _setup_onebot_group(session, group)
@@ -50,13 +54,7 @@ async def test_stage_controls_two_strikes_without_replaying_old_actions(stage):
             await orchestrate_actions(
                 session, msg, _high_decision(msg), onebot_client=client, settings=settings
             )
-    expected = (
-        ["recall", "recall"]
-        if stage == "recall_only"
-        else ["recall", "mute", "warn", "recall", "mute"]
-    )
+    expected = ["recall", "recall"]
     assert [name for name, _ in client.calls] == expected
     assert [intent.action for intent in intents] == expected
     assert all(intent.status == "SUCCEEDED" for intent in intents)
-    if stage == "full":
-        assert [args[2] for name, args in client.calls if name == "mute"] == [3600, 86400]

@@ -1,0 +1,43 @@
+{
+  "as_of": "2026-09-21T16:07:44.788898+00:00",
+  "retention_days": 15,
+  "read_only": true,
+  "deletion_authorized": false,
+  "n03_closed": false,
+  "filesystem_snapshot_atomic": false,
+  "source_summary": {
+    "sources": 29449,
+    "invalid_payload": 0,
+    "invalid_file_references": 4353,
+    "expired_source_processed_recent": 0,
+    "reference_rows": 29473,
+    "invalid_media_shape": 0,
+    "source_time_missing": 4937,
+    "source_time_known": 24512
+  },
+  "warnings": [],
+  "entries_seen": 9700,
+  "unmatched_reference_names": 0,
+  "execution_sha": "e41368d0bac5469497ad187354683beda0b5d429",
+  "command": "uv run python scripts/retention_audit.py --db data/moderation.db --data-root data --evidence-root docs/evidence/image-review --evidence-root docs/evidence/allowlist-samples --as-of 2026-09-21T16:07:44.788898+00:00 --out C:/Users/81596/AppData/Local/Temp/qqbot-core-closeout-20260922/retention-inventory.json",
+  "report_sha256": "e671ed0b64240bf3d95212e34a77c079e2b411b8680ebd0bbaeb2b18ea95eff7",
+  "file_count": 9614,
+  "blocked_count": 0,
+  "statuses": {
+    "backup_content_not_inspected": 15,
+    "known_source_within_window_review_required": 6483,
+    "source_time_unknown_review_required": 1931,
+    "no_source_reference": 591,
+    "copy_content_not_inspected": 8,
+    "sample_content_not_inspected": 59,
+    "evidence_content_not_inspected": 527
+  },
+  "scope_counts": {
+    "backups": 15,
+    "media": 9005,
+    "purge_drill": 8,
+    "sample_pool": 59,
+    "external_evidence_1": 522,
+    "external_evidence_2": 5
+  }
+}

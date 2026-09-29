@@ -108,7 +108,7 @@ def test_single_vision_ai_high_confidence_ad_upgrades_to_violation() -> None:
     decision = merge_ai_evidence(_allow_decision(), [result])
     assert decision.verdict == "violation_high"
     assert decision.category == "ad"
-    assert decision.recommended_actions == ["recall", "mute", "warn"]
+    assert decision.recommended_actions == ["recall"]
 
 
 def test_single_vision_ai_fraud_high_confidence_upgrades() -> None:
@@ -398,7 +398,7 @@ def test_text_ai_high_confidence_still_promotes_without_conflict() -> None:
     )
     decision = merge_ai_evidence(local, [_r01_text_ad()])
     assert decision.verdict == "violation_high"
-    assert decision.recommended_actions == ["recall", "mute", "warn"]
+    assert decision.recommended_actions == ["recall"]
 
 
 def test_text_ai_local_category_conflict_stays_human_review() -> None:
@@ -527,4 +527,4 @@ def test_single_modal_text_ad_without_vision_still_upgrades() -> None:
     """不误伤: 无图片的纯文字广告（无视觉结果）仍可升罚。"""
     decision = merge_ai_evidence(_allow_decision(), [_text_ad()])
     assert decision.verdict == "violation_high"
-    assert decision.recommended_actions == ["recall", "mute", "warn"]
+    assert decision.recommended_actions == ["recall"]

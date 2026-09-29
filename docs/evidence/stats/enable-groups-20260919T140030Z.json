@@ -1,0 +1,440 @@
+{
+  "operator": "负责人-2026-09-19",
+  "threshold": 200,
+  "stage": "recall_only",
+  "changed": [
+    {
+      "group": "469164994",
+      "members": 568,
+      "name": "线上兼职交流群",
+      "before": 0,
+      "after": 1,
+      "new_row": true
+    },
+    {
+      "group": "584644723",
+      "members": 500,
+      "name": "厦门免费家教群",
+      "before": 0,
+      "after": 1,
+      "new_row": true
+    },
+    {
+      "group": "218597172",
+      "members": 500,
+      "name": "临汾同城信息群",
+      "before": 0,
+      "after": 1,
+      "new_row": true
+    },
+    {
+      "group": "628700184",
+      "members": 500,
+      "name": "湛江免费家教群",
+      "before": 0,
+      "after": 1,
+      "new_row": true
+    },
+    {
+      "group": "760666306",
+      "members": 498,
+      "name": "潍坊免费家教群",
+      "before": 0,
+      "after": 1,
+      "new_row": true
+    },
+    {
+      "group": "430015563",
+      "members": 498,
+      "name": "衡阳免费家教群",
+      "before": 0,
+      "after": 1,
+      "new_row": true
+    },
+    {
+      "group": "289890585",
+      "members": 498,
+      "name": "沈阳免费家教群",
+      "before": 0,
+      "after": 1,
+      "new_row": true
+    },
+    {
+      "group": "585200722",
+      "members": 495,
+      "name": "长治同城信息群",
+      "before": 0,
+      "after": 1,
+      "new_row": true
+    },
+    {
+      "group": "807984097",
+      "members": 495,
+      "name": "南昌免费家教群",
+      "before": 0,
+      "after": 1,
+      "new_row": true
+    },
+    {
+      "group": "633520346",
+      "members": 495,
+      "name": "重庆免费家教群",
+      "before": 0,
+      "after": 1,
+      "new_row": true
+    },
+    {
+      "group": "176609360",
+      "members": 495,
+      "name": "廊坊免费家教群",
+      "before": 0,
+      "after": 1,
+      "new_row": true
+    },
+    {
+      "group": "627866148",
+      "members": 494,
+      "name": "邯郸同城信息群",
+      "before": 0,
+      "after": 1,
+      "new_row": true
+    },
+    {
+      "group": "279421915",
+      "members": 493,
+      "name": "泸州免费家教群",
+      "before": 0,
+      "after": 1,
+      "new_row": true
+    },
+    {
+      "group": "462934389",
+      "members": 493,
+      "name": "阜阳免费家教群",
+      "before": 0,
+      "after": 1,
+      "new_row": true
+    },
+    {
+      "group": "978984089",
+      "members": 491,
+      "name": "海口免费家教群",
+      "before": 0,
+      "after": 1,
+      "new_row": true
+    },
+    {
+      "group": "628690424",
+      "members": 482,
+      "name": "齐齐哈尔免费家教群",
+      "before": 0,
+      "after": 1,
+      "new_row": true
+    },
+    {
+      "group": "571448105",
+      "members": 465,
+      "name": "广州免费家教群",
+      "before": 0,
+      "after": 1,
+      "new_row": true
+    },
+    {
+      "group": "613383905",
+      "members": 455,
+      "name": "运城免费家教群",
+      "before": 0,
+      "after": 1,
+      "new_row": true
+    },
+    {
+      "group": "569839662",
+      "members": 450,
+      "name": "太原同城信息群",
+      "before": 0,
+      "after": 1,
+      "new_row": true
+    },
+    {
+      "group": "617144721",
+      "members": 443,
+      "name": "漳州免费家教群",
+      "before": 0,
+      "after": 1,
+      "new_row": true
+    },
+    {
+      "group": "857385891",
+      "members": 437,
+      "name": "宁波免费家教群",
+      "before": 0,
+      "after": 1,
+      "new_row": true
+    },
+    {
+      "group": "578590211",
+      "members": 430,
+      "name": "湘潭免费家教群",
+      "before": 0,
+      "after": 1,
+      "new_row": true
+    },
+    {
+      "group": "597966053",
+      "members": 413,
+      "name": "马鞍山免费家教群",
+      "before": 0,
+      "after": 1,
+      "new_row": true
+    },
+    {
+      "group": "463447589",
+      "members": 413,
+      "name": "2026大一新生副业群",
+      "before": 0,
+      "after": 1,
+      "new_row": true
+    },
+    {
+      "group": "628717263",
+      "members": 412,
+      "name": "绵阳免费家教群",
+      "before": 0,
+      "after": 1,
+      "new_row": true
+    },
+    {
+      "group": "817938220",
+      "members": 401,
+      "name": "泰安同城信息群",
+      "before": 0,
+      "after": 1,
+      "new_row": true
+    },
+    {
+      "group": "580384588",
+      "members": 391,
+      "name": "东莞免费家教群",
+      "before": 0,
+      "after": 1,
+      "new_row": true
+    },
+    {
+      "group": "1083679192",
+      "members": 386,
+      "name": "副业兼职交流总群",
+      "before": 0,
+      "after": 1,
+      "new_row": true
+    },
+    {
+      "group": "478404837",
+      "members": 385,
+      "name": "哈尔滨同城户外搭子交流聚集地",
+      "before": 0,
+      "after": 1,
+      "new_row": true
+    },
+    {
+      "group": "487263273",
+      "members": 372,
+      "name": "芜湖免费家教群",
+      "before": 0,
+      "after": 1,
+      "new_row": true
+    },
+    {
+      "group": "780088757",
+      "members": 368,
+      "name": "保定同城信息群",
+      "before": 0,
+      "after": 1,
+      "new_row": true
+    },
+    {
+      "group": "738430729",
+      "members": 364,
+      "name": "大学生表白墙",
+      "before": 0,
+      "after": 1,
+      "new_row": true
+    },
+    {
+      "group": "157870516",
+      "members": 351,
+      "name": "天津免费家教群",
+      "before": 0,
+      "after": 1,
+      "new_row": true
+    },
+    {
+      "group": "584292737",
+      "members": 347,
+      "name": "南宁免费家教群",
+      "before": 0,
+      "after": 1,
+      "new_row": true
+    },
+    {
+      "group": "627865060",
+      "members": 346,
+      "name": "包头同城信息群",
+      "before": 0,
+      "after": 1,
+      "new_row": true
+    },
+    {
+      "group": "583976413",
+      "members": 340,
+      "name": "呼市免费家教群",
+      "before": 0,
+      "after": 1,
+      "new_row": true
+    },
+    {
+      "group": "992099580",
+      "members": 332,
+      "name": "桂林免费家教群",
+      "before": 0,
+      "after": 1,
+      "new_row": true
+    },
+    {
+      "group": "419153172",
+      "members": 312,
+      "name": "贵阳免费家教群",
+      "before": 0,
+      "after": 1,
+      "new_row": true
+    },
+    {
+      "group": "219441644",
+      "members": 294,
+      "name": "同城搭子聚集交流群",
+      "before": 0,
+      "after": 1,
+      "new_row": true
+    },
+    {
+      "group": "765733049",
+      "members": 286,
+      "name": "苏州免费家教群",
+      "before": 0,
+      "after": 1,
+      "new_row": true
+    },
+    {
+      "group": "613389636",
+      "members": 260,
+      "name": "西安免费家教群",
+      "before": 0,
+      "after": 1,
+      "new_row": true
+    },
+    {
+      "group": "585258743",
+      "members": 260,
+      "name": "唐山免费家教群",
+      "before": 0,
+      "after": 1,
+      "new_row": true
+    },
+    {
+      "group": "627375134",
+      "members": 258,
+      "name": "淮南同城信息群",
+      "before": 0,
+      "after": 1,
+      "new_row": true
+    },
+    {
+      "group": "609310617",
+      "members": 258,
+      "name": "珠海免费家教群",
+      "before": 0,
+      "after": 1,
+      "new_row": true
+    },
+    {
+      "group": "612877070",
+      "members": 254,
+      "name": "昆明免费家教群",
+      "before": 0,
+      "after": 1,
+      "new_row": true
+    },
+    {
+      "group": "612871739",
+      "members": 251,
+      "name": "吉林免费家教群",
+      "before": 0,
+      "after": 1,
+      "new_row": true
+    },
+    {
+      "group": "179186495",
+      "members": 250,
+      "name": "武汉免费家教群",
+      "before": 0,
+      "after": 1,
+      "new_row": true
+    },
+    {
+      "group": "575730114",
+      "members": 250,
+      "name": "龙岩同城信息群",
+      "before": 0,
+      "after": 1,
+      "new_row": true
+    },
+    {
+      "group": "668938158",
+      "members": 232,
+      "name": "西宁免费家教群",
+      "before": 0,
+      "after": 1,
+      "new_row": true
+    },
+    {
+      "group": "768162611",
+      "members": 229,
+      "name": "银川免费家教群",
+      "before": 0,
+      "after": 1,
+      "new_row": true
+    },
+    {
+      "group": "925232812",
+      "members": 211,
+      "name": "万能校园墙2",
+      "before": 0,
+      "after": 1,
+      "new_row": true
+    },
+    {
+      "group": "584867776",
+      "members": 208,
+      "name": "深圳免费家教群",
+      "before": 0,
+      "after": 1,
+      "new_row": true
+    },
+    {
+      "group": "636277137",
+      "members": 203,
+      "name": "晋中同城信息群",
+      "before": 0,
+      "after": 1,
+      "new_row": true
+    },
+    {
+      "group": "617125845",
+      "members": 202,
+      "name": "泉州免费家教群",
+      "before": 0,
+      "after": 1,
+      "new_row": true
+    }
+  ],
+  "backup": "C:\\Users\\81596\\AppData\\Local\\Temp\\backups\\moderation-20260919T140030Z-g7b8y226.db"
+}

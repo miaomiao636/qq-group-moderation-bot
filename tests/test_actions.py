@@ -81,58 +81,6 @@ async def test_recall_permission_error_is_flagged() -> None:
 
 
 @pytest.mark.asyncio
-async def test_mute_body_uses_expire_time() -> None:
-    adapter, responder, client = make_adapter([httpx.Response(200, json={})])
-    result = await adapter.mute(GROUP, MEMBER, 3600)
-    assert result.ok is True
-    assert result.action == "mute"
-    body = json.loads(responder.calls[-1].content)
-    entry = body["members"][0]
-    assert entry["op"] == "add"
-    assert entry["member_openid"] == MEMBER
-    # mute_expire_at 必须是带 Asia/Shanghai 时区的 RFC3339 到期时间
-    assert entry["mute_expire_at"].endswith("+08:00")
-    await teardown(adapter, client)
-
-
-@pytest.mark.asyncio
-async def test_mute_rejects_out_of_range_seconds() -> None:
-    adapter, _, client = make_adapter([])
-    for seconds in (0, -5, 30 * 24 * 3600 + 1):
-        result = await adapter.mute(GROUP, MEMBER, seconds)
-        assert result.ok is False
-        assert result.attempts == 0  # 本地拒绝，未发起请求
-    await teardown(adapter, client)
-
-
-@pytest.mark.asyncio
-async def test_mute_max_seconds_accepted() -> None:
-    adapter, responder, client = make_adapter([httpx.Response(200, json={})])
-    result = await adapter.mute(GROUP, MEMBER, 30 * 24 * 3600)
-    assert result.ok is True
-    assert len(responder.calls) == 1
-    await teardown(adapter, client)
-
-
-@pytest.mark.asyncio
-async def test_mute_protected_role_returns_platform_error_verbatim() -> None:
-    # D-012：群主/管理员禁言被平台拒绝（40103004），适配器原样返回供审计
-    adapter, _, client = make_adapter(
-        [
-            httpx.Response(
-                400,
-                json={"code": 40103004, "message": "目标成员为机器人/群主/管理员，不允许被禁言"},
-            ),
-        ]
-    )
-    result = await adapter.mute(GROUP, MEMBER, 3600)
-    assert result.ok is False
-    assert result.is_permission_error is True
-    assert "不允许被禁言" in result.err_message
-    await teardown(adapter, client)
-
-
-@pytest.mark.asyncio
 async def test_unmute_uses_del_op() -> None:
     adapter, responder, client = make_adapter([httpx.Response(200, json={})])
     result = await adapter.unmute(GROUP, MEMBER)
@@ -144,33 +92,11 @@ async def test_unmute_uses_del_op() -> None:
 
 
 @pytest.mark.asyncio
-async def test_warn_not_retried_on_network_error() -> None:
-    # 警告不可重试：网络错误也只尝试一次，避免重复警告
-    calls: list[httpx.Request] = []
-
-    def route(request: httpx.Request) -> httpx.Response:
-        calls.append(request)
-        if request.url.path.endswith("/app/getAppAccessToken"):
-            return httpx.Response(200, json=TOKEN_RESP)
-        raise httpx.ConnectError("boom", request=request)
-
-    client = httpx.AsyncClient(transport=httpx.MockTransport(route), timeout=10)
-    token_manager = TokenManager("APP", "SECRET", client=client)
-    adapter = OfficialActionAdapter(token_manager, api_base="https://api.bot.qq.com", client=client)
-    result = await adapter.warn(GROUP, MSG_ID, "警告：请遵守群规")
-    assert result.ok is False
-    assert result.attempts == 1
-    assert result.action == "warn"
-    assert len(calls) == 2  # 1次令牌 + 1次动作，无重试
-    await teardown(adapter, client)
-
-
-@pytest.mark.asyncio
-async def test_warn_empty_text_rejected_locally() -> None:
-    adapter, _, client = make_adapter([])
-    result = await adapter.warn(GROUP, MSG_ID, "   ")
-    assert result.ok is False
-    assert result.attempts == 0
+async def test_official_adapter_exposes_no_automatic_mute_or_warning() -> None:
+    adapter, responder, client = make_adapter([])
+    assert not hasattr(adapter, "mute")
+    assert not hasattr(adapter, "warn")
+    assert responder.calls == []
     await teardown(adapter, client)
 
 

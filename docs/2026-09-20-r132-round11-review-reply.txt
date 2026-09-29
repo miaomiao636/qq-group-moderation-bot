@@ -1,0 +1,48 @@
+r132 第九批复核整改回评（受审 SHA 194eb0b，基线 dbd80a5）
+
+一、证据
+- 您本轮 42 项探针先原样入库（入库时本机可复现 33 failed / 9 passed），整改后 42/42 通过；八批入库探针合计 196/0 failed。
+- 仓库全量 1828 用例 / 0 failed / 0 error / 15 skipped；ruff check + format（270+ 文件）、mypy app（89 文件）通过。
+- 同 SHA CI（194eb0b）run 35454483168：ubuntu-latest jobId=105927237807 success、clean runtime-deps jobId=105927237926 success；windows-latest jobId=105927237916 首跑 failure，唯一失败是 tests/test_migration_notifications.py::test_notification_upgrade_constraints_and_downgrade 的 alembic upgrade 子进程 30 秒超时（该 job 本次耗时 13:21，逐条为 1 failed / 1824 passed / 3 skipped）。本批未触碰 alembic/迁移，本机同一测试通过，属 CI 抖动；已触发失败 job 重跑，结论以重跑为准。
+- 生产身份关联（重写后的严格工具）：IDENTITY_OK allowed=68 (mismatch 0) rejected=1 (mismatch 0) snapshot_state=ok，与您独立做的当前 Git 字节核对 69/69 一致。
+
+二、R9 整改映射
+- R9-03-R：顶层 _groups() 不再降级到未核账号的 WebUI（拒绝即拒绝）；两工具统一 load_snapshot() 一次读取（元数据与群行同源，--survey 绑内容）；强校验 self_id 与 provider，缺失或不匹配一律拒绝；兼容路径只在调用方注入名单、无快照可绑时启用，且审计如实标 source=injected_loader（NOT_PROVEN），不冒充"已绑定快照"。
+- R9-09-R：计划带 provider-qualified 行版本；写事务内 where provider=? and 群=? and action_enabled=0 and version=? 做 CAS 复核，撤权/删除/ABA/资格变化一律拒绝旧计划；authorize 在任何写入之前逐目标重跑资格与冲突复核；--threshold 与快照真正参与选择（不在快照内或人数不达阈值即列阻塞）。
+- B01：归属复核新增官方隐式默认分支——该群存在其它 provider 的已启用 settings 行即为冲突（resolve_action_provider 在无 owner/route 时对 qq_official 仍返回 qq_official，插入 OneBot owner 会把它变成 None）；并发插入其它 provider 路由时，写入前复核即可发现，先阻塞、不先写 owner。
+- R9-04-R / R9-07-R：清单 SHA 必须 12 或 64 位十六进制、dHash 必须 16 位（缺失、"-"、1 位一律拒绝，不再跳过校验）；编号规范化后冲突即报错，不再 last-wins；原图缺失、结论未定、漏给结论仍整批零写入。
+- R9-05-R / R9-06-R：快照 corrupt 在任何写入前阻断；决定与拒绝快照改为"先提交 DB + 失败补偿回滚"（COMPENSATED_APPROVAL_ROLLBACK，按变更前状态复位 enabled 与 note），避免把 DB 事务悬在写盘期间引发并发写锁争用；load_rejections 以 DB 为权威（enabled=1 的行不因 JSON 残留"撤回"而被计为当前拒绝）。
+- R9-08-R：读不到服务真实政策时返回空并写 review_policy_source="unknown"（不再回填 0.90/0.60/0.90）；在线 shadow 增加 review_policy_unknown 例外面、离线 detail_blockers 要求来源必须是 service，两侧一致不声称会改变判定；并按您的建议给旧 SyntheticModels fixture 显式补 policy_snapshot()，未改其业务断言。
+- R9-10-R：WHERE 拼在 ORDER BY 之前且参数化；观测、total、image_total 共用同一 UTC 半开范围（起点含、终点不含，窗外不计入）；默认口径仍如实标"全库留存累计"。
+- N-IDENTITY：工具重写——强制 SHA/dHash 格式与长度、核清单 dHash、核 DECISIONS.json 的 batch 与目录名一致、按当前决定的 source 追溯（不再扫任意旧批次）、--batch 只作范围断言（不覆盖 provenance）、拒绝快照 corrupt 时非零退出、JSON 报告写为纯 ASCII。
+
+三、我方引入并已修掉的回归（如实登记）
+- 为满足 R9-03-R，我最初把"必须有结构化快照"做成硬要求，打掉了您第八轮的 8 项 group 探针（它们用注入 loader、无快照）。已补显式兼容路径并恢复通过，196 项入库探针全过。
+
+四、探针平台适配与 AST 口径更正
+- 新增第 4 处文档化适配：窗口探针用 read_text()（无 encoding）读取本仓库 UTF-8 报告，Windows 默认 GBK 抛 UnicodeDecodeError（macOS 通过），只补 encoding="utf-8"，断言与意图逐字未改。
+- AST 口径应为：18 个文件 / 14 个一致 / 4 处已解释差异（mode 输入隔离、scope 契约调整、群探针 Windows 路径注入、窗口探针读取编码）。我上一稿写的"11/14"与您更正的"15/18"都请以此为准。
+
+五、B 方案（54 群）与批准集合的只读对账
+- 人数原件 docs/evidence/stats/groups-20260919T135629Z.md（140 群，>200 人 = 67 群）；
+- 本次新增 54 群 ⊆ 该 67 群（subset=True，无例外），未新增的恰好是既有已可路由的 13 群，即 54 = 67 − 13；
+- 如实登记缺口：执行当时没有 groups-*.json 结构化快照，工具按 action_enabled=1 选择（人数依据来自上述 md 普查）；新工具已改为必须绑定结构化快照并让阈值参与选择；
+- 未重跑生产函数、未撤销任何路由、未扩大群范围、未改开关。
+
+六、仍未证明
+- A09 前 6 秒、历史授权快照（NOT_PROVEN）、导出多查询一致性读事务、Windows 回滚全链实机演练、一次未复现失败、enforce 最终批准与阈值校准、B 的实际动作效果（可路由不等于已产生真实动作）。审计里的 stage_runtime_proven=false 只是如实标注，不构成"服务已加载 recall_only"的证据。
+
+七、请重点复核
+1) R9-03-R 的兼容路径（injected_loader）是否可接受，或应改为一律拒绝（那需要改旧探针 fixture）；
+2) R9-05-R/R9-06-R 我选择"先提交 DB + 失败补偿回滚"而非"DB 事务内写文件"，以保住并发语义；是否需要进一步收敛为同库事务保存权威决定、JSON 仅导出；
+3) B01 我把"该群存在其它 provider 已启用 settings 行"视为冲突（含官方隐式默认）；生产上这 54 群只有 onebot 行，故本次操作不受影响；
+4) 第 4 处适配（窗口探针读取编码）是否可接受；
+5) 194eb0b 的 Windows job 30 秒 alembic 子进程超时是否认可按"与本批改动无关的 CI 抖动"处理（已重跑），或要求我一并调整该测试的超时阈值。
+
+八、边界
+- 本批未启用 enforce、未执行任何回滚、未改动判定逻辑、未扩大授权到其它 provider，也未做新的生产赋权；主审侧未改应用/PR/Windows。
+
+九、收尾：172 项 CI 抖动的固化处理（仅测试，无产品代码改动）
+- 针对 194eb0b 的 Windows job 首跑失败（test_migration_notifications 里 `alembic upgrade` 子进程 30s 超时、重跑即绿），我把该子进程超时从 30s 放宽到 180s，并写明理由（环境抖动 vs 迁移缺陷）。
+- 只放宽超时，断言与逻辑逐字未改；本机该测试通过、ruff/mypy 通过。
+- 因此请以 194eb0b 作为**受审代码 SHA**（其 CI 经重跑已三 job 全绿），本次收尾为其后的**仅测试提交**（SHA 与 CI 见下方最新推送回执）。

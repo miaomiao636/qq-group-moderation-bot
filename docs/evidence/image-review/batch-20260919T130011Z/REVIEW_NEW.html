@@ -1,0 +1,108 @@
+<!doctype html>
+<html lang="zh-CN"><head><meta charset="utf-8">
+<title>图片审核表 · batch-20260919T130011Z</title>
+<style>
+ :root { color-scheme: light dark; }
+ body { font: 15px/1.5 system-ui, "Segoe UI", sans-serif; margin: 0 auto; max-width: 1200px; padding: 16px; }
+ h1 { font-size: 20px; margin: 8px 0 4px; }
+ .meta { color: #777; font-size: 13px; margin-bottom: 12px; }
+ .stat { background: #f6f6f6; border-radius: 8px; padding: 10px 12px; margin-bottom: 14px; font-size: 14px; }
+ @media (prefers-color-scheme: dark) { .stat { background: #232323; } }
+ form { display: grid; gap: 12px; }
+ .card { display: grid; grid-template-columns: 220px 1fr; gap: 14px; border: 1px solid #ddd;
+          border-radius: 10px; padding: 10px; align-items: start; }
+ @media (prefers-color-scheme: dark) { .card { border-color: #3a3a3a; } }
+ .card img { width: 100%; height: auto; border-radius: 8px; background: #fafafa; cursor: zoom-in; }
+ .no { font-weight: 700; font-size: 16px; }
+ .status { display: inline-block; padding: 1px 8px; border-radius: 999px; font-size: 12px; border: 1px solid #999; }
+ .s0 { background: #ffe3e3; border-color: #e25555; color: #b10000; }
+ .s1 { background: #fff4d6; border-color: #d9a300; color: #7a5a00; }
+ .s2 { background: #e8f0ff; border-color: #6b93d6; color: #23456b; }
+ .s3 { background: #eee; }
+ .kv { color: #666; font-size: 13px; } .kv b { color: inherit; }
+ .pick { margin-top: 8px; font-size: 14px; }
+ .pick label { margin-right: 14px; }
+ #out { width: 100%; height: 90px; font-family: ui-monospace, monospace; font-size: 13px; }
+ button { padding: 6px 12px; border-radius: 8px; border: 1px solid #888; background: #f2f2f2; cursor: pointer; }
+ #lightbox { position: fixed; inset: 0; background: rgba(0,0,0,.85); display: none; align-items: center; justify-content: center; }
+ #lightbox img { max-width: 96vw; max-height: 96vh; }
+</style></head><body>
+<h1>图片审核表 · batch-20260919T130011Z</h1>
+<div class="meta">逐张选「放行 / 撤回」，然后点底部按钮生成结论文本，粘回给我即可。图片在原目录内，点图可放大。</div>
+<div class="stat">**集合模式**：`active` —— 按**生效名单**（`image_allowlist` 中 `enabled=1`）评估<br>待审核图片：**97 张**（唯一图片；同图的多条消息已折叠）<br>**动图范围**：0 张为多帧图（**仅按首帧参与哈希**——命中不代表整段动图等价，请据此判断是否可放行）</div>
+<form id="f"><div class="card" data-no="87">
+  <div><img src="img-87_8a8890804000ac8c_b892b6f1.png" alt="87" onclick="zoom(this.src)"></div>
+  <div>
+    <div><span class="no">#87</span> <span class="status s1">无法判定</span></div>
+    <div class="kv">来源：<b>db:enabled（无法判定:证据不足）</b></div>
+    <div class="kv">距离 2~2 ｜ 命中 1 次 ｜ 其中会改变判定 <b>0</b></div>
+    <div class="kv">原判定：record_only:1 ｜ 类别：:1</div>
+    <div class="kv">样例：onebot:530297362:595049814 @2026-09-18 06:20:31.513141 (470794920)</div>
+    <div class="pick">
+      <label><input type="radio" name="87" value="放行"> 放行</label>
+      <label><input type="radio" name="87" value="撤回"> 撤回</label>
+      <label><input type="radio" name="87" value="再看看"> 再看看</label>
+    </div>
+  </div>
+</div>
+<div class="card" data-no="88">
+  <div><img src="img-88_8080a0008000ac8c_656f7b82.jpg" alt="88" onclick="zoom(this.src)"></div>
+  <div>
+    <div><span class="no">#88</span> <span class="status s1">无法判定</span></div>
+    <div class="kv">来源：<b>db:enabled（无法判定:证据不足）</b></div>
+    <div class="kv">距离 2~2 ｜ 命中 1 次 ｜ 其中会改变判定 <b>0</b></div>
+    <div class="kv">原判定：record_only:1 ｜ 类别：:1</div>
+    <div class="kv">样例：onebot:530297362:1872487318 @2026-09-18 06:13:02.587524 (470794920)</div>
+    <div class="pick">
+      <label><input type="radio" name="88" value="放行"> 放行</label>
+      <label><input type="radio" name="88" value="撤回"> 撤回</label>
+      <label><input type="radio" name="88" value="再看看"> 再看看</label>
+    </div>
+  </div>
+</div>
+<div class="card" data-no="95">
+  <div><img src="img-95_88a000000000acac_87b62552.jpg" alt="95" onclick="zoom(this.src)"></div>
+  <div>
+    <div><span class="no">#95</span> <span class="status s1">无法判定</span></div>
+    <div class="kv">来源：<b>db:enabled（无法判定:证据不足）</b></div>
+    <div class="kv">距离 2~2 ｜ 命中 1 次 ｜ 其中会改变判定 <b>0</b></div>
+    <div class="kv">原判定：record_only:1 ｜ 类别：other:1</div>
+    <div class="kv">样例：onebot:3573002001:2132734036 @2026-09-14 08:45:37.679102 (17598122)</div>
+    <div class="pick">
+      <label><input type="radio" name="95" value="放行"> 放行</label>
+      <label><input type="radio" name="95" value="撤回"> 撤回</label>
+      <label><input type="radio" name="95" value="再看看"> 再看看</label>
+    </div>
+  </div>
+</div>
+<div class="card" data-no="96">
+  <div><img src="img-96_88a000000000acac_cf1d623f.jpg" alt="96" onclick="zoom(this.src)"></div>
+  <div>
+    <div><span class="no">#96</span> <span class="status s1">无法判定</span></div>
+    <div class="kv">来源：<b>db:enabled（无法判定:证据不足）</b></div>
+    <div class="kv">距离 2~2 ｜ 命中 1 次 ｜ 其中会改变判定 <b>0</b></div>
+    <div class="kv">原判定：record_only:1 ｜ 类别：:1</div>
+    <div class="kv">样例：onebot:3573002001:1407820221 @2026-09-14 07:13:19.053750 (17598122)</div>
+    <div class="pick">
+      <label><input type="radio" name="96" value="放行"> 放行</label>
+      <label><input type="radio" name="96" value="撤回"> 撤回</label>
+      <label><input type="radio" name="96" value="再看看"> 再看看</label>
+    </div>
+  </div>
+</div></form>
+<h2 style="font-size:16px;margin:18px 0 6px">结论（可复制）</h2>
+<textarea id="out" readonly placeholder="选完上面的按钮后，点这里生成"></textarea>
+<button type="button" onclick="collect()">生成结论文本</button>
+<div id="lightbox" onclick="this.style.display='none'"><img id="lightimg"></div>
+<script>
+function zoom(src) { document.getElementById('lightimg').src = src;
+  document.getElementById('lightbox').style.display = 'flex'; }
+function collect() {
+  const out = [];
+  document.querySelectorAll('.card').forEach(c => {
+    const v = document.querySelector(`input[name="${c.dataset.no}"]:checked`);
+    out.push(c.dataset.no + ' ' + (v ? v.value : '未定'));
+  });
+  document.getElementById('out').value = out.join('；');
+}
+</script></body></html>

@@ -1,0 +1,1015 @@
+{
+  "execution_sha": "ff4d1a2aa79f3ff2f6e88a1ef5acafe262fc731e",
+  "private_evidence_directory": "%LOCALAPPDATA%/QQBotDeploy/campus-template-20260922-01",
+  "automated_suite": [
+    {
+      "execution_sha": "ff4d1a2aa79f3ff2f6e88a1ef5acafe262fc731e",
+      "command": [
+        "<production .venv Python>",
+        "-m",
+        "pytest",
+        "-o",
+        "addopts=",
+        "-q",
+        "--tb=short"
+      ],
+      "at": "2026-09-22T07:57:24.135489+00:00",
+      "exit_code": 0,
+      "environment": {
+        "PYTHONUTF8": "1",
+        "PYTHONIOENCODING": "utf-8"
+      },
+      "summary": "2333 passed, 4 skipped in 212.64s (0:03:32)",
+      "log_sha256": "8794fe4eb7fc4d246dda9090eb3ebdd536b847e47d63de86f5833aa072f33315"
+    },
+    {
+      "execution_sha": "ff4d1a2aa79f3ff2f6e88a1ef5acafe262fc731e",
+      "command": [
+        "<production .venv Python>",
+        "-m",
+        "pytest",
+        "tests",
+        "-k",
+        "r132_review",
+        "-o",
+        "addopts=",
+        "-q",
+        "--tb=short"
+      ],
+      "at": "2026-09-22T07:57:42.283047+00:00",
+      "exit_code": 0,
+      "environment": {
+        "PYTHONUTF8": "1",
+        "PYTHONIOENCODING": "utf-8"
+      },
+      "summary": "262 passed, 2075 deselected in 17.49s",
+      "log_sha256": "e2911a23a0121ccd58ce084581a32cd5fcc98fc2c9979bb53d7aba18179cea9e"
+    },
+    {
+      "execution_sha": "ff4d1a2aa79f3ff2f6e88a1ef5acafe262fc731e",
+      "command": [
+        "<production .venv Python>",
+        "-m",
+        "pytest",
+        "tests/test_campus_share_template.py",
+        "-o",
+        "addopts=",
+        "-q"
+      ],
+      "at": "2026-09-22T07:57:43.788738+00:00",
+      "exit_code": 0,
+      "environment": {
+        "PYTHONUTF8": "1",
+        "PYTHONIOENCODING": "utf-8"
+      },
+      "summary": "58 passed in 1.04s",
+      "log_sha256": "a17bfe0244be20d1a7c9ac77ab455b154e922d1a2fdc45d92b69b7727b9c053d"
+    },
+    {
+      "execution_sha": "ff4d1a2aa79f3ff2f6e88a1ef5acafe262fc731e",
+      "command": [
+        "<production .venv Python>",
+        "-m",
+        "ruff",
+        "check",
+        "app",
+        "tests",
+        "alembic",
+        "scripts"
+      ],
+      "at": "2026-09-22T07:57:43.879286+00:00",
+      "exit_code": 0,
+      "environment": {
+        "PYTHONUTF8": "1",
+        "PYTHONIOENCODING": "utf-8"
+      },
+      "summary": "All checks passed!",
+      "log_sha256": "82b3e6a6c090a57601d22943bd23fca9218d1031dbe5a7b754092f9a156b4f18"
+    },
+    {
+      "execution_sha": "ff4d1a2aa79f3ff2f6e88a1ef5acafe262fc731e",
+      "command": [
+        "<production .venv Python>",
+        "-m",
+        "ruff",
+        "format",
+        "--check",
+        "app",
+        "tests",
+        "alembic",
+        "scripts"
+      ],
+      "at": "2026-09-22T07:57:43.972718+00:00",
+      "exit_code": 0,
+      "environment": {
+        "PYTHONUTF8": "1",
+        "PYTHONIOENCODING": "utf-8"
+      },
+      "summary": "359 files already formatted",
+      "log_sha256": "a8c7e00da2af9b68c890b4cb524e34c1290e4a2b437d1748c664fcb9ac10d9ee"
+    },
+    {
+      "execution_sha": "ff4d1a2aa79f3ff2f6e88a1ef5acafe262fc731e",
+      "command": [
+        "<production .venv Python>",
+        "-m",
+        "mypy",
+        "app"
+      ],
+      "at": "2026-09-22T07:57:45.018668+00:00",
+      "exit_code": 0,
+      "environment": {
+        "PYTHONUTF8": "1",
+        "PYTHONIOENCODING": "utf-8"
+      },
+      "summary": "Success: no issues found in 113 source files",
+      "log_sha256": "4a459f0cec74bff39e4554bc19cc78333976301ca8bdf26d822ebf4fe0256854"
+    }
+  ],
+  "committed_new_regression_file": "tests/test_campus_share_template.py",
+  "existing_reviewer_tests_changed_in_this_revision": false,
+  "real_model": {
+    "authorized_max_calls": 12,
+    "actual_calls": 12,
+    "distinct_files": 7,
+    "positive_distinct_files": 5,
+    "positive_calls": 8,
+    "negative_distinct_files": 2,
+    "negative_calls": 4,
+    "commands": [
+      "<production .venv Python> -B <private_evidence_directory>/remote_check.py p1 p2 p3 n1 n2",
+      "<production .venv Python> -B <private_evidence_directory>/remote_check.py p4 p5 p1 p2 p3 n1 n2"
+    ],
+    "script_sha256": "b206fd3ea7a21eaeb07c70c9335ade49cc2b40e9b9005e66f1c60e0df3368bd5",
+    "independent_replay": {
+      "command": "<production .venv Python> -B <private_evidence_directory>/independent-audit.py",
+      "source_sha256": "0589467f18a3e4e0ae8969ab55154c0f69a0415114d0d5106dd60a0c828500ba",
+      "receipt_sha256": "e1ccde9e7776d52361d11687e32b364814015ad99768af028a87a31507df9caa",
+      "reproduced_from_saved_provider_raw": true,
+      "new_remote_calls": 0
+    },
+    "observations": [
+      {
+        "number": 1,
+        "sample": "p1",
+        "input_sha256": "c62f0d6778ea6e827caf7af707cd6ae1760a0838dcd2c5833cd99c502a5dafe5",
+        "expected_template": true,
+        "model_id": "deepseek-flash",
+        "prompt_version": "t204-v18",
+        "prompt_digest": "11c05fd9c9b130f0",
+        "started_at": "2026-09-22T07:53:51.068817+00:00",
+        "finished_at": "2026-09-22T07:53:55.007946+00:00",
+        "summary": {
+          "sample": "p1",
+          "number": 1,
+          "source_confirmed": true,
+          "category": "ad",
+          "confidence": 0.95,
+          "needs_review": false,
+          "template_status": "matched",
+          "picture_verdict": "allow",
+          "window_source": true,
+          "input_tokens": 2599,
+          "output_tokens": 702
+        },
+        "campus_share_card": {
+          "template_id": "approved_share_card_v1",
+          "status": "matched",
+          "logo_matches": true,
+          "footer_text": "我正在看这个，觉得不错！\n长按识别小程序，一起看吧~",
+          "layout_matches": true,
+          "footer_miniprogram_code": true
+        },
+        "request_receipt_sha256": "0a217f3fad2efefa9604be0a3a763eb0132c0b9edec3057e1fed093dab66a907",
+        "result_receipt_sha256": "38bb2df7fb255d4d74176670ad3c3a4452e888fd3f0e04f588b41e5c3b9bb9a8",
+        "provider_raw_sha256": "42e9611b2ce5a1d1c397b4659df7b745e05f33323dc1e8803f854a2bf7005eb1",
+        "offline_pipeline": {
+          "number": 1,
+          "sample": "p1",
+          "input_sha256": "c62f0d6778ea6e827caf7af707cd6ae1760a0838dcd2c5833cd99c502a5dafe5",
+          "execution_sha": "ff4d1a2aa79f3ff2f6e88a1ef5acafe262fc731e",
+          "picture_verdict": "allow",
+          "window_source": true,
+          "followups": [
+            {
+              "seconds": 30,
+              "verdict": "record_only",
+              "actions": []
+            },
+            {
+              "seconds": 120,
+              "verdict": "record_only",
+              "actions": []
+            },
+            {
+              "seconds": 121,
+              "verdict": "violation_high",
+              "actions": [
+                "recall",
+                "mute",
+                "warn"
+              ]
+            }
+          ],
+          "network_connect_allowed": false,
+          "action_mode": "SHADOW",
+          "local_image_engine": "ImageModerationEngine(empty test hash/QR allowlists)"
+        }
+      },
+      {
+        "number": 2,
+        "sample": "p2",
+        "input_sha256": "1ab32be9430c8c5a31ac82e07ba08afc902b3cadc59559463520aee76eed74cb",
+        "expected_template": true,
+        "model_id": "deepseek-flash",
+        "prompt_version": "t204-v18",
+        "prompt_digest": "11c05fd9c9b130f0",
+        "started_at": "2026-09-22T07:53:58.014082+00:00",
+        "finished_at": "2026-09-22T07:54:03.648081+00:00",
+        "summary": {
+          "sample": "p2",
+          "number": 2,
+          "source_confirmed": true,
+          "category": "ad",
+          "confidence": 0.95,
+          "needs_review": false,
+          "template_status": "matched",
+          "picture_verdict": "allow",
+          "window_source": true,
+          "input_tokens": 2361,
+          "output_tokens": 1001
+        },
+        "campus_share_card": {
+          "template_id": "approved_share_card_v1",
+          "status": "matched",
+          "logo_matches": true,
+          "footer_text": "我正在看这个，觉得不错！\n长按识别小程序，一起看吧~",
+          "layout_matches": true,
+          "footer_miniprogram_code": true
+        },
+        "request_receipt_sha256": "14b48c3366b2f7925fdfcea7e609fb741d962a77931329e25a123af3c432b299",
+        "result_receipt_sha256": "c96c99271912858ccec8bd1a14bac577a053b96481a52415f951035d95c39f9f",
+        "provider_raw_sha256": "cd035984c28664a666a4162b9acc59a363ae07d0fd7ea41872c43564158949ab",
+        "offline_pipeline": {
+          "number": 2,
+          "sample": "p2",
+          "input_sha256": "1ab32be9430c8c5a31ac82e07ba08afc902b3cadc59559463520aee76eed74cb",
+          "execution_sha": "ff4d1a2aa79f3ff2f6e88a1ef5acafe262fc731e",
+          "picture_verdict": "allow",
+          "window_source": true,
+          "followups": [
+            {
+              "seconds": 30,
+              "verdict": "record_only",
+              "actions": []
+            },
+            {
+              "seconds": 120,
+              "verdict": "record_only",
+              "actions": []
+            },
+            {
+              "seconds": 121,
+              "verdict": "violation_high",
+              "actions": [
+                "recall",
+                "mute",
+                "warn"
+              ]
+            }
+          ],
+          "network_connect_allowed": false,
+          "action_mode": "SHADOW",
+          "local_image_engine": "ImageModerationEngine(empty test hash/QR allowlists)"
+        }
+      },
+      {
+        "number": 3,
+        "sample": "p3",
+        "input_sha256": "0215d11f11d19207bdeabb1f28b35b67d0023a96348f500c07da753d4d1e8373",
+        "expected_template": true,
+        "model_id": "deepseek-flash",
+        "prompt_version": "t204-v18",
+        "prompt_digest": "11c05fd9c9b130f0",
+        "started_at": "2026-09-22T07:54:06.649022+00:00",
+        "finished_at": "2026-09-22T07:54:13.110646+00:00",
+        "summary": {
+          "sample": "p3",
+          "number": 3,
+          "source_confirmed": true,
+          "category": "ad",
+          "confidence": 0.96,
+          "needs_review": false,
+          "template_status": "matched",
+          "picture_verdict": "allow",
+          "window_source": true,
+          "input_tokens": 2716,
+          "output_tokens": 1025
+        },
+        "campus_share_card": {
+          "template_id": "approved_share_card_v1",
+          "status": "matched",
+          "logo_matches": true,
+          "footer_text": "我正在看这个，觉得不错！\n长按识别小程序，一起看吧~",
+          "layout_matches": true,
+          "footer_miniprogram_code": true
+        },
+        "request_receipt_sha256": "b7ad56bcc20a50db10da2d582b78092dc322ce438d8fd40f71579cd3a2af3845",
+        "result_receipt_sha256": "548bb81cbf4934f080bb0e23f4afb1b02687a348eaeca38cc4a14d77b64bdd6f",
+        "provider_raw_sha256": "bb0a87592c862b70d0643318ce7a0cdb99e42bfcf24057d039805b0d7410752c",
+        "offline_pipeline": {
+          "number": 3,
+          "sample": "p3",
+          "input_sha256": "0215d11f11d19207bdeabb1f28b35b67d0023a96348f500c07da753d4d1e8373",
+          "execution_sha": "ff4d1a2aa79f3ff2f6e88a1ef5acafe262fc731e",
+          "picture_verdict": "allow",
+          "window_source": true,
+          "followups": [
+            {
+              "seconds": 30,
+              "verdict": "record_only",
+              "actions": []
+            },
+            {
+              "seconds": 120,
+              "verdict": "record_only",
+              "actions": []
+            },
+            {
+              "seconds": 121,
+              "verdict": "violation_high",
+              "actions": [
+                "recall",
+                "mute",
+                "warn"
+              ]
+            }
+          ],
+          "network_connect_allowed": false,
+          "action_mode": "SHADOW",
+          "local_image_engine": "ImageModerationEngine(empty test hash/QR allowlists)"
+        }
+      },
+      {
+        "number": 4,
+        "sample": "n1",
+        "input_sha256": "8e68a6515d5f2836d80ef702a95fab6df30ca30654d6536d1bdb774477e73d19",
+        "expected_template": false,
+        "model_id": "deepseek-flash",
+        "prompt_version": "t204-v18",
+        "prompt_digest": "11c05fd9c9b130f0",
+        "started_at": "2026-09-22T07:54:16.113388+00:00",
+        "finished_at": "2026-09-22T07:54:23.699164+00:00",
+        "summary": {
+          "sample": "n1",
+          "number": 4,
+          "source_confirmed": false,
+          "category": "other",
+          "confidence": 0.55,
+          "needs_review": true,
+          "template_status": null,
+          "picture_verdict": "record_only",
+          "window_source": false,
+          "input_tokens": 2687,
+          "output_tokens": 1288
+        },
+        "campus_share_card": null,
+        "request_receipt_sha256": "6e1e9d8ecb14b0dc4752f8086c20b2945a65400fbf43de912324904473aa9d82",
+        "result_receipt_sha256": "fec35a499445e856c760c8dd7be9469999564e9058919f833c443fc366ab56f9",
+        "provider_raw_sha256": "58127d19284ff04d3a1cdcba6b84fa88656244e6dcc64591c36bca62268d8f50",
+        "offline_pipeline": {
+          "number": 4,
+          "sample": "n1",
+          "input_sha256": "8e68a6515d5f2836d80ef702a95fab6df30ca30654d6536d1bdb774477e73d19",
+          "execution_sha": "ff4d1a2aa79f3ff2f6e88a1ef5acafe262fc731e",
+          "picture_verdict": "record_only",
+          "window_source": false,
+          "followups": [
+            {
+              "seconds": 30,
+              "verdict": "violation_high",
+              "actions": [
+                "recall",
+                "mute",
+                "warn"
+              ]
+            },
+            {
+              "seconds": 120,
+              "verdict": "violation_high",
+              "actions": [
+                "recall",
+                "mute",
+                "warn"
+              ]
+            },
+            {
+              "seconds": 121,
+              "verdict": "violation_high",
+              "actions": [
+                "recall",
+                "mute",
+                "warn"
+              ]
+            }
+          ],
+          "network_connect_allowed": false,
+          "action_mode": "SHADOW",
+          "local_image_engine": "ImageModerationEngine(empty test hash/QR allowlists)"
+        }
+      },
+      {
+        "number": 5,
+        "sample": "n2",
+        "input_sha256": "b8fdb92dbeec256b23c8d4c1abb9c2204e49829dc33372a5667fe7590778c784",
+        "expected_template": false,
+        "model_id": "deepseek-flash",
+        "prompt_version": "t204-v18",
+        "prompt_digest": "11c05fd9c9b130f0",
+        "started_at": "2026-09-22T07:54:26.706092+00:00",
+        "finished_at": "2026-09-22T07:54:30.818574+00:00",
+        "summary": {
+          "sample": "n2",
+          "number": 5,
+          "source_confirmed": false,
+          "category": "ad",
+          "confidence": 0.86,
+          "needs_review": false,
+          "template_status": null,
+          "picture_verdict": "violation_high",
+          "window_source": false,
+          "input_tokens": 2311,
+          "output_tokens": 661
+        },
+        "campus_share_card": null,
+        "request_receipt_sha256": "91964b0d684fba83187c809a6dd5d9c4127364e84949d9711048897604eee325",
+        "result_receipt_sha256": "2654d905d49952dfb024c0aec405b6e71b9380580fe1d7ae34bf59f0a8be4e88",
+        "provider_raw_sha256": "166624bcc4636325c7e4c89090030f19600937afbf14dc8fb1bb6f21969188d2",
+        "offline_pipeline": {
+          "number": 5,
+          "sample": "n2",
+          "input_sha256": "b8fdb92dbeec256b23c8d4c1abb9c2204e49829dc33372a5667fe7590778c784",
+          "execution_sha": "ff4d1a2aa79f3ff2f6e88a1ef5acafe262fc731e",
+          "picture_verdict": "violation_high",
+          "window_source": false,
+          "followups": [
+            {
+              "seconds": 30,
+              "verdict": "violation_high",
+              "actions": [
+                "recall",
+                "mute",
+                "warn"
+              ]
+            },
+            {
+              "seconds": 120,
+              "verdict": "violation_high",
+              "actions": [
+                "recall",
+                "mute",
+                "warn"
+              ]
+            },
+            {
+              "seconds": 121,
+              "verdict": "violation_high",
+              "actions": [
+                "recall",
+                "mute",
+                "warn"
+              ]
+            }
+          ],
+          "network_connect_allowed": false,
+          "action_mode": "SHADOW",
+          "local_image_engine": "ImageModerationEngine(empty test hash/QR allowlists)"
+        }
+      },
+      {
+        "number": 6,
+        "sample": "p4",
+        "input_sha256": "060be4e7a617b1fd33414750005f46ceeae94e3fa8908e8714980d816e827ff3",
+        "expected_template": true,
+        "model_id": "deepseek-flash",
+        "prompt_version": "t204-v18",
+        "prompt_digest": "11c05fd9c9b130f0",
+        "started_at": "2026-09-22T07:55:25.357500+00:00",
+        "finished_at": "2026-09-22T07:55:29.319892+00:00",
+        "summary": {
+          "sample": "p4",
+          "number": 6,
+          "source_confirmed": true,
+          "category": "ad",
+          "confidence": 0.95,
+          "needs_review": false,
+          "template_status": "matched",
+          "picture_verdict": "allow",
+          "window_source": true,
+          "input_tokens": 2713,
+          "output_tokens": 603
+        },
+        "campus_share_card": {
+          "template_id": "approved_share_card_v1",
+          "status": "matched",
+          "logo_matches": true,
+          "footer_text": "我正在看这个，觉得不错！\n长按识别小程序，一起看吧~",
+          "layout_matches": true,
+          "footer_miniprogram_code": true
+        },
+        "request_receipt_sha256": "2108bd6ec20306d35f04e68b804bab5ee0f32dccf391395d7c0b9971a2b26a95",
+        "result_receipt_sha256": "b061c7ee0df71b3604fefc8d88432e6b91cd7b73b6e380c234516f3366622af1",
+        "provider_raw_sha256": "c06e7b5961beca0fe52743d73967c12f821650c9cceae7f6a4eb9cfa8a420c9b",
+        "offline_pipeline": {
+          "number": 6,
+          "sample": "p4",
+          "input_sha256": "060be4e7a617b1fd33414750005f46ceeae94e3fa8908e8714980d816e827ff3",
+          "execution_sha": "ff4d1a2aa79f3ff2f6e88a1ef5acafe262fc731e",
+          "picture_verdict": "allow",
+          "window_source": true,
+          "followups": [
+            {
+              "seconds": 30,
+              "verdict": "record_only",
+              "actions": []
+            },
+            {
+              "seconds": 120,
+              "verdict": "record_only",
+              "actions": []
+            },
+            {
+              "seconds": 121,
+              "verdict": "violation_high",
+              "actions": [
+                "recall",
+                "mute",
+                "warn"
+              ]
+            }
+          ],
+          "network_connect_allowed": false,
+          "action_mode": "SHADOW",
+          "local_image_engine": "ImageModerationEngine(empty test hash/QR allowlists)"
+        }
+      },
+      {
+        "number": 7,
+        "sample": "p5",
+        "input_sha256": "07ee0a637079a523215ff0c601b841450d164c47e5254c27d72c6242a5fbd7f4",
+        "expected_template": true,
+        "model_id": "deepseek-flash",
+        "prompt_version": "t204-v18",
+        "prompt_digest": "11c05fd9c9b130f0",
+        "started_at": "2026-09-22T07:55:32.336777+00:00",
+        "finished_at": "2026-09-22T07:55:36.697969+00:00",
+        "summary": {
+          "sample": "p5",
+          "number": 7,
+          "source_confirmed": true,
+          "category": "ad",
+          "confidence": 0.95,
+          "needs_review": false,
+          "template_status": "matched",
+          "picture_verdict": "allow",
+          "window_source": true,
+          "input_tokens": 2435,
+          "output_tokens": 752
+        },
+        "campus_share_card": {
+          "template_id": "approved_share_card_v1",
+          "status": "matched",
+          "logo_matches": true,
+          "footer_text": "我正在看这个，觉得不错！\n长按识别小程序，一起看吧~",
+          "layout_matches": true,
+          "footer_miniprogram_code": true
+        },
+        "request_receipt_sha256": "737a7d3d9f160cb613324b95f716f042d8aa2896017751857510241e5464453b",
+        "result_receipt_sha256": "7c31c6fa807a2a4cbac0824f0348546837b902b28fc469a5b98e940be89d28ff",
+        "provider_raw_sha256": "f324132e022c0c7ccf5c2a5ca0d4af4ba5e1bc242c31d8d91c15179f7770185f",
+        "offline_pipeline": {
+          "number": 7,
+          "sample": "p5",
+          "input_sha256": "07ee0a637079a523215ff0c601b841450d164c47e5254c27d72c6242a5fbd7f4",
+          "execution_sha": "ff4d1a2aa79f3ff2f6e88a1ef5acafe262fc731e",
+          "picture_verdict": "allow",
+          "window_source": true,
+          "followups": [
+            {
+              "seconds": 30,
+              "verdict": "record_only",
+              "actions": []
+            },
+            {
+              "seconds": 120,
+              "verdict": "record_only",
+              "actions": []
+            },
+            {
+              "seconds": 121,
+              "verdict": "violation_high",
+              "actions": [
+                "recall",
+                "mute",
+                "warn"
+              ]
+            }
+          ],
+          "network_connect_allowed": false,
+          "action_mode": "SHADOW",
+          "local_image_engine": "ImageModerationEngine(empty test hash/QR allowlists)"
+        }
+      },
+      {
+        "number": 8,
+        "sample": "p1",
+        "input_sha256": "c62f0d6778ea6e827caf7af707cd6ae1760a0838dcd2c5833cd99c502a5dafe5",
+        "expected_template": true,
+        "model_id": "deepseek-flash",
+        "prompt_version": "t204-v18",
+        "prompt_digest": "11c05fd9c9b130f0",
+        "started_at": "2026-09-22T07:55:39.702097+00:00",
+        "finished_at": "2026-09-22T07:55:49.901188+00:00",
+        "summary": {
+          "sample": "p1",
+          "number": 8,
+          "source_confirmed": true,
+          "category": "ad",
+          "confidence": 0.97,
+          "needs_review": false,
+          "template_status": "matched",
+          "picture_verdict": "allow",
+          "window_source": true,
+          "input_tokens": 2599,
+          "output_tokens": 1932
+        },
+        "campus_share_card": {
+          "template_id": "approved_share_card_v1",
+          "status": "matched",
+          "logo_matches": true,
+          "footer_text": "我正在看这个，觉得不错！\n长按识别小程序，一起看吧~",
+          "layout_matches": true,
+          "footer_miniprogram_code": true
+        },
+        "request_receipt_sha256": "6033dbb51b4e1189fa99ce63c36e72a9a7f024f5dbae0aea9f6fa627327de438",
+        "result_receipt_sha256": "322a876c46793fe741ad6feab93cedd9a3301cc213af07c4772c26bf41e879f5",
+        "provider_raw_sha256": "a7f92c817b56db61e1908f5ba95d3ab6ae17935604be8670909dc6130559c841",
+        "offline_pipeline": {
+          "number": 8,
+          "sample": "p1",
+          "input_sha256": "c62f0d6778ea6e827caf7af707cd6ae1760a0838dcd2c5833cd99c502a5dafe5",
+          "execution_sha": "ff4d1a2aa79f3ff2f6e88a1ef5acafe262fc731e",
+          "picture_verdict": "allow",
+          "window_source": true,
+          "followups": [
+            {
+              "seconds": 30,
+              "verdict": "record_only",
+              "actions": []
+            },
+            {
+              "seconds": 120,
+              "verdict": "record_only",
+              "actions": []
+            },
+            {
+              "seconds": 121,
+              "verdict": "violation_high",
+              "actions": [
+                "recall",
+                "mute",
+                "warn"
+              ]
+            }
+          ],
+          "network_connect_allowed": false,
+          "action_mode": "SHADOW",
+          "local_image_engine": "ImageModerationEngine(empty test hash/QR allowlists)"
+        }
+      },
+      {
+        "number": 9,
+        "sample": "p2",
+        "input_sha256": "1ab32be9430c8c5a31ac82e07ba08afc902b3cadc59559463520aee76eed74cb",
+        "expected_template": true,
+        "model_id": "deepseek-flash",
+        "prompt_version": "t204-v18",
+        "prompt_digest": "11c05fd9c9b130f0",
+        "started_at": "2026-09-22T07:55:52.917133+00:00",
+        "finished_at": "2026-09-22T07:56:01.182913+00:00",
+        "summary": {
+          "sample": "p2",
+          "number": 9,
+          "source_confirmed": true,
+          "category": "ad",
+          "confidence": 0.95,
+          "needs_review": false,
+          "template_status": "matched",
+          "picture_verdict": "allow",
+          "window_source": true,
+          "input_tokens": 2361,
+          "output_tokens": 1567
+        },
+        "campus_share_card": {
+          "template_id": "approved_share_card_v1",
+          "status": "matched",
+          "logo_matches": true,
+          "footer_text": "我正在看这个，觉得不错！\n长按识别小程序，一起看吧~",
+          "layout_matches": true,
+          "footer_miniprogram_code": true
+        },
+        "request_receipt_sha256": "60f9eb8785c97f46430ae13ad63001eafa15dbcb04135a15f40088afb66c607f",
+        "result_receipt_sha256": "da14e2b72ba40587efb9dbeefd36af53fb6d303aacb79e7d030ac2a63b3708bb",
+        "provider_raw_sha256": "f482d97f121a37ecd682dae9a6ca8edc51ee645024455cb50b21c77e4804df93",
+        "offline_pipeline": {
+          "number": 9,
+          "sample": "p2",
+          "input_sha256": "1ab32be9430c8c5a31ac82e07ba08afc902b3cadc59559463520aee76eed74cb",
+          "execution_sha": "ff4d1a2aa79f3ff2f6e88a1ef5acafe262fc731e",
+          "picture_verdict": "allow",
+          "window_source": true,
+          "followups": [
+            {
+              "seconds": 30,
+              "verdict": "record_only",
+              "actions": []
+            },
+            {
+              "seconds": 120,
+              "verdict": "record_only",
+              "actions": []
+            },
+            {
+              "seconds": 121,
+              "verdict": "violation_high",
+              "actions": [
+                "recall",
+                "mute",
+                "warn"
+              ]
+            }
+          ],
+          "network_connect_allowed": false,
+          "action_mode": "SHADOW",
+          "local_image_engine": "ImageModerationEngine(empty test hash/QR allowlists)"
+        }
+      },
+      {
+        "number": 10,
+        "sample": "p3",
+        "input_sha256": "0215d11f11d19207bdeabb1f28b35b67d0023a96348f500c07da753d4d1e8373",
+        "expected_template": true,
+        "model_id": "deepseek-flash",
+        "prompt_version": "t204-v18",
+        "prompt_digest": "11c05fd9c9b130f0",
+        "started_at": "2026-09-22T07:56:04.197082+00:00",
+        "finished_at": "2026-09-22T07:56:07.915570+00:00",
+        "summary": {
+          "sample": "p3",
+          "number": 10,
+          "source_confirmed": true,
+          "category": "ad",
+          "confidence": 0.96,
+          "needs_review": false,
+          "template_status": "matched",
+          "picture_verdict": "allow",
+          "window_source": true,
+          "input_tokens": 2716,
+          "output_tokens": 621
+        },
+        "campus_share_card": {
+          "template_id": "approved_share_card_v1",
+          "status": "matched",
+          "logo_matches": true,
+          "footer_text": "我正在看这个，觉得不错！\n长按识别小程序，一起看吧~",
+          "layout_matches": true,
+          "footer_miniprogram_code": true
+        },
+        "request_receipt_sha256": "ffdb5d020d80dc796afe0e0aa8767e1e7fc7b2a5e6b28955daee058ccfd3f726",
+        "result_receipt_sha256": "5a030a051d1393d4fe8aa494ceb8cb892966cb0c92486162a5e6b95328e774a2",
+        "provider_raw_sha256": "d438a25cf6f86989b3e757a3b072d0f3740fbe3fb293752e3fad6ff451b4882d",
+        "offline_pipeline": {
+          "number": 10,
+          "sample": "p3",
+          "input_sha256": "0215d11f11d19207bdeabb1f28b35b67d0023a96348f500c07da753d4d1e8373",
+          "execution_sha": "ff4d1a2aa79f3ff2f6e88a1ef5acafe262fc731e",
+          "picture_verdict": "allow",
+          "window_source": true,
+          "followups": [
+            {
+              "seconds": 30,
+              "verdict": "record_only",
+              "actions": []
+            },
+            {
+              "seconds": 120,
+              "verdict": "record_only",
+              "actions": []
+            },
+            {
+              "seconds": 121,
+              "verdict": "violation_high",
+              "actions": [
+                "recall",
+                "mute",
+                "warn"
+              ]
+            }
+          ],
+          "network_connect_allowed": false,
+          "action_mode": "SHADOW",
+          "local_image_engine": "ImageModerationEngine(empty test hash/QR allowlists)"
+        }
+      },
+      {
+        "number": 11,
+        "sample": "n1",
+        "input_sha256": "8e68a6515d5f2836d80ef702a95fab6df30ca30654d6536d1bdb774477e73d19",
+        "expected_template": false,
+        "model_id": "deepseek-flash",
+        "prompt_version": "t204-v18",
+        "prompt_digest": "11c05fd9c9b130f0",
+        "started_at": "2026-09-22T07:56:10.922225+00:00",
+        "finished_at": "2026-09-22T07:56:22.305602+00:00",
+        "summary": {
+          "sample": "n1",
+          "number": 11,
+          "source_confirmed": false,
+          "category": "ad",
+          "confidence": 0.6,
+          "needs_review": true,
+          "template_status": "not_matched",
+          "picture_verdict": "record_only",
+          "window_source": false,
+          "input_tokens": 2687,
+          "output_tokens": 2075
+        },
+        "campus_share_card": {
+          "template_id": "approved_share_card_v1",
+          "status": "not_matched",
+          "logo_matches": false,
+          "footer_text": "",
+          "layout_matches": false,
+          "footer_miniprogram_code": false
+        },
+        "request_receipt_sha256": "b16d8458c32dc586e8d2b1039e799f837ed2831374c42b0a08b6ee6a023a4fd1",
+        "result_receipt_sha256": "173271b032f43302cb622538fe652af2dce8ae053a03cdae5cad045cfa303501",
+        "provider_raw_sha256": "69d202cb395635b17fd1310e17d36a7dd43740fb56420ba89923f937d5d5b340",
+        "offline_pipeline": {
+          "number": 11,
+          "sample": "n1",
+          "input_sha256": "8e68a6515d5f2836d80ef702a95fab6df30ca30654d6536d1bdb774477e73d19",
+          "execution_sha": "ff4d1a2aa79f3ff2f6e88a1ef5acafe262fc731e",
+          "picture_verdict": "record_only",
+          "window_source": false,
+          "followups": [
+            {
+              "seconds": 30,
+              "verdict": "violation_high",
+              "actions": [
+                "recall",
+                "mute",
+                "warn"
+              ]
+            },
+            {
+              "seconds": 120,
+              "verdict": "violation_high",
+              "actions": [
+                "recall",
+                "mute",
+                "warn"
+              ]
+            },
+            {
+              "seconds": 121,
+              "verdict": "violation_high",
+              "actions": [
+                "recall",
+                "mute",
+                "warn"
+              ]
+            }
+          ],
+          "network_connect_allowed": false,
+          "action_mode": "SHADOW",
+          "local_image_engine": "ImageModerationEngine(empty test hash/QR allowlists)"
+        }
+      },
+      {
+        "number": 12,
+        "sample": "n2",
+        "input_sha256": "b8fdb92dbeec256b23c8d4c1abb9c2204e49829dc33372a5667fe7590778c784",
+        "expected_template": false,
+        "model_id": "deepseek-flash",
+        "prompt_version": "t204-v18",
+        "prompt_digest": "11c05fd9c9b130f0",
+        "started_at": "2026-09-22T07:56:25.320004+00:00",
+        "finished_at": "2026-09-22T07:56:28.421975+00:00",
+        "summary": {
+          "sample": "n2",
+          "number": 12,
+          "source_confirmed": false,
+          "category": "ad",
+          "confidence": 0.92,
+          "needs_review": false,
+          "template_status": "not_matched",
+          "picture_verdict": "violation_high",
+          "window_source": false,
+          "input_tokens": 2311,
+          "output_tokens": 473
+        },
+        "campus_share_card": {
+          "template_id": "approved_share_card_v1",
+          "status": "not_matched",
+          "logo_matches": false,
+          "footer_text": "微信扫一扫\n0元吃外卖 | 限新注册用户领取",
+          "layout_matches": false,
+          "footer_miniprogram_code": true
+        },
+        "request_receipt_sha256": "39e0359db4641da290a5693e1aa043b8f2cbd8964c3060f449dbcc0a18e7ecaa",
+        "result_receipt_sha256": "bb6c55e850a526bcfe7c3decc9ac651f092c976f572a7761f261febb28cd6175",
+        "provider_raw_sha256": "1104642ee57a29e93fb1c89f77b650397cdb8382c78ee1ecb688a4dcc2e18b1f",
+        "offline_pipeline": {
+          "number": 12,
+          "sample": "n2",
+          "input_sha256": "b8fdb92dbeec256b23c8d4c1abb9c2204e49829dc33372a5667fe7590778c784",
+          "execution_sha": "ff4d1a2aa79f3ff2f6e88a1ef5acafe262fc731e",
+          "picture_verdict": "violation_high",
+          "window_source": false,
+          "followups": [
+            {
+              "seconds": 30,
+              "verdict": "violation_high",
+              "actions": [
+                "recall",
+                "mute",
+                "warn"
+              ]
+            },
+            {
+              "seconds": 120,
+              "verdict": "violation_high",
+              "actions": [
+                "recall",
+                "mute",
+                "warn"
+              ]
+            },
+            {
+              "seconds": 121,
+              "verdict": "violation_high",
+              "actions": [
+                "recall",
+                "mute",
+                "warn"
+              ]
+            }
+          ],
+          "network_connect_allowed": false,
+          "action_mode": "SHADOW",
+          "local_image_engine": "ImageModerationEngine(empty test hash/QR allowlists)"
+        }
+      }
+    ]
+  },
+  "offline_original_image_pipeline": {
+    "command": "<production .venv Python> -m pytest -c pyproject.toml -p tests.conftest <private_evidence_directory>/test_real_image_replay.py -o addopts= -q --tb=short",
+    "result": "12 passed in 2.06s",
+    "script_sha256": "08ce75d74aaefd79f84c89767f945913d588f5a4c769d9ee1770500ffa14d7df",
+    "log_sha256": "df9fc887a8b44d66de525becf2fb35c42cbb24fd4d525c07de908599cb426240",
+    "included_in_committed_suite": false,
+    "basis": "original image bytes + saved provider response + real local image engine + isolated database; synthetic group/member/followup text",
+    "no_network_guard": "socket.connect denied",
+    "action_mode": "SHADOW",
+    "earlier_harness_failure": {
+      "cause": "private harness passed [] into TextRuleEngine high_threshold; corrected to default constructor without changing production code or expected assertions",
+      "log_sha256": "3f33d485392a4a8b26af16276d9fe583d12ea280178d3f03388899d35a6169e5",
+      "result": "12 failed"
+    }
+  },
+  "production_read_only": {
+    "at": "2026-09-22T08:06:56.178308+00:00",
+    "production_checkout_sha": "b3ee1b0df4fdafa7a7561624ebc1a7748b26249d",
+    "command": "<production .venv Python> -B C:\\Users\\81596\\AppData\\Local\\QQBotDeploy\\campus-template-20260922-01\\production-readonly.py",
+    "database_access": "mode=ro",
+    "changes_made": false,
+    "emergency_stop_db_value": "true",
+    "observed_vision_prompt_versions": [
+      "t204-v17"
+    ],
+    "health_http": 200,
+    "onebot_connected": true,
+    "onebot_state": "ready",
+    "last_verified_loaded_sha": "8f4617edf6f73d8b98683994d575b022b9f2a0e4",
+    "loaded_sha_basis": "prior configured.json and live-verified.json; this task has not restarted or deployed"
+  },
+  "limitations": [
+    "Small real-image evaluation, not a measured overall accuracy or authenticity guarantee.",
+    "Recognized appearance is not authenticated WeChat AppID.",
+    "Bull-logo counterexample was record_only, not a confirmed violation.",
+    "Private raw images/provider responses/scripts were run but not added to test suite; publishable evidence is explicitly sanitized.",
+    "No production deployment, restart, configuration mutation or emergency-stop release in this revision.",
+    "Image/QR allowlists in offline replay were empty; synthetic SHADOW event identities do not establish production action behavior."
+  ]
+}

@@ -1,0 +1,407 @@
+{
+  "task": "A2-DEPLOY-20260922",
+  "authorization": "User: 方案 A 上线; authorized the previously described production maintenance sequence",
+  "base_sha": "3f7f9376a2c2e4bd9c53eb3187ec0c62e2cce610",
+  "deployed_sha": "53683d5998588f3b7490f4e73774df313b17b51d",
+  "operator_commands": [
+    "python -B deploy.py prepare",
+    "elevated pwsh -NoProfile -File deploy-services.ps1",
+    "python -B verify-live.py"
+  ],
+  "operator_script_sha256": {
+    "deploy.py": "535fa8f41c367250e06f0a322f1634a8adfce4662f237f3fd8384ccb99f42251",
+    "deploy-services.ps1": "1ae6887268fad8a50e98bbdf0707bbcc4409daebda1c3a00f92d3a74b30ffd3a",
+    "verify-live.py": "313be58397d3012a98aa29c8dae9f61c98963dc9271bc7f918ee0694742309bb"
+  },
+  "preflight": {
+    "time": "2026-09-22T01:40:55.381333+00:00",
+    "source_sha": "53683d5998588f3b7490f4e73774df313b17b51d",
+    "real_backup_restore_verified": true,
+    "old_startup_gate_passed": true,
+    "result": {
+      "revision": "e1c7d4b8a902",
+      "unrelated_tables_unchanged": true,
+      "settings_unchanged_except_authority_marker": true,
+      "old_image_fields_preserved": true,
+      "enabled_unchanged": true,
+      "old_rows": 68,
+      "new_disabled_rows": 1,
+      "enabled_count": 68,
+      "integrity": "ok",
+      "time": "2026-09-22T01:40:53.280889+00:00",
+      "source_sha": "53683d5998588f3b7490f4e73774df313b17b51d",
+      "planned_rows": 69
+    }
+  },
+  "production": {
+    "revision": "e1c7d4b8a902",
+    "unrelated_tables_unchanged": true,
+    "settings_unchanged_except_authority_marker": true,
+    "old_image_fields_preserved": true,
+    "enabled_unchanged": true,
+    "old_rows": 68,
+    "new_disabled_rows": 1,
+    "enabled_count": 68,
+    "integrity": "ok",
+    "time": "2026-09-22T01:43:46.660742+00:00",
+    "source_sha": "53683d5998588f3b7490f4e73774df313b17b51d",
+    "planned_rows": 69
+  },
+  "service_transition": {
+    "Stage": "services-running-await-health",
+    "Time": "2026-09-22T01:43:50.3856949Z",
+    "Failure": "",
+    "Trace": [
+      {
+        "Stage": "quiet",
+        "Time": "2026-09-22T01:43:35.6066163Z"
+      },
+      {
+        "Stage": "stopped QQBotRuntime",
+        "Time": "2026-09-22T01:43:35.9964509Z"
+      },
+      {
+        "Stage": "stopped QQBotWeb",
+        "Time": "2026-09-22T01:43:37.1283931Z"
+      },
+      {
+        "Stage": "frozen-backup",
+        "Time": "2026-09-22T01:43:39.7025430Z"
+      },
+      {
+        "Stage": "production",
+        "Time": "2026-09-22T01:43:46.8810358Z"
+      },
+      {
+        "Stage": "started QQBotWeb",
+        "Time": "2026-09-22T01:43:48.5367218Z"
+      },
+      {
+        "Stage": "started QQBotRuntime",
+        "Time": "2026-09-22T01:43:50.1882623Z"
+      }
+    ],
+    "Services": [
+      {
+        "Name": "QQBotRuntime",
+        "State": "Running",
+        "ProcessId": 31104
+      },
+      {
+        "Name": "QQBotWeb",
+        "State": "Running",
+        "ProcessId": 11420
+      }
+    ]
+  },
+  "frozen_backup": {
+    "time": "2026-09-22T01:43:39.532000+00:00",
+    "execution_sha": "3f7f9376a2c2e4bd9c53eb3187ec0c62e2cce610",
+    "backup": "D:\\CodeBuddy工作空间\\CB 项目\\qq-group-moderation-bot\\data\\backups\\moderation-20260922T014337Z-q0zfvl9m.db",
+    "database_sha256": "3e68bb45e39bfdc2e8f110e206901b5c82ce91ecbcc0c653600054da1d1c6f35",
+    "json_sha256": "7926f0bff94c0fed76b4126d0388b2b07a85dff0c4e4c9a81a38f760c6820dc6"
+  },
+  "frozen_backup_restore_readback": true,
+  "frozen_backup_restore_whole_machine": false,
+  "review_evidence_copy_verified": true,
+  "review_evidence_manifest_sha256": "c34cf8fb4a97eef0c495751474796e4b1edde2415f9096728b596d16eccf9c8e",
+  "live_verification": {
+    "observed_at": "2026-09-22T01:45:44.976469+00:00",
+    "execution_sha": "53683d5998588f3b7490f4e73774df313b17b51d",
+    "command": "C:\\Users\\<local-user>\\AppData\\Local\\QQBotDeploy\\a2-20260922-01\\verify-live.py",
+    "revision": "e1c7d4b8a902",
+    "authority_marker": "1",
+    "authority_rows": 69,
+    "export_state": "ok",
+    "configuration_and_group_policy_unchanged": true,
+    "health": {
+      "status": "ok",
+      "env": "prod",
+      "mode": "SAFE",
+      "media_storage": {
+        "state": "ok",
+        "used_bytes": 2273654663,
+        "quota_bytes": 21474836480,
+        "remaining_bytes": 19201181817,
+        "disk_free_bytes": 746803785728,
+        "warning_percent": 80
+      },
+      "onebot": {
+        "state": "ready",
+        "connected": true,
+        "login_state": "online",
+        "connect_count": 1,
+        "disconnect_count": 0,
+        "last_connect_at": "2026-09-22T01:44:06.262575+00:00",
+        "last_disconnect_at": null,
+        "last_heartbeat_at": "2026-09-22T01:45:38.736778+00:00",
+        "heartbeat_age_seconds": 6.0,
+        "heartbeat_timeout_seconds": 90.0,
+        "last_event_at": "2026-09-22T01:45:43.278991+00:00",
+        "queue_backlog": 0,
+        "queue_max": 500,
+        "storage_available": true,
+        "processed_total": 37,
+        "skipped_total": 0,
+        "failed_total": 0,
+        "invalid_total": 0,
+        "ignored_total": 29
+      }
+    },
+    "health_status": 200,
+    "natural_new_records": {
+      "onebot_inbox": 37,
+      "onebot_inbox_states": {
+        "DONE": 37
+      },
+      "shadow_decisions": 37,
+      "action_intents": 4,
+      "action_intents_states": {
+        "SUCCEEDED": 4
+      }
+    },
+    "test_message_sent": false
+  },
+  "stage_receipts": {
+    "preflight-migration": {
+      "source_sha": "53683d5998588f3b7490f4e73774df313b17b51d",
+      "time": "2026-09-22T01:40:47.573860+00:00",
+      "command": [
+        "D:\\CodeBuddy工作空间\\CB 项目\\qq-group-moderation-bot\\.venv\\Scripts\\python.exe",
+        "-B",
+        "-m",
+        "alembic",
+        "upgrade",
+        "head"
+      ],
+      "cwd": "C:\\Users\\<local-user>\\AppData\\Local\\Temp\\qqbot-r132-authority-20260922",
+      "database": "C:\\Users\\<local-user>\\AppData\\Local\\QQBotDeploy\\a2-20260922-01\\preflight\\moderation.db",
+      "exit": 0,
+      "log_sha256": "a6abdee1861803d7f86abe3169083a714a63ed5060cb13bb589f3fd7d18fb2a3"
+    },
+    "preflight-dry-run": {
+      "source_sha": "53683d5998588f3b7490f4e73774df313b17b51d",
+      "time": "2026-09-22T01:40:48.054851+00:00",
+      "command": [
+        "D:\\CodeBuddy工作空间\\CB 项目\\qq-group-moderation-bot\\.venv\\Scripts\\python.exe",
+        "-B",
+        "scripts/backfill_image_decisions.py",
+        "--db",
+        "C:\\Users\\<local-user>\\AppData\\Local\\QQBotDeploy\\a2-20260922-01\\preflight\\moderation.db",
+        "--dry-run"
+      ],
+      "cwd": "C:\\Users\\<local-user>\\AppData\\Local\\Temp\\qqbot-r132-authority-20260922",
+      "database": null,
+      "exit": 0,
+      "log_sha256": "37ffa92ac0d63039670fbe613ae76e93e808a5a3eecff83bf79776132d09b07b"
+    },
+    "preflight-backfill": {
+      "source_sha": "53683d5998588f3b7490f4e73774df313b17b51d",
+      "time": "2026-09-22T01:40:48.551450+00:00",
+      "command": [
+        "D:\\CodeBuddy工作空间\\CB 项目\\qq-group-moderation-bot\\.venv\\Scripts\\python.exe",
+        "-B",
+        "scripts/backfill_image_decisions.py",
+        "--db",
+        "C:\\Users\\<local-user>\\AppData\\Local\\QQBotDeploy\\a2-20260922-01\\preflight\\moderation.db",
+        "--apply"
+      ],
+      "cwd": "C:\\Users\\<local-user>\\AppData\\Local\\Temp\\qqbot-r132-authority-20260922",
+      "database": null,
+      "exit": 0,
+      "log_sha256": "563d879a7ac55b5463b100d53ec62a7cc0b0e614e5dddb0e2a3595f168abb07b"
+    },
+    "preflight-idempotence": {
+      "source_sha": "53683d5998588f3b7490f4e73774df313b17b51d",
+      "time": "2026-09-22T01:40:49.029373+00:00",
+      "command": [
+        "D:\\CodeBuddy工作空间\\CB 项目\\qq-group-moderation-bot\\.venv\\Scripts\\python.exe",
+        "-B",
+        "scripts/backfill_image_decisions.py",
+        "--db",
+        "C:\\Users\\<local-user>\\AppData\\Local\\QQBotDeploy\\a2-20260922-01\\preflight\\moderation.db",
+        "--apply"
+      ],
+      "cwd": "C:\\Users\\<local-user>\\AppData\\Local\\Temp\\qqbot-r132-authority-20260922",
+      "database": null,
+      "exit": 0,
+      "log_sha256": "782b46228f364ee6108eeb9f300f5dee75487baa2198244f2ddddd698d12991d"
+    },
+    "preflight-export": {
+      "source_sha": "53683d5998588f3b7490f4e73774df313b17b51d",
+      "time": "2026-09-22T01:40:49.535688+00:00",
+      "command": [
+        "D:\\CodeBuddy工作空间\\CB 项目\\qq-group-moderation-bot\\.venv\\Scripts\\python.exe",
+        "-B",
+        "scripts/apply_review_decisions.py",
+        "--db",
+        "C:\\Users\\<local-user>\\AppData\\Local\\QQBotDeploy\\a2-20260922-01\\preflight\\moderation.db",
+        "--export-only"
+      ],
+      "cwd": "C:\\Users\\<local-user>\\AppData\\Local\\Temp\\qqbot-r132-authority-20260922",
+      "database": null,
+      "exit": 0,
+      "log_sha256": "06875a7b9a9c98fdfa08d1979ba783f6bf0e8c1c9104121d69d2a95ed73f432c"
+    },
+    "preflight-verify": {
+      "source_sha": "53683d5998588f3b7490f4e73774df313b17b51d",
+      "time": "2026-09-22T01:40:50.022427+00:00",
+      "command": [
+        "D:\\CodeBuddy工作空间\\CB 项目\\qq-group-moderation-bot\\.venv\\Scripts\\python.exe",
+        "-B",
+        "scripts/apply_review_decisions.py",
+        "--db",
+        "C:\\Users\\<local-user>\\AppData\\Local\\QQBotDeploy\\a2-20260922-01\\preflight\\moderation.db",
+        "--verify-authority"
+      ],
+      "cwd": "C:\\Users\\<local-user>\\AppData\\Local\\Temp\\qqbot-r132-authority-20260922",
+      "database": null,
+      "exit": 0,
+      "log_sha256": "06875a7b9a9c98fdfa08d1979ba783f6bf0e8c1c9104121d69d2a95ed73f432c"
+    },
+    "preflight-identity": {
+      "source_sha": "53683d5998588f3b7490f4e73774df313b17b51d",
+      "time": "2026-09-22T01:40:51.897745+00:00",
+      "command": [
+        "D:\\CodeBuddy工作空间\\CB 项目\\qq-group-moderation-bot\\.venv\\Scripts\\python.exe",
+        "-B",
+        "-c",
+        "from pathlib import Path; from scripts import verify_approved_identity as m; m.REVIEW_ROOT=Path('D:\\\\CodeBuddy工作空间\\\\CB 项目\\\\qq-group-moderation-bot\\\\docs\\\\evidence\\\\image-review'); m.OUT_DIR=Path('C:\\\\Users\\\\81596\\\\AppData\\\\Local\\\\QQBotDeploy\\\\a2-20260922-01\\\\preflight-identity'); raise SystemExit(m.main(['--db','C:\\\\Users\\\\81596\\\\AppData\\\\Local\\\\QQBotDeploy\\\\a2-20260922-01\\\\preflight\\\\moderation.db']))"
+      ],
+      "cwd": "C:\\Users\\<local-user>\\AppData\\Local\\Temp\\qqbot-r132-authority-20260922",
+      "database": null,
+      "exit": 0,
+      "log_sha256": "84fbacbebc3d7eac55ffb9f49d302b6d8810a204ea2dfc5585ea601774586b59"
+    },
+    "restore-startup": {
+      "source_sha": "3f7f9376a2c2e4bd9c53eb3187ec0c62e2cce610",
+      "time": "2026-09-22T01:40:55.380332+00:00",
+      "command": [
+        "D:\\CodeBuddy工作空间\\CB 项目\\qq-group-moderation-bot\\.venv\\Scripts\\python.exe",
+        "-B",
+        "-c",
+        "import asyncio; from app.db import check_db_migrated; asyncio.run(check_db_migrated())"
+      ],
+      "cwd": "D:\\CodeBuddy工作空间\\CB 项目\\qq-group-moderation-bot",
+      "database": "C:\\Users\\<local-user>\\AppData\\Local\\QQBotDeploy\\a2-20260922-01\\restored-old.db",
+      "exit": 0,
+      "log_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "production-migration": {
+      "source_sha": "53683d5998588f3b7490f4e73774df313b17b51d",
+      "time": "2026-09-22T01:43:40.839757+00:00",
+      "command": [
+        "D:\\CodeBuddy工作空间\\CB 项目\\qq-group-moderation-bot\\.venv\\Scripts\\python.exe",
+        "-B",
+        "-m",
+        "alembic",
+        "upgrade",
+        "head"
+      ],
+      "cwd": "D:\\CodeBuddy工作空间\\CB 项目\\qq-group-moderation-bot",
+      "database": "D:\\CodeBuddy工作空间\\CB 项目\\qq-group-moderation-bot\\data\\moderation.db",
+      "exit": 0,
+      "log_sha256": "a6abdee1861803d7f86abe3169083a714a63ed5060cb13bb589f3fd7d18fb2a3"
+    },
+    "production-dry-run": {
+      "source_sha": "53683d5998588f3b7490f4e73774df313b17b51d",
+      "time": "2026-09-22T01:43:41.349788+00:00",
+      "command": [
+        "D:\\CodeBuddy工作空间\\CB 项目\\qq-group-moderation-bot\\.venv\\Scripts\\python.exe",
+        "-B",
+        "scripts/backfill_image_decisions.py",
+        "--db",
+        "D:\\CodeBuddy工作空间\\CB 项目\\qq-group-moderation-bot\\data\\moderation.db",
+        "--dry-run"
+      ],
+      "cwd": "D:\\CodeBuddy工作空间\\CB 项目\\qq-group-moderation-bot",
+      "database": null,
+      "exit": 0,
+      "log_sha256": "37ffa92ac0d63039670fbe613ae76e93e808a5a3eecff83bf79776132d09b07b"
+    },
+    "production-backfill": {
+      "source_sha": "53683d5998588f3b7490f4e73774df313b17b51d",
+      "time": "2026-09-22T01:43:41.868348+00:00",
+      "command": [
+        "D:\\CodeBuddy工作空间\\CB 项目\\qq-group-moderation-bot\\.venv\\Scripts\\python.exe",
+        "-B",
+        "scripts/backfill_image_decisions.py",
+        "--db",
+        "D:\\CodeBuddy工作空间\\CB 项目\\qq-group-moderation-bot\\data\\moderation.db",
+        "--apply"
+      ],
+      "cwd": "D:\\CodeBuddy工作空间\\CB 项目\\qq-group-moderation-bot",
+      "database": null,
+      "exit": 0,
+      "log_sha256": "563d879a7ac55b5463b100d53ec62a7cc0b0e614e5dddb0e2a3595f168abb07b"
+    },
+    "production-idempotence": {
+      "source_sha": "53683d5998588f3b7490f4e73774df313b17b51d",
+      "time": "2026-09-22T01:43:42.369407+00:00",
+      "command": [
+        "D:\\CodeBuddy工作空间\\CB 项目\\qq-group-moderation-bot\\.venv\\Scripts\\python.exe",
+        "-B",
+        "scripts/backfill_image_decisions.py",
+        "--db",
+        "D:\\CodeBuddy工作空间\\CB 项目\\qq-group-moderation-bot\\data\\moderation.db",
+        "--apply"
+      ],
+      "cwd": "D:\\CodeBuddy工作空间\\CB 项目\\qq-group-moderation-bot",
+      "database": null,
+      "exit": 0,
+      "log_sha256": "782b46228f364ee6108eeb9f300f5dee75487baa2198244f2ddddd698d12991d"
+    },
+    "production-export": {
+      "source_sha": "53683d5998588f3b7490f4e73774df313b17b51d",
+      "time": "2026-09-22T01:43:42.886327+00:00",
+      "command": [
+        "D:\\CodeBuddy工作空间\\CB 项目\\qq-group-moderation-bot\\.venv\\Scripts\\python.exe",
+        "-B",
+        "scripts/apply_review_decisions.py",
+        "--db",
+        "D:\\CodeBuddy工作空间\\CB 项目\\qq-group-moderation-bot\\data\\moderation.db",
+        "--export-only"
+      ],
+      "cwd": "D:\\CodeBuddy工作空间\\CB 项目\\qq-group-moderation-bot",
+      "database": null,
+      "exit": 0,
+      "log_sha256": "06875a7b9a9c98fdfa08d1979ba783f6bf0e8c1c9104121d69d2a95ed73f432c"
+    },
+    "production-verify": {
+      "source_sha": "53683d5998588f3b7490f4e73774df313b17b51d",
+      "time": "2026-09-22T01:43:43.397467+00:00",
+      "command": [
+        "D:\\CodeBuddy工作空间\\CB 项目\\qq-group-moderation-bot\\.venv\\Scripts\\python.exe",
+        "-B",
+        "scripts/apply_review_decisions.py",
+        "--db",
+        "D:\\CodeBuddy工作空间\\CB 项目\\qq-group-moderation-bot\\data\\moderation.db",
+        "--verify-authority"
+      ],
+      "cwd": "D:\\CodeBuddy工作空间\\CB 项目\\qq-group-moderation-bot",
+      "database": null,
+      "exit": 0,
+      "log_sha256": "06875a7b9a9c98fdfa08d1979ba783f6bf0e8c1c9104121d69d2a95ed73f432c"
+    },
+    "production-identity": {
+      "source_sha": "53683d5998588f3b7490f4e73774df313b17b51d",
+      "time": "2026-09-22T01:43:45.284075+00:00",
+      "command": [
+        "D:\\CodeBuddy工作空间\\CB 项目\\qq-group-moderation-bot\\.venv\\Scripts\\python.exe",
+        "-B",
+        "-c",
+        "from pathlib import Path; from scripts import verify_approved_identity as m; m.REVIEW_ROOT=Path('D:\\\\CodeBuddy工作空间\\\\CB 项目\\\\qq-group-moderation-bot\\\\docs\\\\evidence\\\\image-review'); m.OUT_DIR=Path('C:\\\\Users\\\\81596\\\\AppData\\\\Local\\\\QQBotDeploy\\\\a2-20260922-01\\\\production-identity'); raise SystemExit(m.main(['--db','D:\\\\CodeBuddy工作空间\\\\CB 项目\\\\qq-group-moderation-bot\\\\data\\\\moderation.db']))"
+      ],
+      "cwd": "D:\\CodeBuddy工作空间\\CB 项目\\qq-group-moderation-bot",
+      "database": null,
+      "exit": 0,
+      "log_sha256": "f7c71f10633bb95780c837fbfbcd08cce0ea178b121baf013d4d9a406b2dc8d2"
+    }
+  },
+  "limitations": [
+    "No whole-machine, credential or media recovery drill.",
+    "No promise to recover upstream messages missed during disconnect.",
+    "N03 historical copies retention not closed."
+  ],
+  "sealed_at": "2026-09-22T01:48:53.285888+00:00"
+}

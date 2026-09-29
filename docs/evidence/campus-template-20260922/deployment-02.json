@@ -1,0 +1,188 @@
+{
+  "base_sha": "246fdb518e69e12a87fa8f9f9fb05c752d94437f",
+  "loaded_sha": "06324fedab4baf8d0ee14e09991c5385627a01ed",
+  "private_directory": "%LOCALAPPDATA%/QQBotDeploy/campus-template-deploy-20260922-02",
+  "commands": [
+    "<production .venv Python> -B <private deployment directory>/deploy.py preflight",
+    "pwsh -NoProfile -File <private deployment directory>/deploy-services.ps1",
+    "<production .venv Python> -B <private deployment directory>/deploy.py verify"
+  ],
+  "script_sha256": "0952df1dc4f53b8d7c8bc855771d41ee279e9c6bf85b43abf111e2c411a0e967",
+  "powershell_sha256": "6d6a0782277a6e4146e902773d881c323c90b6f21b0104caabd8631aae621f40",
+  "backup": {
+    "at": "2026-09-22T09:17:22.653550+00:00",
+    "execution_sha": "246fdb518e69e12a87fa8f9f9fb05c752d94437f",
+    "sha256": "bb01017add18b346482a51b389896e2ee307fb4fc9cacf507d88c431ad4eac6a",
+    "integrity": "ok",
+    "revision": "e1c7d4b8a902"
+  },
+  "configured": {
+    "at": "2026-09-22T09:17:24.051226+00:00",
+    "execution_sha": "06324fedab4baf8d0ee14e09991c5385627a01ed",
+    "prompt_version": "t204-v18",
+    "builtin_version": "t204-v18",
+    "policy_unchanged": true,
+    "rules_sha256": "de18a0c4c092d33844c656333044d2c7a6cdfb4414265a6a15916fe9ecb3123f",
+    "revision": "e1c7d4b8a902"
+  },
+  "service_state": {
+    "Stage": "services-running-await-health",
+    "Time": "2026-09-22T09:17:27.6668262Z",
+    "Failure": "",
+    "Trace": [
+      {
+        "Stage": "quiet",
+        "Time": "2026-09-22T09:17:19.4076253Z"
+      },
+      {
+        "Stage": "stopped QQBotRuntime",
+        "Time": "2026-09-22T09:17:19.7753627Z"
+      },
+      {
+        "Stage": "stopped QQBotWeb",
+        "Time": "2026-09-22T09:17:21.1909479Z"
+      },
+      {
+        "Stage": "backup",
+        "Time": "2026-09-22T09:17:22.8440044Z"
+      },
+      {
+        "Stage": "configure",
+        "Time": "2026-09-22T09:17:24.1343671Z"
+      },
+      {
+        "Stage": "started QQBotWeb",
+        "Time": "2026-09-22T09:17:25.7905883Z"
+      },
+      {
+        "Stage": "started QQBotRuntime",
+        "Time": "2026-09-22T09:17:27.4612611Z"
+      }
+    ],
+    "Services": [
+      {
+        "Name": "QQBotRuntime",
+        "State": "Running",
+        "ProcessId": 29184
+      },
+      {
+        "Name": "QQBotWeb",
+        "State": "Running",
+        "ProcessId": 30596
+      }
+    ]
+  },
+  "live": {
+    "at": "2026-09-22T09:21:06.527148+00:00",
+    "execution_sha": "06324fedab4baf8d0ee14e09991c5385627a01ed",
+    "health_status": 200,
+    "health": {
+      "status": "ok",
+      "env": "prod",
+      "mode": "SAFE",
+      "media_storage": {
+        "state": "ok",
+        "used_bytes": 2616806739,
+        "quota_bytes": 21474836480,
+        "remaining_bytes": 18858029741,
+        "disk_free_bytes": 746124193792,
+        "warning_percent": 80
+      },
+      "onebot": {
+        "state": "ready",
+        "connected": true,
+        "login_state": "online",
+        "connect_count": 1,
+        "disconnect_count": 0,
+        "last_connect_at": "2026-09-22T09:17:49.961060+00:00",
+        "last_disconnect_at": null,
+        "last_heartbeat_at": "2026-09-22T09:20:45.392622+00:00",
+        "heartbeat_age_seconds": 20.6,
+        "heartbeat_timeout_seconds": 90.0,
+        "last_event_at": "2026-09-22T09:20:10.989723+00:00",
+        "queue_backlog": 0,
+        "queue_max": 500,
+        "storage_available": true,
+        "processed_total": 2,
+        "skipped_total": 0,
+        "failed_total": 0,
+        "invalid_total": 0,
+        "ignored_total": 3
+      }
+    },
+    "new": {
+      "onebot_inbox": 2,
+      "onebot_inbox_states": {
+        "DONE": 2
+      },
+      "shadow_decisions": 2,
+      "action_intents": 2,
+      "action_intents_states": {
+        "SKIPPED": 2
+      }
+    },
+    "vision_observations": [
+      {
+        "prompt_version": "t204-v18",
+        "new_source_field_present": true,
+        "template_observation_present": false,
+        "template_status": null,
+        "campus_confirmed": false,
+        "local_campus_policy_present": false
+      }
+    ],
+    "policy_unchanged": true,
+    "prompt_version": "t204-v18",
+    "test_message_sent": false,
+    "historical_replay": false,
+    "new_mixed_sources": [],
+    "code_file_sha256": {
+      "app/moderation/campus_message.py": "c77a9c6ca860ec21caa6116c07581b11563758e905061019d1d22b470cbc810d",
+      "app/moderation/wall_pair.py": "a663c3e09b6ee8574e8cb65a1198323a807eef4e5668f2c2241bafdf71e66f2d",
+      "app/runtime/pairing_context.py": "045d3149ba67faf7427097fd1606c43a754df244e47e6facdffacb2d68e96cef",
+      "app/runtime/pipeline.py": "5904e8b2c6a1c29a8ac44743bc828570d734023e92df9b7e34b72bbef2d14983"
+    }
+  },
+  "emergency_stop_preserved": true,
+  "migration": false,
+  "configuration_change": "none; env/rules byte-identical",
+  "private_receipt_sha256": {
+    "preflight.json": "5234fc1c1e259fb060b11feb7599fdebc4c6b3f84e3c9a2627b8ed33a3baa54f",
+    "backup.json": "f3bd17778356c618a89c9fe04fbb37fc235194a64ea9f469292b846a8ed5a57d",
+    "configured.json": "567e4050099496966ce2f2b91fb35946a07e7f701fe371a156ae06f6f597e27a",
+    "service-state.json": "dbc3ee457130b50649ad67c57597b902761e6bd39eb00c6d900a7fe1b993c72c",
+    "live-verified.json": "0ca9f97a2013df72326d60d65c3b8445971319a55bbe3fa8138e7f073cf5290b"
+  },
+  "natural_followup_window_verified": false,
+  "natural_followup_note": "See separately captured post-deployment natural-window receipt; do not infer paired followup from template detection alone.",
+  "elevation_retry": {
+    "first_launch": {
+      "at": "2026-09-22T09:16:52.5997052Z",
+      "result": "Windows elevation launch returned operation cancelled by user",
+      "target": "06324fedab4baf8d0ee14e09991c5385627a01ed",
+      "production_sha": "246fdb518e69e12a87fa8f9f9fb05c752d94437f",
+      "working_tree_clean": true,
+      "deployment_started": false,
+      "services": [
+        {
+          "Name": "QQBotRuntime",
+          "State": "Running",
+          "ProcessId": 32516
+        },
+        {
+          "Name": "QQBotWeb",
+          "State": "Running",
+          "ProcessId": 33280
+        }
+      ]
+    },
+    "retry": {
+      "at": "2026-09-22T09:17:18.0233867Z",
+      "helper_pid": 5724,
+      "target": "06324fedab4baf8d0ee14e09991c5385627a01ed",
+      "ci_run": "35707930568",
+      "approval": "Owner explicitly requested re-show UAC after previous launch cancelled"
+    },
+    "note": "First UAC launch cancelled before any deployment stage. Owner explicitly requested retry; original receipts retained."
+  }
+}

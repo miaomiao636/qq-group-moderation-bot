@@ -481,8 +481,7 @@ async def test_mapped_negative_feedback_revokes_only_the_exact_strike(label: str
             decision.model_copy(update={"message_id": next_id}),
         )
         assert second.strike_no == 1
-        mute = next(action for action in second.planned_actions if action.action == "mute")
-        assert mute.params["seconds"] == 3600
+        assert [action.action for action in second.planned_actions] == ["recall"]
         await record_feedback(session, internal_id, "confirmed_violation", "ad", "fixture-human")
         await session.refresh(first.violation)
         assert first.violation.revoked  # Re-labeling cannot silently restore an old punishment.

@@ -217,5 +217,5 @@ async def test_onebot_message_never_enters_official_action_path() -> None:
     assert record is not None
     assert calls == []  # 影子模式：外部调用数为0
     assert intent_count == 0  # 默认SHADOW不落动作意图
-    # OneBot消息不得经官方路径进入违规阶梯（违规只能由provider路由后的出口触发）
+    # OneBot 消息不得经官方路径触发撤回（仅由本群授权的动作出口执行）。
     assert violation_count == 0

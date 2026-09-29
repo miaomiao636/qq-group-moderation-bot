@@ -10,16 +10,84 @@ from __future__ import annotations
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
-from sqlalchemy import func, select
+from sqlalchemy import func, literal, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.actions.orchestrator import ActionIntent
+from app.actions.recall_confirmation import RecallConfirmation, confirmation_table_available
 from app.cases.models import Case, ViolationRecord
 from app.models import ActionLog, ProcessedEvent
 
 
-async def _count(session: AsyncSession, stmt: Any) -> int:
-    result = await session.execute(stmt)
-    return int(result.scalar_one())
+async def _counts(session: AsyncSession, **statements: Any) -> dict[str, int]:
+    """One SQL statement keeps related totals on the same database snapshot."""
+    row = (
+        await session.execute(
+            select(
+                *(statement.scalar_subquery().label(key) for key, statement in statements.items())
+            )
+        )
+    ).one()
+    return {key: int(row[index]) for index, key in enumerate(statements)}
+
+
+async def _recall_counts(session: AsyncSession, start: datetime, end: datetime) -> dict[str, Any]:
+    if not await confirmation_table_available(session):
+        return {
+            "onebot_recall_confirmed": select(literal(0)),
+            "onebot_recall_unconfirmed": select(literal(0)),
+            "onebot_recall_untracked": select(func.count())
+            .select_from(ActionIntent)
+            .where(
+                ActionIntent.provider == "onebot",
+                ActionIntent.action == "recall",
+                ActionIntent.status.in_(("EXECUTING", "SUCCEEDED", "FAILED", "UNKNOWN")),
+                ActionIntent.created_at >= start,
+                ActionIntent.created_at < end,
+            ),
+        }
+    query = (
+        select(func.count())
+        .select_from(ActionIntent)
+        .outerjoin(RecallConfirmation, RecallConfirmation.intent_id == ActionIntent.id)
+        .where(
+            ActionIntent.provider == "onebot",
+            ActionIntent.action == "recall",
+            ActionIntent.status.in_(("EXECUTING", "SUCCEEDED", "FAILED", "UNKNOWN")),
+            ActionIntent.created_at >= start,
+            ActionIntent.created_at < end,
+        )
+    )
+    return {
+        "onebot_recall_confirmed": query.where(RecallConfirmation.confirmed_at.is_not(None)),
+        "onebot_recall_unconfirmed": query.where(
+            RecallConfirmation.intent_id.is_not(None), RecallConfirmation.confirmed_at.is_(None)
+        ),
+        "onebot_recall_untracked": query.where(RecallConfirmation.intent_id.is_(None)),
+    }
+
+
+async def build_recall_overview(
+    session: AsyncSession, start: datetime, end: datetime
+) -> dict[str, int]:
+    """Count a bounded OneBot recall cohort without conflating API and QQ notices."""
+    counts = await _counts(
+        session,
+        **await _recall_counts(session, start, end),
+        onebot_recall_api_succeeded=select(func.count())
+        .select_from(ActionIntent)
+        .where(
+            ActionIntent.provider == "onebot",
+            ActionIntent.action == "recall",
+            ActionIntent.status == "SUCCEEDED",
+            ActionIntent.created_at >= start,
+            ActionIntent.created_at < end,
+        ),
+    )
+    counts["onebot_recall_entered"] = sum(
+        counts[f"onebot_recall_{key}"] for key in ("confirmed", "unconfirmed", "untracked")
+    )
+    return counts
 
 
 async def build_daily(session: AsyncSession, day: datetime | None = None) -> dict[str, Any]:
@@ -28,48 +96,32 @@ async def build_daily(session: AsyncSession, day: datetime | None = None) -> dic
     start = day.replace(hour=0, minute=0, second=0, microsecond=0)
     end = start + timedelta(days=1)
 
-    messages = await _count(
+    counts = await _counts(
         session,
-        select(func.count())
+        **await _recall_counts(session, start, end),
+        messages_processed=select(func.count())
         .select_from(ProcessedEvent)
         .where(ProcessedEvent.processed_at >= start, ProcessedEvent.processed_at < end),
-    )
-    violations = await _count(
-        session,
-        select(func.count())
+        violations_recorded=select(func.count())
         .select_from(ViolationRecord)
         .where(ViolationRecord.created_at >= start, ViolationRecord.created_at < end),
-    )
-    actions_ok = await _count(
-        session,
-        select(func.count())
+        actions_ok=select(func.count())
         .select_from(ActionLog)
         .where(ActionLog.created_at >= start, ActionLog.created_at < end, ActionLog.ok.is_(True)),
-    )
-    actions_fail = await _count(
-        session,
-        select(func.count())
+        actions_failed=select(func.count())
         .select_from(ActionLog)
         .where(ActionLog.created_at >= start, ActionLog.created_at < end, ActionLog.ok.is_(False)),
-    )
-    pending_cases = await _count(
-        session, select(func.count()).select_from(Case).where(Case.status == "PENDING_REVIEW")
-    )
-    closed_cases = await _count(
-        session,
-        select(func.count())
+        cases_pending_review=select(func.count())
+        .select_from(Case)
+        .where(Case.status == "PENDING_REVIEW"),
+        cases_closed=select(func.count())
         .select_from(Case)
         .where(Case.closed_at.is_not(None), Case.closed_at >= start, Case.closed_at < end),
     )
     return {
         "report_type": "daily",
         "date": f"{start:%Y-%m-%d}",
-        "messages_processed": messages,
-        "violations_recorded": violations,
-        "actions_ok": actions_ok,
-        "actions_failed": actions_fail,
-        "cases_pending_review": pending_cases,
-        "cases_closed": closed_cases,
+        **counts,
         "generated_at": datetime.now(UTC).isoformat(),
     }
 
@@ -79,28 +131,23 @@ async def build_weekly(session: AsyncSession, week_end: datetime | None = None) 
     end_day = week_end or (datetime.now(UTC) - timedelta(days=1))
     end = end_day.replace(hour=0, minute=0, second=0, microsecond=0) + timedelta(days=1)
     start = end - timedelta(days=7)
-
-    violations = await _count(
+    counts = await _counts(
         session,
-        select(func.count())
+        **await _recall_counts(session, start, end),
+        violations_recorded=select(func.count())
         .select_from(ViolationRecord)
         .where(ViolationRecord.created_at >= start, ViolationRecord.created_at < end),
-    )
-    messages = await _count(
-        session,
-        select(func.count())
+        messages_processed=select(func.count())
         .select_from(ProcessedEvent)
         .where(ProcessedEvent.processed_at >= start, ProcessedEvent.processed_at < end),
-    )
-    pending_cases = await _count(
-        session, select(func.count()).select_from(Case).where(Case.status == "PENDING_REVIEW")
+        cases_pending_review=select(func.count())
+        .select_from(Case)
+        .where(Case.status == "PENDING_REVIEW"),
     )
     return {
         "report_type": "weekly",
         "range": f"{start:%Y-%m-%d} ~ {end:%Y-%m-%d}",
-        "messages_processed": messages,
-        "violations_recorded": violations,
-        "cases_pending_review": pending_cases,
+        **counts,
         "generated_at": datetime.now(UTC).isoformat(),
     }
 

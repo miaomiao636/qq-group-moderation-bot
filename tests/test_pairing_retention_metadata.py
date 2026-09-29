@@ -1,3 +1,4 @@
+# CAMPUS-SCOPE-20260922: synthetic source fixtures adapted; see docs/2026-09-22-campus-source-scope.md.
 """R-108 retain timestamp metadata, not message originals, across raw-data cleanup."""
 
 from __future__ import annotations
@@ -14,6 +15,8 @@ from app.moderation.decision import ModerationDecision
 from app.moderation.wall_pair import maybe_wall_text_pairing
 from app.reports.cleanup import _shadow_metadata
 from app.runtime.models import ShadowDecision
+
+from tests.campus_fixtures import campus_evidence
 
 TEXT = "合成校园兼职测试文案，不含任何真实联系方式"
 
@@ -79,7 +82,8 @@ async def test_cleanup_markers_do_not_poison_or_bypass_pairing(historical_kind, 
         source="vision",
         needs_review=False,
         model_id="synthetic-vision",
-        evidence="校园墙白名单|文案:" + TEXT,
+        campus_wall_source="万能校园墙",
+        evidence=campus_evidence("校园墙白名单|文案:" + TEXT),
     )
     image_detail = {
         "sent_at": (now - timedelta(seconds=20)).isoformat(),
@@ -121,7 +125,7 @@ async def test_cleanup_markers_do_not_poison_or_bypass_pairing(historical_kind, 
             verdict="violation_high",
             category="ad",
             confidence=0.99,
-            recommended_actions=["recall", "mute", "warn"],
+            recommended_actions=["recall"],
         )
         decision = await maybe_wall_text_pairing(
             session,

@@ -1,0 +1,24 @@
+{
+  "execution_sha": "1c17ba09e5bef268a6162864830396e8d36c6107",
+  "command": [
+    "git",
+    "diff",
+    "3792c81594fc9a9dfa49925a68ca69538a2e4a57",
+    "HEAD",
+    "--name-only",
+    "--",
+    "tests/test_r132_review_*.py",
+    ".github/workflows/ci.yml",
+    "alembic",
+    ".env.example",
+    "config"
+  ],
+  "changes": [],
+  "new_test_hashes": {
+    "test_auth_unicode_input.py": "3e693ef449c2ab5e8fbd1c27c2dad267dc63b762909dc181f3cc6cf7dd51f20d",
+    "test_backup_preservation_boundaries.py": "d3461b54e4f9a98625545971f271b0fdf899f96585caf50e1d59ed98888d7cd9",
+    "test_media_evidence_retention.py": "10455bdac7d96be63d331b1bec145dcf471ebe1ab12cf9d1a661bed81a26f44f",
+    "test_report_read_consistency.py": "218f660af8a5bbda677b7a09e02d4287d5f915a3277eea731d5cf2419d2f9bb7",
+    "test_runtime_resource_ownership.py": "943865445c18f14648bf563b5d1017ec8d5a95aec7335de9248287da8fed60d2"
+  }
+}

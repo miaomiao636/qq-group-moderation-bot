@@ -19,11 +19,13 @@ import time
 from typing import Any
 
 import httpx
+from sqlalchemy.dialects.sqlite import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.adapters.onebot.parser import OneBotMessageSource
 from app.adapters.qq_official.media import download_attachment
 from app.core.contracts import MessageParseError, MessageSource, StandardMessage
+from app.core.media_diagnostics import download_error_code
 from app.db import SessionLocal
 from app.moderation.image_engine import ImageModerationEngine
 from app.moderation.rules import TextRuleEngine
@@ -63,13 +65,18 @@ async def _autoname_group_task(group_id: str) -> bool:
             name = str(data.get("group_name") or "").strip() if isinstance(data, dict) else ""
             if not name:
                 return True  # 接口正常但无群名，无需重试
-            existing = await session.get(GroupAlias, group_id)
-            if existing is None:
-                existing = GroupAlias(group_openid=group_id)
-                session.add(existing)
-            existing.name = name[:64]
+            # The admin may save a name while get_group_info is in flight.
+            # Never update an existing alias, including a concurrent insert.
+            result = await session.execute(
+                insert(GroupAlias)
+                .values(group_openid=group_id, name=name[:64])
+                .on_conflict_do_nothing(index_elements=[GroupAlias.group_openid])
+                .returning(GroupAlias.group_openid)
+            )
+            inserted = result.scalar_one_or_none()
             await session.commit()
-            logger.info("自动备注群 %s -> %s", group_id, name[:64])
+            if inserted is not None:
+                logger.info("自动备注群 %s -> %s", group_id, name[:64])
             return True
     except Exception:  # noqa: BLE001 - 便利功能，任何失败都不影响审核主链
         logger.debug("自动备注群 %s 失败（忽略）", group_id, exc_info=True)
@@ -125,10 +132,13 @@ async def download_onebot_media(
       二次解析时回填本地安全文件名。
     """
     downloaded: list[str] = []
+    errors: list[str] = []
+    payload["_media_download_errors"] = errors
     for att in msg.attachments:
         url = att.url
         if not url.startswith(("http://", "https://")):
             downloaded.append("")
+            errors.append("missing_url")
             logger.info("附件无可用下载URL，记为下载失败（转人工）")
             continue
         name, _ext, reason = await download_attachment(
@@ -138,6 +148,7 @@ async def download_onebot_media(
             downloaded.append(name)
         else:
             downloaded.append("")
+            errors.append(download_error_code(reason or ""))
             logger.info("附件下载失败：%s", reason or "未知原因")
     if downloaded:
         payload["_downloaded"] = downloaded

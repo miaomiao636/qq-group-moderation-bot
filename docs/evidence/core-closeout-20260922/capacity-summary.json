@@ -1,0 +1,145 @@
+{
+  "limitations": [
+    "Current settings: 10 workers, 600 AI calls/minute, 50000/day. Not a historical B=3 workers/90/min reproduction.",
+    "Synthetic neutral text plus local Mock AI; no real provider/multimedia/violation-case/multi-instance verification.",
+    "Peak backlog is sampled at 15-second intervals; not a continuous maximum.",
+    "B injected 301 messages under the time-based loop; report observed count, not nominal 300.",
+    "Original repository script and main app sources unchanged; phone/space inspector modules excluded from source manifest as unrelated to runtime."
+  ],
+  "script_sha256": "bddecb5cc779911bef8cb217e0d18c67e92e155a6b77da179c2d5a40ca45c1dc",
+  "runs": [
+    {
+      "database_checks": {
+        "quick_check": "ok",
+        "inbox_status": {
+          "DONE": 301
+        },
+        "ai_sources": {
+          "text": 301
+        },
+        "ai_error_kinds": {
+          "": 301
+        },
+        "unique_ai_cache_keys": 301,
+        "executed_intents": 0,
+        "notification_deliveries": 0
+      },
+      "started_at": "2026-09-21T23:53:47.447846+08:00",
+      "rate_per_second": 2.0,
+      "parameters": {
+        "workers": 10,
+        "ai_per_minute_limit": 600,
+        "ai_daily_call_limit": 50000,
+        "unique_text": true
+      },
+      "result": {
+        "sent": 301,
+        "processed": 301,
+        "backlog_after_drain": 0,
+        "drained_after_seconds": 5.0,
+        "ai_calls": 301,
+        "ai_ok": 301,
+        "ai_limited": 0,
+        "e2e_samples": 301,
+        "e2e_p50": 2.6,
+        "e2e_p80": 3.1,
+        "e2e_p95": 6.3,
+        "db_bytes": 1511424
+      },
+      "actual_unique_payload_texts": 301,
+      "completed_at": "2026-09-21T23:56:25.118748+08:00",
+      "peak_sampled_backlog": 7,
+      "label": "B-current",
+      "http_requests": {
+        "mock": 301,
+        "blocked": 0
+      },
+      "git_status_before": "",
+      "source_unchanged": true,
+      "duration_seconds": 150,
+      "acceptance_checks": {
+        "all_payloads_unique": true,
+        "all_processed": true,
+        "no_cached_ai": true,
+        "all_ai_to_mock": true,
+        "no_real_actions": true,
+        "no_notifications": true,
+        "no_safety_guard_hit": true,
+        "database_integrity": true,
+        "source_stable": true
+      },
+      "audit_blocks": [],
+      "command": "\"D:\\CodeBuddy工作空间\\CB 项目\\qq-group-moderation-bot\\.venv\\Scripts\\python.exe\" -B C:/Users/81596/AppData/Local/Temp/qqbot-capacity-loadtest-20260921-235218-cf807eaa/run_isolated.py --repo \"D:/CodeBuddy工作空间/CB 项目/qq-group-moderation-bot\" --out C:/Users/81596/AppData/Local/Temp/qqbot-capacity-loadtest-20260921-235218-cf807eaa/B-current --rate 2 --label B-current",
+      "execution_sha": "94427140777b76e245f6f400a193de1c35830cef",
+      "recorded_python_argv_command": "\"D:\\CodeBuddy工作空间\\CB 项目\\qq-group-moderation-bot\\.venv\\Scripts\\python.exe\" C:/Users/81596/AppData/Local/Temp/qqbot-capacity-loadtest-20260921-235218-cf807eaa/run_isolated.py --repo \"D:/CodeBuddy工作空间/CB 项目/qq-group-moderation-bot\" --out C:/Users/81596/AppData/Local/Temp/qqbot-capacity-loadtest-20260921-235218-cf807eaa/B-current --rate 2 --label B-current"
+    },
+    {
+      "database_checks": {
+        "quick_check": "ok",
+        "inbox_status": {
+          "DONE": 600
+        },
+        "ai_sources": {
+          "text": 600
+        },
+        "ai_error_kinds": {
+          "": 600
+        },
+        "unique_ai_cache_keys": 600,
+        "executed_intents": 0,
+        "notification_deliveries": 0
+      },
+      "started_at": "2026-09-21T23:57:00.405487+08:00",
+      "rate_per_second": 4.0,
+      "parameters": {
+        "workers": 10,
+        "ai_per_minute_limit": 600,
+        "ai_daily_call_limit": 50000,
+        "unique_text": true
+      },
+      "result": {
+        "sent": 600,
+        "processed": 600,
+        "backlog_after_drain": 0,
+        "drained_after_seconds": 5.01600000000326,
+        "ai_calls": 600,
+        "ai_ok": 600,
+        "ai_limited": 0,
+        "e2e_samples": 600,
+        "e2e_p50": 2.3,
+        "e2e_p80": 2.7,
+        "e2e_p95": 6.1,
+        "db_bytes": 2576384
+      },
+      "actual_unique_payload_texts": 600,
+      "completed_at": "2026-09-21T23:59:37.812185+08:00",
+      "peak_sampled_backlog": 14,
+      "label": "C-current",
+      "http_requests": {
+        "mock": 600,
+        "blocked": 0
+      },
+      "git_status_before": " M DECISIONS.md\n M HANDOFF.md\n M MEMORY_INDEX.md\n M NEXT_TASKS.md\n M PROGRESS.md\n M PROJECT_CONTEXT.md\n M docs/2026-09-21-project-handover.md\n M docs/2026-09-21-space-inspector.md\n",
+      "source_unchanged": true,
+      "duration_seconds": 150,
+      "acceptance_checks": {
+        "all_payloads_unique": true,
+        "all_processed": true,
+        "no_cached_ai": true,
+        "all_ai_to_mock": true,
+        "no_real_actions": true,
+        "no_notifications": true,
+        "no_safety_guard_hit": true,
+        "database_integrity": true,
+        "source_stable": true
+      },
+      "audit_blocks": [],
+      "command": "\"D:\\CodeBuddy工作空间\\CB 项目\\qq-group-moderation-bot\\.venv\\Scripts\\python.exe\" -B C:/Users/81596/AppData/Local/Temp/qqbot-capacity-loadtest-20260921-235218-cf807eaa/run_isolated.py --repo \"D:/CodeBuddy工作空间/CB 项目/qq-group-moderation-bot\" --out C:/Users/81596/AppData/Local/Temp/qqbot-capacity-loadtest-20260921-235218-cf807eaa/C-current --rate 4 --label C-current",
+      "execution_sha": "94427140777b76e245f6f400a193de1c35830cef",
+      "recorded_python_argv_command": "\"D:\\CodeBuddy工作空间\\CB 项目\\qq-group-moderation-bot\\.venv\\Scripts\\python.exe\" C:/Users/81596/AppData/Local/Temp/qqbot-capacity-loadtest-20260921-235218-cf807eaa/run_isolated.py --repo \"D:/CodeBuddy工作空间/CB 项目/qq-group-moderation-bot\" --out C:/Users/81596/AppData/Local/Temp/qqbot-capacity-loadtest-20260921-235218-cf807eaa/C-current --rate 4 --label C-current"
+    }
+  ],
+  "wrapper_sha256": "9fe5a3cfe43bd047d848238c5d0cfa4657a86f79ba8ba0ac5276648cf9c228fe",
+  "schema": 1,
+  "command_note": "Actual shell invocation used -B; sys.argv reconstruction in original manifests omits interpreter flags. The summary command restores the observed -B flag. stdout/stderr were redirected to the corresponding B-current.log and C-current.log."
+}

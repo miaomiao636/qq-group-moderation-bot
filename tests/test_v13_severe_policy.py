@@ -15,7 +15,7 @@ from app.moderation.ai import AIModerationResult, merge_ai_evidence
 from app.moderation.decision import ModerationDecision
 from app.moderation.rules import TextRuleEngine
 
-HIGH_ACTIONS = ["recall", "mute", "warn"]
+HIGH_ACTIONS = ["recall"]
 
 
 def _local(text: str, verdict: str = "allow") -> ModerationDecision:

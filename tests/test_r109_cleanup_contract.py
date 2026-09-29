@@ -91,6 +91,92 @@ def violation(number: int, *, created_at: datetime = OLD, case_id: int = 1) -> V
     )
 
 
+async def test_closed_case_archive_starts_at_seven_full_days(
+    lifecycle_session: AsyncSession,
+) -> None:
+    session = lifecycle_session
+    recent = case(1)
+    recent.archived = False
+    recent.archived_at = None
+    recent.closed_at = NOW - timedelta(days=7) + timedelta(seconds=1)
+    boundary = case(2)
+    boundary.archived = False
+    boundary.archived_at = None
+    boundary.closed_at = NOW - timedelta(days=7)
+    older = case(3)
+    older.archived = False
+    older.archived_at = None
+    older.closed_at = NOW - timedelta(days=8)
+    pending = case(4, status="PENDING_REVIEW")
+    pending.archived = False
+    pending.archived_at = None
+    previously_archived = case(5)
+    previously_archived.closed_at = NOW - timedelta(days=16)
+    previously_archived.archived_at = NOW - timedelta(days=1)
+    session.add_all([recent, boundary, older, pending, previously_archived])
+    await session.commit()
+    recent_id, boundary_id, older_id, pending_id, previously_archived_id = (
+        recent.id,
+        boundary.id,
+        older.id,
+        pending.id,
+        previously_archived.id,
+    )
+
+    result = await cleanup.purge_expired(session, NOW)
+    session.expire_all()
+    assert result["cases_archived"] == 2
+    assert (await session.get(Case, recent_id)).archived is False
+    assert (await session.get(Case, boundary_id)).archived is True
+    assert (await session.get(Case, older_id)).archived is True
+    assert (await session.get(Case, pending_id)).archived is False
+    assert (await session.get(Case, previously_archived_id)).archived is True
+
+
+@pytest.mark.parametrize("seconds_over, expected", [(-1, 0), (0, 1), (1, 1)])
+async def test_archived_case_content_retained_for_thirty_full_days(
+    lifecycle_session: AsyncSession, seconds_over: int, expected: int
+) -> None:
+    session = lifecycle_session
+    archived = case(1, references="[1]")
+    archived.archived_at = NOW - timedelta(days=30, seconds=seconds_over)
+    session.add_all([archived, violation(1)])
+    await session.commit()
+
+    result = await cleanup.purge_expired(session, NOW)
+    await session.refresh(archived)
+    assert result["cases_purged"] == expected
+    assert archived.violation_ids_json == ("[]" if expected else "[1]")
+    audit = json.loads(archived.audit_json)
+    assert ("lifecycle_purged_at" in audit) == bool(expected)
+    assert audit["transitions"][0]["operator"] == "test-admin"
+    assert await session.get(ViolationRecord, 1) is not None
+
+
+async def test_new_archive_gets_full_thirty_days_even_for_long_closed_case(
+    lifecycle_session: AsyncSession,
+) -> None:
+    session = lifecycle_session
+    old = case(1, references="[1]")
+    old.archived = False
+    old.archived_at = None
+    session.add_all([old, violation(1)])
+    await session.commit()
+
+    first = await cleanup.purge_expired(session, NOW)
+    await session.refresh(old)
+    assert first["cases_archived"] == 1
+    assert first["cases_purged"] == 0
+    assert old.archived_at == NOW.replace(tzinfo=None)
+    assert old.violation_ids_json == "[1]"
+    before = await cleanup.purge_expired(session, NOW + timedelta(days=30, seconds=-1))
+    assert before["cases_purged"] == 0
+    boundary = await cleanup.purge_expired(session, NOW + timedelta(days=30))
+    await session.refresh(old)
+    assert boundary["cases_purged"] == 1
+    assert old.violation_ids_json == "[]"
+
+
 @pytest.mark.parametrize("status", ["PENDING_REVIEW", "MANUAL_PENDING", "EXECUTING", "FAILED"])
 async def test_old_archive_does_not_authorize_clearing_unfinished_case(
     lifecycle_session: AsyncSession, status: str
@@ -181,6 +267,22 @@ async def test_logical_clear_preserves_audit_chain_ids_and_is_idempotent(
     assert first["violation_records_purged"] == 0
     second = await cleanup.purge_expired(session, NOW + timedelta(days=1))
     assert second["cases_purged"] == 0
+
+
+async def test_logical_clear_keeps_prior_confirmed_case_reference(
+    lifecycle_session: AsyncSession,
+) -> None:
+    session = lifecycle_session
+    new_case = case(2)
+    audit = json.loads(new_case.audit_json)
+    audit["prior_case_id"] = 1
+    new_case.audit_json = json.dumps(audit)
+    session.add(new_case)
+    await session.commit()
+
+    await cleanup.purge_expired(session, NOW)
+    await session.refresh(new_case)
+    assert json.loads(new_case.audit_json)["prior_case_id"] == 1
 
 
 async def test_candidate_expiry_preserves_scope_and_previous_replay_metadata(

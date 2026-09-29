@@ -542,20 +542,25 @@ def test_media_download_failure_degrades_to_record_only() -> None:
 
 
 def test_file_without_url_and_unknown_segment_degrade() -> None:
+    """无 URL 文件 / 未知消息段 → 强制降级人工。
+
+    2026-09-18（负责人口径）：**合并转发不再属于降级情形**——"合并转发一律撤回"
+    由结构性规则 `R_FORWARD_RECORD` 直接给出 violation_high + recall，因此单独断言（见下）。
+    """
     from app.db import SessionLocal
     from app.runtime.models import ShadowDecision
     from sqlalchemy import select
 
-    cases = [
+    degrade_cases = [
         ("group_message_file.json", "910000006"),
         ("group_message_unknown_segment.json", "910000010"),
-        ("group_message_forward.json", "910000008"),
     ]
+    forward_case = ("group_message_forward.json", "910000008")
     with TestClient(app) as client:
         with client.websocket_connect(WS_PATH, headers=_auth_headers()) as ws:
             ws.send_text(_lifecycle())
             ws.send_text(_heartbeat())
-            for name, mid in cases:
+            for name, mid in [*degrade_cases, forward_case]:
                 event = _load_event(name)
                 event["message_id"] = int(mid)
                 ws.send_text(json.dumps(event))
@@ -578,12 +583,18 @@ def test_file_without_url_and_unknown_segment_degrade() -> None:
 
             return _run(_fetch())
 
-        for _name, mid in cases:
+        for _name, mid in degrade_cases:
             assert _wait_for(lambda mid=mid: _record(mid) is not None), f"{mid} 未被处理"
             record = _record(mid)
             assert record is not None
             assert record.verdict == "record_only", f"{mid} 应降级人工"
             assert "转人工" in record.reason
+
+        assert _wait_for(lambda: _record("910000008") is not None), "910000008 未被处理"
+        forward = _record("910000008")
+        assert forward is not None
+        assert forward.verdict == "violation_high", "合并转发应一律撤回（R_FORWARD_RECORD）"
+        assert "合并转发" in forward.reason
 
 
 # ---------- 动作隔离（结构性保证） ----------

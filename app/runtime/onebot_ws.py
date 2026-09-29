@@ -5,7 +5,7 @@
 - 连接必须在 ``Authorization: Bearer`` 请求头携带访问令牌，
   常量时间比较，失败一律拒绝（fail-closed）；
 - 影子模式硬约束：本模块**不实现也绝不调用**任何 OneBot 管理动作
-  （撤回/禁言/警告/踢人属 T-307，默认影子关闭）；所有判定只落库。
+  （自动撤回属 T-307，默认影子关闭）；所有判定只落库。
 
 就绪语义（不等于Python进程存活）：
 - ``ready``：已连接 NapCat、QQ登录态在线、心跳新鲜、队列积压未满；
@@ -488,7 +488,11 @@ def build_onebot_router(ws_path: str) -> APIRouter:
         """NapCat 就绪状态证据（连接/登录/心跳/积压/每群最后事件）。"""
         supplied = _request_bearer_token(request)
         expected = settings.onebot_access_token
-        if not supplied or not expected or not secrets.compare_digest(supplied, expected):
+        if (
+            not supplied
+            or not expected
+            or not secrets.compare_digest(supplied.encode("utf-8"), expected.encode("utf-8"))
+        ):
             raise HTTPException(
                 status_code=401,
                 detail="OneBot status authentication required",
@@ -505,7 +509,7 @@ def build_onebot_router(ws_path: str) -> APIRouter:
             not settings.onebot_ws_enabled
             or not supplied
             or not expected
-            or not secrets.compare_digest(supplied, expected)
+            or not secrets.compare_digest(supplied.encode("utf-8"), expected.encode("utf-8"))
         ):
             await websocket.close(code=1008)
             return
@@ -597,7 +601,26 @@ def build_onebot_router(ws_path: str) -> APIRouter:
                     if _worker_wake is not None:
                         _worker_wake.set()
                     continue
-                # notice（含群撤回通知，T-205待标注事件）/请求/私聊等：仅计数
+                if post == "notice" and event.get("notice_type") == "group_recall":
+                    from app.actions.recall_confirmation import accept_notice
+                    from app.adapters.onebot.recall_notice import parse_recall_notice
+
+                    notice = parse_recall_notice(event, expected_self_id=settings.onebot_self_id)
+                    if notice is None:
+                        onebot_status.count_invalid()
+                        continue
+                    try:
+                        with CancelScope(shield=True):
+                            async with SessionLocal() as session:
+                                await accept_notice(session, notice)
+                    except Exception as exc:  # noqa: BLE001 - no false confirmation on storage loss
+                        onebot_status.storage_available = False
+                        onebot_status.count_failed()
+                        onebot_status.last_error = f"recall_notice_storage:{type(exc).__name__}"
+                        await websocket.close(code=1011)
+                        break
+                    continue
+                # Other notices / requests / private messages do not become labels.
                 onebot_status.count_ignored()
         except WebSocketDisconnect:
             pass

@@ -1,0 +1,38 @@
+{
+  "head_sha": "adef6ee558be3ba9d53de7111c6eecfd21a74ef9",
+  "checkout_merge_sha": "6e6a01a0059ecea061170b5fcd478ecffdc3c0a2",
+  "base_sha": "68a94b9602e6bb4ba1e4aab65f1ea01b4b2c26c6",
+  "url": "https://github.com/miaomiao636/qq-group-moderation-bot/actions/runs/35624097841",
+  "conclusion": "success",
+  "retrieval_command": "gh run view 35624097841 --json headSha,conclusion,url,jobs; gh run view 35624097841 --log",
+  "jobs": [
+    {
+      "name": "Runtime deps regression (clean install)",
+      "databaseId": 106414052073,
+      "conclusion": "success",
+      "url": "https://github.com/miaomiao636/qq-group-moderation-bot/actions/runs/35624097841/job/106414052073"
+    },
+    {
+      "name": "Lint, Type-check & Test (windows-latest)",
+      "databaseId": 106414052363,
+      "conclusion": "success",
+      "url": "https://github.com/miaomiao636/qq-group-moderation-bot/actions/runs/35624097841/job/106414052363"
+    },
+    {
+      "name": "Lint, Type-check & Test (ubuntu-latest)",
+      "databaseId": 106414052616,
+      "conclusion": "success",
+      "url": "https://github.com/miaomiao636/qq-group-moderation-bot/actions/runs/35624097841/job/106414052616"
+    }
+  ],
+  "test_command": "uv run pytest",
+  "each_os": {
+    "passed": 2211,
+    "skipped": 3,
+    "failed": 0,
+    "errors": 0
+  },
+  "raw_metadata_sha256": "3dcbfc321897aaaae806406537a6743b79cd195087f34162ccafdd000370c2c8",
+  "raw_log_sha256": "4fc3b03f597f0706e1534060a7fb7e807667417f58da23fd4a4e73d9db8877ca",
+  "scope": "This run validates adef6ee via its PR merge revision, not later HEADs."
+}
